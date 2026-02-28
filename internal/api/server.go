@@ -9,10 +9,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ruaandeysel/vault/internal/db"
+	"github.com/ruaandeysel/vault/internal/ws"
 )
 
 type Server struct {
 	db     *db.DB
+	hub    *ws.Hub
 	router *chi.Mux
 	addr   string
 }
@@ -20,8 +22,10 @@ type Server struct {
 func NewServer(database *db.DB, addr string) *Server {
 	s := &Server{
 		db:   database,
+		hub:  ws.NewHub(),
 		addr: addr,
 	}
+	go s.hub.Run()
 	s.router = s.setupRoutes()
 	return s
 }

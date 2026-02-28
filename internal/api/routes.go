@@ -15,6 +15,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", s.handleHealth)
+		r.Get("/ws", s.hub.HandleWS)
 	})
 
 	return r
