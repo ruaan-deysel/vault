@@ -1,16 +1,13 @@
 package ws
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"sync"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
 
 type Client struct {
 	hub  *Hub
@@ -77,9 +74,11 @@ func (h *Hub) Broadcast(msg []byte) {
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
-		log.Printf("ws upgrade error: %v", err)
+		log.Printf("ws accept error: %v", err)
 		return
 	}
 	client := &Client{hub: h, conn: conn, send: make(chan []byte, 256)}
@@ -92,14 +91,14 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 func (c *Client) writePump() {
 	defer func() {
 		if c.conn != nil {
-			c.conn.Close()
+			c.conn.CloseNow()
 		}
 	}()
 	for msg := range c.send {
 		if c.conn == nil {
 			return
 		}
-		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		if err := c.conn.Write(context.Background(), websocket.MessageText, msg); err != nil {
 			return
 		}
 	}
@@ -109,14 +108,14 @@ func (c *Client) readPump() {
 	defer func() {
 		c.hub.Unregister(c)
 		if c.conn != nil {
-			c.conn.Close()
+			c.conn.CloseNow()
 		}
 	}()
 	for {
 		if c.conn == nil {
 			return
 		}
-		if _, _, err := c.conn.ReadMessage(); err != nil {
+		if _, _, err := c.conn.Read(context.Background()); err != nil {
 			return
 		}
 	}

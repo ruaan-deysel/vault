@@ -1,12 +1,12 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
-	"net"
 	"path/filepath"
 
-	"github.com/hirochachacha/go-smb2"
+	"github.com/cloudsoda/go-smb2"
 )
 
 type SMBConfig struct {
@@ -29,12 +29,8 @@ func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
 	return &SMBAdapter{config: config}, nil
 }
 
-func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
-	addr := net.JoinHostPort(s.config.Host, fmt.Sprintf("%d", s.config.Port))
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("dial: %w", err)
-	}
+func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
+	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
 	d := &smb2.Dialer{
 		Initiator: &smb2.NTLMInitiator{
@@ -43,20 +39,18 @@ func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, net.Conn, error) {
 		},
 	}
 
-	session, err := d.Dial(conn)
+	session, err := d.Dial(context.Background(), addr)
 	if err != nil {
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("smb dial: %w", err)
+		return nil, nil, fmt.Errorf("smb dial: %w", err)
 	}
 
 	share, err := session.Mount(s.config.Share)
 	if err != nil {
 		session.Logoff()
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("mount share: %w", err)
+		return nil, nil, fmt.Errorf("mount share: %w", err)
 	}
 
-	return share, session, conn, nil
+	return share, session, nil
 }
 
 func (s *SMBAdapter) fullPath(path string) string {
@@ -64,11 +58,10 @@ func (s *SMBAdapter) fullPath(path string) string {
 }
 
 func (s *SMBAdapter) Write(path string, reader io.Reader) error {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 	defer session.Logoff()
 	defer share.Umount()
 
@@ -86,7 +79,7 @@ func (s *SMBAdapter) Write(path string, reader io.Reader) error {
 }
 
 func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return nil, err
 	}
@@ -95,44 +88,39 @@ func (s *SMBAdapter) Read(path string) (io.ReadCloser, error) {
 	if err != nil {
 		share.Umount()
 		session.Logoff()
-		conn.Close()
 		return nil, err
 	}
-	return &smbReadCloser{file: f, share: share, session: session, conn: conn}, nil
+	return &smbReadCloser{file: f, share: share, session: session}, nil
 }
 
 type smbReadCloser struct {
 	file    *smb2.File
 	share   *smb2.Share
 	session *smb2.Session
-	conn    net.Conn
 }
 
 func (r *smbReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *smbReadCloser) Close() error {
 	r.file.Close()
 	r.share.Umount()
-	r.session.Logoff()
-	return r.conn.Close()
+	return r.session.Logoff()
 }
 
 func (s *SMBAdapter) Delete(path string) error {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 	defer session.Logoff()
 	defer share.Umount()
 	return share.Remove(s.fullPath(path))
 }
 
 func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 	defer session.Logoff()
 	defer share.Umount()
 
@@ -154,11 +142,10 @@ func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
 }
 
 func (s *SMBAdapter) Stat(path string) (FileInfo, error) {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return FileInfo{}, err
 	}
-	defer conn.Close()
 	defer session.Logoff()
 	defer share.Umount()
 
@@ -175,11 +162,10 @@ func (s *SMBAdapter) Stat(path string) (FileInfo, error) {
 }
 
 func (s *SMBAdapter) TestConnection() error {
-	share, session, conn, err := s.connect()
+	share, session, err := s.connect()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 	defer session.Logoff()
 	defer share.Umount()
 
