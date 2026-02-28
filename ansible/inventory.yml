@@ -1,0 +1,11 @@
+all:
+  hosts:
+    unraid:
+      ansible_host: 192.168.20.21
+      ansible_user: root
+      ansible_password: "tasvyh-4Gehju-ridxic"
+      ansible_ssh_common_args: >-
+        -o StrictHostKeyChecking=no
+        -o PubkeyAuthentication=no
+        -o PreferredAuthentications=password
+      api_port: 8043
