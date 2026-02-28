@@ -1,0 +1,150 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+    <!ENTITY name      "vault">
+    <!ENTITY author    "ruaandeysel">
+    <!ENTITY version   "0.1.0">
+    <!ENTITY launch    "Settings/Vault">
+    <!ENTITY pluginURL "https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/vault.plg">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;"
+        launch="&launch;" pluginURL="&pluginURL;" icon="shield"
+        min="7.0" support="">
+
+<CHANGES><![CDATA[
+### 0.1.0
+- Initial release
+- Docker container backup & restore (full image + config + appdata)
+- VM backup & restore (live snapshot + cold backup)
+- Storage destinations: Local, SMB, NFS, SFTP, S3-compatible
+- Full, incremental, and differential backup types
+- Veeam-style job scheduling with retention policies
+- Web UI with Dashboard, Jobs, Restore, Storage, History, Settings
+]]></CHANGES>
+
+<!-- Download Go binary -->
+<FILE Name="/usr/local/sbin/vault" Mode="0755">
+    <URL>https://github.com/ruaandeysel/vault/releases/download/v&version;/vault-linux-amd64</URL>
+</FILE>
+
+<!-- Create plugin directories -->
+<FILE Run="/bin/bash">
+    <INLINE><![CDATA[
+mkdir -p /boot/config/plugins/vault
+mkdir -p /usr/local/emhttp/plugins/vault/include
+mkdir -p /usr/local/emhttp/plugins/vault/assets/css
+mkdir -p /usr/local/emhttp/plugins/vault/assets/js
+]]></INLINE>
+</FILE>
+
+<!-- Copy page files -->
+<FILE Name="/usr/local/emhttp/plugins/vault/Vault.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/Vault.page</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/VaultJobs.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultJobs.page</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/VaultRestore.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultRestore.page</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/VaultStorage.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultStorage.page</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/VaultHistory.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultHistory.page</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/VaultSettings.page">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/VaultSettings.page</URL>
+</FILE>
+
+<!-- Copy includes -->
+<FILE Name="/usr/local/emhttp/plugins/vault/include/api.php">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/pages/include/api.php</URL>
+</FILE>
+
+<!-- Copy assets -->
+<FILE Name="/usr/local/emhttp/plugins/vault/assets/css/vault.css">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/css/vault.css</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/vault.js">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/vault.js</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/jobs.js">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/jobs.js</URL>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/vault/assets/js/restore.js">
+    <URL>https://raw.githubusercontent.com/ruaandeysel/vault/main/plugin/assets/js/restore.js</URL>
+</FILE>
+
+<!-- RC script for daemon management -->
+<FILE Name="/etc/rc.d/rc.vault" Mode="0755">
+    <INLINE><![CDATA[
+#!/bin/bash
+
+DAEMON=/usr/local/sbin/vault
+PIDFILE=/var/run/vault.pid
+DB=/boot/config/plugins/vault/vault.db
+ADDR=:28085
+LOG=/var/log/vault.log
+
+start() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Vault daemon is already running"
+        return 1
+    fi
+    echo "Starting Vault daemon..."
+    nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "Vault daemon started (PID: $(cat $PIDFILE))"
+}
+
+stop() {
+    if [ -f "$PIDFILE" ]; then
+        echo "Stopping Vault daemon..."
+        kill $(cat "$PIDFILE") 2>/dev/null
+        rm -f "$PIDFILE"
+        echo "Vault daemon stopped"
+    else
+        echo "Vault daemon is not running"
+    fi
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Vault daemon is running (PID: $(cat $PIDFILE))"
+    else
+        echo "Vault daemon is not running"
+    fi
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 1; start ;;
+    status)  status ;;
+    *)       echo "Usage: $0 {start|stop|restart|status}" ;;
+esac
+]]></INLINE>
+</FILE>
+
+<!-- Start daemon on install -->
+<FILE Run="/bin/bash">
+    <INLINE><![CDATA[
+/etc/rc.d/rc.vault start
+echo "Vault plugin installed successfully"
+]]></INLINE>
+</FILE>
+
+<!-- Removal script -->
+<FILE Run="/bin/bash" Method="remove">
+    <INLINE><![CDATA[
+/etc/rc.d/rc.vault stop
+rm -f /usr/local/sbin/vault
+rm -f /etc/rc.d/rc.vault
+rm -rf /usr/local/emhttp/plugins/vault
+rm -f /var/log/vault.log
+rm -f /var/run/vault.pid
+echo "Vault plugin removed"
+]]></INLINE>
+</FILE>
+
+</PLUGIN>
