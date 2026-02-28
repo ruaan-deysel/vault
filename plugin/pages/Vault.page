@@ -1,0 +1,68 @@
+Menu="Utilities"
+Title="Vault"
+Type="xmenu"
+Tabs="true"
+Icon="shield"
+Markdown="false"
+---
+<?php
+require_once '/usr/local/emhttp/plugins/vault/include/api.php';
+
+$health = vault_get('/health');
+$jobs = vault_get('/jobs') ?: [];
+$storage = vault_get('/storage') ?: [];
+?>
+
+<link rel="stylesheet" href="/plugins/vault/assets/css/vault.css">
+
+<div class="vault-dashboard">
+    <div class="vault-header">
+        <h1>Vault Dashboard</h1>
+        <span class="vault-status <?= ($health['status'] ?? '') === 'ok' ? 'status-ok' : 'status-error' ?>">
+            Daemon: <?= ($health['status'] ?? 'offline') ?>
+        </span>
+    </div>
+
+    <div class="vault-cards">
+        <div class="vault-card">
+            <h3>Backup Jobs</h3>
+            <div class="vault-card-value"><?= count($jobs) ?></div>
+            <a href="/Settings/VaultJobs">Manage Jobs</a>
+        </div>
+        <div class="vault-card">
+            <h3>Storage Destinations</h3>
+            <div class="vault-card-value"><?= count($storage) ?></div>
+            <a href="/Settings/VaultStorage">Manage Storage</a>
+        </div>
+    </div>
+
+    <h2>Recent Activity</h2>
+    <table class="vault-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Status</th>
+                <th>Type</th>
+                <th>Items</th>
+                <th>Started</th>
+            </tr>
+        </thead>
+        <tbody id="recent-activity">
+            <?php foreach ($jobs as $job):
+                $runs = vault_get('/jobs/' . $job['id'] . '/history?limit=1');
+                if (!empty($runs)):
+                    $run = $runs[0];
+            ?>
+            <tr>
+                <td><?= htmlspecialchars($job['name']) ?></td>
+                <td><span class="vault-badge badge-<?= $run['status'] ?>"><?= $run['status'] ?></span></td>
+                <td><?= $run['backup_type'] ?></td>
+                <td><?= $run['items_done'] ?>/<?= $run['items_total'] ?></td>
+                <td><?= $run['started_at'] ?></td>
+            </tr>
+            <?php endif; endforeach; ?>
+        </tbody>
+    </table>
+</div>
+
+<script src="/plugins/vault/assets/js/vault.js"></script>
