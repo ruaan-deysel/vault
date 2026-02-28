@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.10.2
+	libvirt.org/go/libvirt v1.11010.0
 	modernc.org/sqlite v1.46.1
 )
 

@@ -1,0 +1,61 @@
+package engine
+
+import (
+	"fmt"
+	"io"
+	"os"
+)
+
+// copyFile copies a file from src to dst. It reports progress via the optional
+// progress callback (may be nil). The callback receives the percentage complete.
+func copyFile(src, dst string) error {
+	return copyFileWithProgress(src, dst, nil)
+}
+
+// copyFileWithProgress copies a file from src to dst, calling onProgress with
+// the number of bytes copied so far after each chunk.
+func copyFileWithProgress(src, dst string, onProgress func(bytesCopied int64)) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source %s: %w", src, err)
+	}
+	defer in.Close()
+
+	info, err := in.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source %s: %w", src, err)
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return fmt.Errorf("creating dest %s: %w", dst, err)
+	}
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	buf := make([]byte, 1024*1024) // 1 MiB buffer
+	var copied int64
+	for {
+		n, readErr := in.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("writing to %s: %w", dst, writeErr)
+			}
+			copied += int64(n)
+			if onProgress != nil {
+				onProgress(copied)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("reading from %s: %w", src, readErr)
+		}
+	}
+
+	return nil
+}
