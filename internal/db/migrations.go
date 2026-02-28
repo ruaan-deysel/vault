@@ -1,0 +1,65 @@
+package db
+
+const schema = `
+CREATE TABLE IF NOT EXISTS storage_destinations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	type TEXT NOT NULL,
+	config TEXT NOT NULL DEFAULT '{}',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT DEFAULT '',
+	enabled INTEGER DEFAULT 1,
+	schedule TEXT DEFAULT '',
+	backup_type_chain TEXT DEFAULT 'full',
+	retention_count INTEGER DEFAULT 7,
+	retention_days INTEGER DEFAULT 30,
+	compression TEXT DEFAULT 'zstd',
+	container_mode TEXT DEFAULT 'one_by_one',
+	pre_script TEXT DEFAULT '',
+	post_script TEXT DEFAULT '',
+	notify_on TEXT DEFAULT 'failure',
+	storage_dest_id INTEGER REFERENCES storage_destinations(id),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS job_items (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	item_type TEXT NOT NULL,
+	item_name TEXT NOT NULL,
+	item_id TEXT NOT NULL,
+	settings TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	status TEXT NOT NULL DEFAULT 'running',
+	backup_type TEXT NOT NULL,
+	started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	completed_at DATETIME,
+	log TEXT DEFAULT '',
+	items_total INTEGER DEFAULT 0,
+	items_done INTEGER DEFAULT 0,
+	items_failed INTEGER DEFAULT 0,
+	size_bytes INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS restore_points (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_run_id INTEGER NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+	job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	backup_type TEXT NOT NULL,
+	storage_path TEXT NOT NULL,
+	metadata TEXT DEFAULT '{}',
+	size_bytes INTEGER DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+`
