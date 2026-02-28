@@ -1,0 +1,17 @@
+---
+- name: Test WebSocket upgrade endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/ws"
+    method: GET
+    headers:
+      Upgrade: websocket
+      Connection: Upgrade
+      Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+      Sec-WebSocket-Version: "13"
+    status_code: [101, 400]
+  register: ws_response
+  ignore_errors: true
+
+- name: WebSocket endpoint check
+  ansible.builtin.debug:
+    msg: "WebSocket endpoint responded with status {{ ws_response.status | default('unreachable') }}"

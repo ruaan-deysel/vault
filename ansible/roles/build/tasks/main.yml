@@ -1,0 +1,26 @@
+---
+- name: Build Vault binary
+  delegate_to: localhost
+  block:
+    - name: Run tests
+      ansible.builtin.command:
+        cmd: make test
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: false
+
+    - name: Build Linux binary
+      ansible.builtin.command:
+        cmd: make build
+        chdir: "{{ playbook_dir }}/.."
+      changed_when: true
+
+    - name: Verify binary exists
+      ansible.builtin.stat:
+        path: "{{ plugin_binary }}"
+      register: binary_stat
+
+    - name: Assert binary was built
+      ansible.builtin.assert:
+        that: binary_stat.stat.exists
+        fail_msg: "Binary not found at {{ plugin_binary }}"
+        success_msg: "Binary built successfully ({{ binary_stat.stat.size | human_readable }})"

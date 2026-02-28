@@ -1,0 +1,148 @@
+---
+- name: Deploy Vault plugin
+  block:
+    - name: Stop existing service
+      ansible.builtin.command:
+        cmd: "{{ rc_script }} stop"
+      ignore_errors: true
+      changed_when: true
+
+    - name: Create plugin directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ config_dir }}"
+        - "{{ plugin_dir }}"
+        - "{{ plugin_dir }}/include"
+        - "{{ plugin_dir }}/assets/css"
+        - "{{ plugin_dir }}/assets/js"
+
+    - name: Upload binary
+      ansible.builtin.copy:
+        src: "{{ plugin_binary }}"
+        dest: "{{ binary_path }}"
+        mode: "0755"
+      retries: 3
+      delay: 5
+
+    - name: Upload page files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../plugin/pages/{{ item }}"
+        dest: "{{ plugin_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - Vault.page
+        - VaultJobs.page
+        - VaultRestore.page
+        - VaultStorage.page
+        - VaultHistory.page
+        - VaultSettings.page
+
+    - name: Upload PHP includes
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../plugin/pages/include/api.php"
+        dest: "{{ plugin_dir }}/include/api.php"
+        mode: "0644"
+
+    - name: Upload CSS assets
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../plugin/assets/css/vault.css"
+        dest: "{{ plugin_dir }}/assets/css/vault.css"
+        mode: "0644"
+
+    - name: Upload JS assets
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../plugin/assets/js/{{ item }}"
+        dest: "{{ plugin_dir }}/assets/js/{{ item }}"
+        mode: "0644"
+      loop:
+        - vault.js
+        - jobs.js
+        - restore.js
+
+    - name: Upload RC script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          DAEMON={{ binary_path }}
+          PIDFILE={{ pid_file }}
+          DB={{ db_path }}
+          ADDR=:{{ api_port }}
+          LOG={{ log_path }}
+
+          start() {
+              if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+                  echo "Vault daemon is already running"
+                  return 1
+              fi
+              echo "Starting Vault daemon..."
+              nohup $DAEMON daemon --db="$DB" --addr="$ADDR" >> "$LOG" 2>&1 &
+              echo $! > "$PIDFILE"
+              echo "Vault daemon started (PID: $(cat $PIDFILE))"
+          }
+
+          stop() {
+              if [ -f "$PIDFILE" ]; then
+                  echo "Stopping Vault daemon..."
+                  kill $(cat "$PIDFILE") 2>/dev/null
+                  rm -f "$PIDFILE"
+                  echo "Vault daemon stopped"
+              else
+                  echo "Vault daemon is not running"
+              fi
+          }
+
+          status() {
+              if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+                  echo "Vault daemon is running (PID: $(cat $PIDFILE))"
+              else
+                  echo "Vault daemon is not running"
+              fi
+          }
+
+          case "$1" in
+              start)   start ;;
+              stop)    stop ;;
+              restart) stop; sleep 1; start ;;
+              status)  status ;;
+              *)       echo "Usage: $0 {start|stop|restart|status}" ;;
+          esac
+        dest: "{{ rc_script }}"
+        mode: "0755"
+
+    - name: Start Vault daemon
+      ansible.builtin.command:
+        cmd: "{{ rc_script }} start"
+      changed_when: true
+
+    - name: Wait for daemon to be ready
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/api/v1/health"
+        method: GET
+        return_content: true
+      register: health_check
+      retries: 10
+      delay: 2
+      until: health_check.status == 200
+
+    - name: Display deployment status
+      ansible.builtin.debug:
+        msg: "Vault v{{ version }} deployed successfully - API responding on port {{ api_port }}"
+
+  rescue:
+    - name: Deployment failed - collect logs
+      ansible.builtin.command:
+        cmd: "tail -50 {{ log_path }}"
+      register: vault_logs
+      ignore_errors: true
+      changed_when: false
+
+    - name: Display error logs
+      ansible.builtin.debug:
+        msg: "{{ vault_logs.stdout_lines | default(['No logs available']) }}"
+
+    - name: Fail with deployment error
+      ansible.builtin.fail:
+        msg: "Vault deployment failed. Check logs above."

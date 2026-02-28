@@ -1,0 +1,33 @@
+---
+- name: Vault Plugin Deployment
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Build
+      tags: [build, redeploy]
+      block:
+        - name: Include build role
+          ansible.builtin.include_role:
+            name: build
+
+    - name: Uninstall
+      tags: [uninstall, redeploy]
+      block:
+        - name: Include uninstall role
+          ansible.builtin.include_role:
+            name: uninstall
+
+    - name: Deploy
+      tags: [deploy, redeploy]
+      block:
+        - name: Include deploy role
+          ansible.builtin.include_role:
+            name: deploy
+
+    - name: Verify
+      tags: [verify, redeploy, tests]
+      block:
+        - name: Include verify role
+          ansible.builtin.include_role:
+            name: verify

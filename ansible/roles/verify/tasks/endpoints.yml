@@ -1,0 +1,53 @@
+---
+- name: Verify health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/health"
+    method: GET
+    return_content: true
+  register: health_response
+
+- name: Assert health response
+  ansible.builtin.assert:
+    that:
+      - health_response.status == 200
+      - health_response.json.status == "ok"
+      - health_response.json.version is defined
+    success_msg: "Health endpoint OK - version {{ health_response.json.version }}"
+
+- name: Verify jobs endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs"
+    method: GET
+    return_content: true
+  register: jobs_response
+
+- name: Assert jobs response
+  ansible.builtin.assert:
+    that:
+      - jobs_response.status == 200
+    success_msg: "Jobs endpoint OK"
+
+- name: Verify storage endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage"
+    method: GET
+    return_content: true
+  register: storage_response
+
+- name: Assert storage response
+  ansible.builtin.assert:
+    that:
+      - storage_response.status == 200
+    success_msg: "Storage endpoint OK"
+
+- name: Verify ping endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/ping"
+    method: GET
+  register: ping_response
+
+- name: Assert ping response
+  ansible.builtin.assert:
+    that:
+      - ping_response.status == 200
+    success_msg: "Ping endpoint OK"

@@ -1,0 +1,112 @@
+---
+- name: Create test storage destination
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage"
+    method: POST
+    body_format: json
+    body:
+      name: "ansible-test-storage"
+      type: "local"
+      config: '{"path":"/tmp/vault-test-backups"}'
+    return_content: true
+    status_code: 201
+  register: create_storage
+
+- name: Assert storage created
+  ansible.builtin.assert:
+    that:
+      - create_storage.status == 201
+      - create_storage.json.id is defined
+    success_msg: "Storage destination created (ID: {{ create_storage.json.id }})"
+
+- name: Create test backup job
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs"
+    method: POST
+    body_format: json
+    body:
+      name: "ansible-test-job"
+      description: "Test job created by Ansible verification"
+      enabled: false
+      schedule: ""
+      backup_type_chain: "full"
+      retention_count: 3
+      retention_days: 7
+      compression: "zstd"
+      container_mode: "one_by_one"
+      notify_on: "failure"
+      storage_dest_id: "{{ create_storage.json.id }}"
+    return_content: true
+    status_code: 201
+  register: create_job
+
+- name: Assert job created
+  ansible.builtin.assert:
+    that:
+      - create_job.status == 201
+      - create_job.json.id is defined
+    success_msg: "Backup job created (ID: {{ create_job.json.id }})"
+
+- name: Get job details
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    method: GET
+    return_content: true
+  register: get_job
+
+- name: Assert job details
+  ansible.builtin.assert:
+    that:
+      - get_job.status == 200
+      - get_job.json.job.name == "ansible-test-job"
+    success_msg: "Job retrieval OK"
+
+- name: Get job history
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/history"
+    method: GET
+    return_content: true
+  register: job_history
+
+- name: Assert job history
+  ansible.builtin.assert:
+    that:
+      - job_history.status == 200
+    success_msg: "Job history endpoint OK"
+
+- name: Get restore points
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}/restore-points"
+    method: GET
+    return_content: true
+  register: restore_points
+
+- name: Assert restore points
+  ansible.builtin.assert:
+    that:
+      - restore_points.status == 200
+    success_msg: "Restore points endpoint OK"
+
+- name: Test storage connection
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}/test"
+    method: POST
+    return_content: true
+  register: test_connection
+  ignore_errors: true
+
+- name: Clean up test job
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/jobs/{{ create_job.json.id }}"
+    method: DELETE
+    status_code: 204
+
+- name: Clean up test storage
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/api/v1/storage/{{ create_storage.json.id }}"
+    method: DELETE
+    status_code: 204
+
+- name: CRUD verification complete
+  ansible.builtin.debug:
+    msg: "All CRUD operations verified successfully"

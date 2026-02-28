@@ -1,16 +1,29 @@
-BINARY=vault
-VERSION=0.1.0
-GOFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
-GOOS=linux
-GOARCH=amd64
+VERSION := $(shell cat VERSION)
+BINARY := vault
+BUILD_DIR := build
+GOOS := linux
+GOARCH := amd64
+DATE := $(shell date '+%Y.%m.%d')
+HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 
-.PHONY: build test clean package
+LDFLAGS := -s -w \
+	-X main.version=$(VERSION) \
+	-X main.buildDate=$(DATE) \
+	-X main.commit=$(HASH)
+
+.PHONY: all build build-local test test-short test-coverage clean lint security-check package deploy
+
+all: test build-local
+
+deps:
+	go mod download
+	go mod tidy
 
 build:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) -o $(BINARY)-$(GOOS)-$(GOARCH) ./cmd/vault/
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH) ./cmd/vault/
 
 build-local:
-	go build -o $(BINARY) ./cmd/vault/
+	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/vault/
 
 test:
 	go test ./... -v
@@ -18,13 +31,26 @@ test:
 test-short:
 	go test ./... -short
 
+test-coverage:
+	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
+
 clean:
-	rm -f $(BINARY) $(BINARY)-*-*
+	rm -rf $(BUILD_DIR)
+	rm -f coverage.out coverage.html
 
 lint:
 	golangci-lint run ./...
 
+security-check:
+	govulncheck ./...
+
 package: build
-	@echo "Binary: $(BINARY)-$(GOOS)-$(GOARCH)"
+	@mkdir -p $(BUILD_DIR)
+	@echo "Binary: $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)"
 	@echo "Plugin: plugin/vault.plg"
-	@ls -lh $(BINARY)-$(GOOS)-$(GOARCH)
+	@ls -lh $(BUILD_DIR)/$(BINARY)-$(GOOS)-$(GOARCH)
+
+deploy:
+	cd ansible && ansible-playbook -i inventory.yml ansible.yml --tags deploy

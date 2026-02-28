@@ -1,0 +1,4 @@
+skip_list:
+  - yaml[line-length]
+  - no-changed-when
+  - command-instead-of-shell
