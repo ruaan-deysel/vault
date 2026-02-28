@@ -3,6 +3,7 @@ module github.com/ruaandeysel/vault
 go 1.25.0
 
 require (
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.46.1
 )
