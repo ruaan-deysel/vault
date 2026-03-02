@@ -8,4 +8,5 @@ all:
         -o StrictHostKeyChecking=no
         -o PubkeyAuthentication=no
         -o PreferredAuthentications=password
-      api_port: 8043
+      api_port: 24085
+      api_key: "vault_YnkXb7mXys-gADvTyAFD6JJicp85JYPz-KQFb2i9UdQ"
