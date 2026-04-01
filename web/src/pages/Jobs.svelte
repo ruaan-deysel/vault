@@ -457,23 +457,32 @@
   let vmRestoreVerifyErrors = $derived(selectedVMItems.map(getVMRestoreVerifyError).filter(Boolean))
 
   let containerPresets = $state({})
+  let presetsAbortController = null
 
   async function fetchContainerPresets(items) {
+    if (presetsAbortController) {
+      presetsAbortController.abort()
+    }
+    presetsAbortController = new AbortController()
+    const signal = presetsAbortController.signal
+
     const newPresets = {}
     for (const item of items) {
       const settings = parseItemSettings(item)
       const image = settings.image || ''
       if (!image) continue
       try {
-        const res = await fetch(`/api/v1/presets/exclusions?image=${encodeURIComponent(image)}`)
+        const res = await fetch(`/api/v1/presets/exclusions?image=${encodeURIComponent(image)}`, { signal })
+        if (!res.ok) continue
         const data = await res.json()
         if (data.paths && data.paths.length > 0) {
           newPresets[item.item_name] = data.paths
         }
       } catch {
-        // Silently ignore preset fetch failures.
+        // Silently ignore preset fetch failures and aborts.
       }
     }
+    if (signal.aborted) return
     containerPresets = newPresets
   }
 
@@ -1011,7 +1020,7 @@
                   <textarea
                     value={currentExclusions.join('\n')}
                     oninput={(e) => {
-                      const paths = e.currentTarget.value.split('\n').filter(Boolean)
+                      const paths = e.currentTarget.value.split('\n').map(p => p.trim()).filter(Boolean)
                       updateContainerExclusionPaths(cItem.item_name, paths)
                     }}
                     placeholder={"/config/Cache\n*.log"}

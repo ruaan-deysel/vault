@@ -282,7 +282,7 @@ func TestShouldExcludePath(t *testing.T) {
 
 		// Leading slash normalization.
 		{"exclusion with leading slash", "Cache/foo", []string{"/Cache"}, true},
-		{"relpath with leading slash", "Cache/foo", []string{"Cache"}, true},
+		{"exclusion without leading slash", "Cache/foo", []string{"Cache"}, true},
 
 		// Glob matching.
 		{"glob star-dot-log matches file", "app.log", []string{"*.log"}, true},

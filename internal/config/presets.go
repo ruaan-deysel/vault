@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // ContainerExclusionPresets maps container image name substrings to recommended
 // exclusion paths. Keys are matched case-insensitively against the full image name.
@@ -183,6 +186,17 @@ var ContainerExclusionPresets = map[string][]string{
 	},
 }
 
+// presetKeys holds sorted keys for deterministic iteration order.
+var presetKeys []string
+
+func init() {
+	presetKeys = make([]string, 0, len(ContainerExclusionPresets))
+	for key := range ContainerExclusionPresets {
+		presetKeys = append(presetKeys, key)
+	}
+	sort.Strings(presetKeys)
+}
+
 // GetExclusionPreset returns recommended exclusion paths for a container image.
 // It matches the image name against known presets using case-insensitive substring
 // matching. Returns nil if no preset matches.
@@ -191,9 +205,9 @@ func GetExclusionPreset(image string) []string {
 		return nil
 	}
 	lower := strings.ToLower(image)
-	for key, paths := range ContainerExclusionPresets {
-		if strings.Contains(lower, strings.ToLower(key)) {
-			return paths
+	for _, key := range presetKeys {
+		if strings.Contains(lower, key) {
+			return ContainerExclusionPresets[key]
 		}
 	}
 	return nil
