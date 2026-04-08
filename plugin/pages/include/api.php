@@ -31,6 +31,35 @@ function vault_get_bind_address() {
     return $bind === '' ? '127.0.0.1' : $bind;
 }
 
+function vault_get_local_ips() {
+    $output = @shell_exec('ip -4 addr show 2>/dev/null');
+    if (!$output) {
+        return [];
+    }
+    $result = [];
+    $seen = [];
+    $lines = explode("\n", trim($output));
+    $iface = '';
+    foreach ($lines as $line) {
+        if (preg_match('/^\d+:\s+(\S+):/', $line, $m)) {
+            $iface = $m[1];
+        }
+        if (preg_match('/inet\s+([0-9.]+)\//', $line, $m) && $m[1] !== '127.0.0.1') {
+            $ip = $m[1];
+            if (isset($seen[$ip])) {
+                continue;
+            }
+            // Skip Docker bridges, libvirt bridges, and veth pairs.
+            if (preg_match('/^(docker|br-[0-9a-f]{12}|virbr|veth)/', $iface)) {
+                continue;
+            }
+            $seen[$ip] = true;
+            $result[] = ['ip' => $ip, 'iface' => $iface];
+        }
+    }
+    return $result;
+}
+
 function vault_is_loopback_bind_address($bind = null) {
     $bind = trim((string) ($bind ?? vault_get_bind_address()));
     $normalized = strtolower(trim($bind, '[]'));

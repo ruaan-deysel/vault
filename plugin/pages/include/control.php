@@ -61,11 +61,17 @@ switch ($action) {
         }
         // Restart daemon if running so it picks up the defaults.
         $was_running = is_running();
+        $restart_ok = true;
         if ($was_running) {
             exec("$RC restart 2>&1", $out, $rc);
             usleep(500000);
+            $restart_ok = ($rc === 0);
         }
-        echo json_encode(['running' => is_running(), 'reset' => true]);
+        $response = ['running' => is_running(), 'reset' => true];
+        if ($was_running && !$restart_ok) {
+            $response['warning'] = 'Daemon restart may have failed';
+        }
+        echo json_encode($response);
         break;
 
     case 'status':

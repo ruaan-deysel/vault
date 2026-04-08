@@ -92,7 +92,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- Bind address configuration: replaced free-text input with a dropdown (`127.0.0.1` / `0.0.0.0`) to prevent users from entering invalid IPs that break the daemon
+- Bind address dropdown now auto-detects the server's network interfaces (NICs) and lists each IPv4 address with its interface name (e.g. `192.168.20.21 (br0)`), allowing users with multiple NICs to bind to a specific interface; duplicate IPs across virtual/shim interfaces are deduplicated
+- Bind address configuration: replaced free-text input with a dropdown (`127.0.0.1` / `0.0.0.0` / detected NICs) to prevent users from entering invalid IPs that break the daemon
 - PHP proxy now uses the actual bind address instead of hardcoded `127.0.0.1`, fixing the issue where changing the bind address made the Settings page show the daemon as stopped and the Web UI unreachable
 - Default button on the Settings/Vault page now properly resets configuration to defaults (`127.0.0.1:24085`) and restarts the daemon; previously the Unraid `#default` mechanism silently failed
 - Bind address validation added to `rc.vault` and `apply.sh` — invalid addresses (not bound to a local interface) are rejected with a fallback to `127.0.0.1`
