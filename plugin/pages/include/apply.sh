@@ -4,6 +4,23 @@
 
 RC="/etc/rc.d/rc.vault"
 PIDFILE="/var/run/vault.pid"
+CONFIG="/boot/config/plugins/vault/vault.cfg"
+
+# Normalize bind address: only allow known-good values.
+if [ -f "$CONFIG" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG"
+    case "${BIND_ADDRESS:-}" in
+        127.0.0.1|0.0.0.0|"") ;; # valid
+        *)
+            # Check if it's a local interface IP; if not, reset to 127.0.0.1.
+            if ! ip addr show 2>/dev/null | grep -q "inet ${BIND_ADDRESS}/\|inet6 ${BIND_ADDRESS}/"; then
+                echo "Warning: bind address '${BIND_ADDRESS}' is not local; resetting to 127.0.0.1"
+                sed -i 's/^BIND_ADDRESS=.*/BIND_ADDRESS=127.0.0.1/' "$CONFIG"
+            fi
+            ;;
+    esac
+fi
 
 # Only restart if daemon is currently running.
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then

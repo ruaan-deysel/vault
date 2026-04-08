@@ -92,6 +92,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Bind address configuration: replaced free-text input with a dropdown (`127.0.0.1` / `0.0.0.0`) to prevent users from entering invalid IPs that break the daemon
+- PHP proxy now uses the actual bind address instead of hardcoded `127.0.0.1`, fixing the issue where changing the bind address made the Settings page show the daemon as stopped and the Web UI unreachable
+- Default button on the Settings/Vault page now properly resets configuration to defaults (`127.0.0.1:24085`) and restarts the daemon; previously the Unraid `#default` mechanism silently failed
+- Bind address validation added to `rc.vault` and `apply.sh` — invalid addresses (not bound to a local interface) are rejected with a fallback to `127.0.0.1`
+- INI injection prevention in config reset: values read from existing config are sanitized before interpolation
+- Removed obsolete API key warning from bind address help text (API Access feature was previously removed)
 - Database location changes now take effect immediately without requiring a daemon restart; previously, changing or resetting the custom snapshot path required a restart and could be silently reversed by stale data in the old snapshot (Refs #48)
 - Resetting the custom database location back to defaults no longer gets reversed on restart — removed the DB override sync-back that read stale `snapshot_path_override` from cached snapshots and overwrote vault.cfg; `vault.cfg` is now the sole authority for the snapshot path
 - Setting a custom snapshot path to a directory (e.g. `/mnt/garbage`) now automatically appends `/vault.db` instead of rejecting the input, so users can just pick a folder

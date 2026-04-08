@@ -84,7 +84,15 @@ function vault_http_host($host) {
 
 function vault_target_url($path = '') {
     $port = vault_get_port();
-    return 'http://127.0.0.1:' . $port . $path;
+    $bind = vault_get_bind_address();
+    // For wildcard or loopback, connect via 127.0.0.1.
+    // For a specific LAN IP, connect via that IP directly.
+    if (vault_is_loopback_bind_address($bind) || vault_is_wildcard_bind_address($bind)) {
+        $host = '127.0.0.1';
+    } else {
+        $host = vault_http_host($bind);
+    }
+    return 'http://' . $host . ':' . $port . $path;
 }
 
 function vault_proxy_header() {

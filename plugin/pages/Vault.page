@@ -98,24 +98,45 @@ Port number for the Vault daemon (default: 24085). Keep this configurable in cas
 
 <dl>
     <dt>Bind Address:</dt>
-    <dd><input type="text" name="BIND_ADDRESS" value="<?= $bind_esc ?>" class="narrow" placeholder="127.0.0.1"></dd>
+    <dd>
+        <select name="BIND_ADDRESS" class="narrow">
+            <option value="127.0.0.1" <?= $bind === '127.0.0.1' ? 'selected' : '' ?>>127.0.0.1 (Local only)</option>
+            <option value="0.0.0.0" <?= $bind === '0.0.0.0' ? 'selected' : '' ?>>0.0.0.0 (All interfaces)</option>
+<?php if (!in_array($bind, ['127.0.0.1', '0.0.0.0'], true)): ?>
+            <option value="<?= $bind_esc ?>" selected><?= $bind_esc ?> (custom — migrate to a standard option)</option>
+<?php endif; ?>
+        </select>
+    </dd>
 </dl>
 <blockquote class="inline_help">
-Use <strong>127.0.0.1</strong> to keep the daemon local-only (recommended default), a specific LAN IP such as <strong>192.168.1.10</strong> to expose it on one interface, or <strong>0.0.0.0</strong> to listen on all interfaces.
+Use <strong>127.0.0.1</strong> to keep the daemon local-only (recommended). Use <strong>0.0.0.0</strong> to listen on all interfaces — required for external integrations such as Home Assistant. The browser UI always uses the authenticated Unraid plugin proxy regardless of this setting.
 </blockquote>
-<?php if (!vault_is_loopback_bind_address($bind)): ?>
+<?php if ($bind === '0.0.0.0'): ?>
 <blockquote class="inline_help" style="color: var(--red-500, #c0392b);">
-Warning: non-loopback binding exposes the Vault API on your network. Configure an API key first. Vault refuses to start on a non-loopback bind address without one.
+Warning: the Vault API is accessible from your local network. Only use this if you need external access (e.g. Home Assistant).
 </blockquote>
 <?php endif; ?>
 
 <dl>
-    <dt><input type="submit" name="#default" value="Default"></dt>
-    <dd><input type="submit" name="#apply" value="Apply" disabled><input type="button" value="Done" onclick="done()"></dd>
+    <dt><input type="button" value="Default" onclick="resetDefaults()"></dt>
+    <dd><input type="submit" name="#apply" value="Apply"><input type="button" value="Done" onclick="done()"></dd>
 </dl>
 </form>
 
 <script>
+function resetDefaults() {
+    if (!confirm('Reset Vault configuration to defaults?')) return;
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/plugins/vault/include/control.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+            location.reload();
+        }
+    };
+    xhr.send('action=reset-config&csrf_token=<?=$var["csrf_token"]?>');
+}
+
 function serviceControl(action) {
     var btn = document.getElementById('vault-btn-startstop');
     var restartBtn = document.getElementById('vault-btn-restart');
