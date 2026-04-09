@@ -14,7 +14,10 @@ if [ -f "$CONFIG" ]; then
     _val="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"'].*//")"
     [ -n "$_val" ] && BIND_ADDRESS="$_val"
     _val="$(grep -E '^PORT=' "$CONFIG" | head -1 | sed "s/^PORT=//; s/^[\"']//; s/[\"'].*//")"
-    [ -n "$_val" ] && PORT="$_val"
+    # Only accept numeric port values.
+    if [ -n "$_val" ] && echo "$_val" | grep -Eq '^[0-9]+$'; then
+        PORT="$_val"
+    fi
     unset _val
 fi
 

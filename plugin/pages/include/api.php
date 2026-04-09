@@ -70,6 +70,10 @@ function vault_get_local_ips() {
                 if (stripos($m[1], 'fe80:') === 0) {
                     continue;
                 }
+                // Validate the extracted address is a well-formed IPv6 address.
+                if (!filter_var($m[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                    continue;
+                }
             }
 
             $ip = $m[1];

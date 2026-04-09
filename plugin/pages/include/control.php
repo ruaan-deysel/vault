@@ -75,7 +75,9 @@ switch ($action) {
             $service = 'yes';
         }
         // Sanitize SNAPSHOT_PATH: only allow absolute paths with safe characters.
+        // Reject leading dots to prevent hidden directory creation.
         $snapshot = preg_replace('/[^a-zA-Z0-9_\-\/. ]/', '', $snapshot);
+        $snapshot = ltrim($snapshot, '.');
         // Write values in single quotes to prevent shell expansion when sourced.
         $content = "SERVICE='{$service}'\nPORT='24085'\nBIND_ADDRESS='127.0.0.1'\nSNAPSHOT_PATH='{$snapshot}'\n";
         $written = file_put_contents($CONFIG, $content, LOCK_EX);
