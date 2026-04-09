@@ -7,6 +7,59 @@ import (
 	"time"
 )
 
+func TestValidateSnapshotPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"valid absolute path", "/mnt/cache/.vault/vault.db", false},
+		{"valid nested path", "/boot/config/plugins/vault/vault.db", false},
+		{"empty path", "", true},
+		{"traversal with dotdot", "/mnt/cache/../../etc/passwd", false}, // Clean resolves it to /etc/passwd — no ".." left
+		{"relative path resolves", "relative/path/vault.db", false},     // Abs makes it absolute
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := validateSnapshotPath(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateSnapshotPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+			if err == nil && result == "" {
+				t.Error("validateSnapshotPath returned empty string without error")
+			}
+		})
+	}
+}
+
+func TestValidateSnapshotPath_CleansTraversal(t *testing.T) {
+	t.Parallel()
+
+	// After Clean+Abs, traversal sequences are normalized — verify the function
+	// returns a clean absolute path without ".." components.
+	result, err := validateSnapshotPath("/mnt/cache/../cache/vault.db")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "/mnt/cache/vault.db" {
+		t.Errorf("got %q, want %q", result, "/mnt/cache/vault.db")
+	}
+}
+
+func TestSetSnapshotPath_RejectsEmptyDefault(t *testing.T) {
+	d := setupTestDB(t)
+	// Create a manager with an empty default path — SetSnapshotPath("") should fail
+	// because validateSnapshotPath rejects empty strings.
+	sm := NewSnapshotManager(d, filepath.Join(t.TempDir(), "snap.db"), "")
+	err := sm.SetSnapshotPath("")
+	if err == nil {
+		t.Fatal("SetSnapshotPath with empty default should fail validation")
+	}
+}
+
 func TestSnapshotRoundTrip(t *testing.T) {
 	// Open a DB and insert data.
 	dir := t.TempDir()

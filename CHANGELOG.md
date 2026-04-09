@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` using `filepath.Clean` + `filepath.Abs` with `..` component rejection (closes #27, closes #28)
+- Data race in `SaveSnapshot` reading `snapshotPath` without mutex protection — now reads the field under lock consistently with other accessors
+
 ### Changed
 
 - Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)

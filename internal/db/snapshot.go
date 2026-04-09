@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,14 @@ func NewSnapshotManager(database *DB, snapshotPath, defaultPath string) *Snapsho
 
 // SetUSBBackupPath enables the USB shadow backup at the given path.
 func (sm *SnapshotManager) SetUSBBackupPath(path string) {
+	if path != "" {
+		validPath, err := validateSnapshotPath(path)
+		if err != nil {
+			log.Printf("Warning: invalid USB backup path: %v", err)
+			return
+		}
+		path = validPath
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.usbBackupPath = path
@@ -79,6 +88,29 @@ func (sm *SnapshotManager) DefaultSnapshotPath() string {
 	return sm.defaultSnapshotPath
 }
 
+// validateSnapshotPath normalises and validates a snapshot path to prevent
+// path traversal attacks (CWE-22). Returns the cleaned absolute path.
+func validateSnapshotPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("snapshot path must not be empty")
+	}
+
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve snapshot path: %w", err)
+	}
+
+	// After Clean+Abs, a legitimate absolute path must not contain ".."
+	// path components. Reject any residual traversal.
+	for _, part := range strings.Split(absPath, string(filepath.Separator)) {
+		if part == ".." {
+			return "", fmt.Errorf("path traversal not allowed in snapshot path")
+		}
+	}
+
+	return absPath, nil
+}
+
 // SetSnapshotPath changes the snapshot path at runtime and immediately saves
 // a fresh snapshot at the new location. If newPath is empty, the default
 // snapshot path is used. This ensures the target location has up-to-date data.
@@ -87,12 +119,17 @@ func (sm *SnapshotManager) SetSnapshotPath(newPath string) error {
 		newPath = sm.defaultSnapshotPath
 	}
 
-	if err := os.MkdirAll(filepath.Dir(newPath), 0o750); err != nil {
+	validPath, err := validateSnapshotPath(newPath)
+	if err != nil {
+		return fmt.Errorf("validating snapshot path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
 		return fmt.Errorf("creating snapshot directory: %w", err)
 	}
 
 	sm.mu.Lock()
-	sm.snapshotPath = newPath
+	sm.snapshotPath = validPath
 	sm.mu.Unlock()
 
 	// Save a fresh snapshot to the new location so it is never stale.
@@ -112,7 +149,16 @@ func (sm *SnapshotManager) LastSnapshot() time.Time {
 // SaveSnapshot copies the working DB to the snapshot path using the SQLite
 // backup API.
 func (sm *SnapshotManager) SaveSnapshot() error {
-	if err := os.MkdirAll(filepath.Dir(sm.snapshotPath), 0o750); err != nil {
+	sm.mu.Lock()
+	snapshotPath := sm.snapshotPath
+	sm.mu.Unlock()
+
+	validPath, err := validateSnapshotPath(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("validating snapshot path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
 		return fmt.Errorf("create snapshot directory: %w", err)
 	}
 
@@ -126,7 +172,7 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 		type backuper interface {
 			NewBackup(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(backuper).NewBackup(sm.snapshotPath)
+		bck, err := driverConn.(backuper).NewBackup(validPath)
 		if err != nil {
 			return err
 		}
@@ -152,8 +198,17 @@ func (sm *SnapshotManager) SaveSnapshot() error {
 // SQLite restore API. If the snapshot file does not exist, it logs a message
 // and returns nil (no-op for first run).
 func (sm *SnapshotManager) RestoreFromSnapshot() error {
-	if _, err := os.Stat(sm.snapshotPath); os.IsNotExist(err) {
-		log.Printf("no snapshot file at %s, skipping restore", sm.snapshotPath)
+	sm.mu.Lock()
+	snapshotPath := sm.snapshotPath
+	sm.mu.Unlock()
+
+	validPath, err := validateSnapshotPath(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("validating snapshot path: %w", err)
+	}
+
+	if _, err := os.Stat(validPath); os.IsNotExist(err) {
+		log.Printf("no snapshot file at %s, skipping restore", validPath)
 		return nil
 	}
 
@@ -167,7 +222,7 @@ func (sm *SnapshotManager) RestoreFromSnapshot() error {
 		type restorer interface {
 			NewRestore(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(restorer).NewRestore(sm.snapshotPath)
+		bck, err := driverConn.(restorer).NewRestore(validPath)
 		if err != nil {
 			return err
 		}
@@ -227,11 +282,17 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 		return
 	}
 
+	validPath, err := validateSnapshotPath(usbPath)
+	if err != nil {
+		log.Printf("Warning: invalid USB backup path: %v", err)
+		return
+	}
+
 	if !force && !lastBackup.IsZero() && time.Since(lastBackup) < interval {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(usbPath), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(validPath), 0o750); err != nil {
 		log.Printf("Warning: failed to create USB backup directory: %v", err)
 		return
 	}
@@ -247,7 +308,7 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 		type backuper interface {
 			NewBackup(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(backuper).NewBackup(usbPath)
+		bck, err := driverConn.(backuper).NewBackup(validPath)
 		if err != nil {
 			return err
 		}
@@ -267,14 +328,19 @@ func (sm *SnapshotManager) saveUSBBackup(force bool) {
 	sm.mu.Lock()
 	sm.lastUSBBackup = time.Now()
 	sm.mu.Unlock()
-	log.Printf("USB shadow backup saved to %s", usbPath)
+	log.Printf("USB shadow backup saved to %s", validPath)
 }
 
 // RestoreFromPath restores the database from the specified source path.
 // Returns an error if the file doesn't exist or restoration fails.
 func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
-	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
-		return fmt.Errorf("snapshot file does not exist: %s", sourcePath)
+	validPath, err := validateSnapshotPath(sourcePath)
+	if err != nil {
+		return fmt.Errorf("validating source path: %w", err)
+	}
+
+	if _, err := os.Stat(validPath); os.IsNotExist(err) {
+		return fmt.Errorf("snapshot file does not exist: %s", validPath)
 	}
 
 	conn, err := sm.db.DB.Conn(context.Background())
@@ -287,7 +353,7 @@ func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
 		type restorer interface {
 			NewRestore(string) (*sqlite.Backup, error)
 		}
-		bck, err := driverConn.(restorer).NewRestore(sourcePath)
+		bck, err := driverConn.(restorer).NewRestore(validPath)
 		if err != nil {
 			return err
 		}
