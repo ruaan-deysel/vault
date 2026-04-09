@@ -109,6 +109,13 @@ func validateSnapshotPath(path string) (string, error) {
 		return "", fmt.Errorf("resolve snapshot path: %w", err)
 	}
 
+	// Defence-in-depth: verify the normalised absolute path contains no
+	// traversal components. This also serves as a CodeQL-recognised
+	// sanitiser barrier for go/path-injection.
+	if strings.Contains(absPath, "..") {
+		return "", fmt.Errorf("path traversal not allowed in snapshot path")
+	}
+
 	return absPath, nil
 }
 
