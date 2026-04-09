@@ -306,7 +306,7 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 	if len(h.serverKey) > 0 {
 		sealed, sealErr := crypto.Seal(h.serverKey, req.Passphrase)
 		if sealErr != nil {
-			respondError(w, http.StatusInternalServerError, "sealing passphrase: "+sealErr.Error())
+			respondInternalError(w, fmt.Errorf("sealing passphrase: %w", sealErr))
 			return
 		}
 		if err := h.db.SetSetting("encryption_passphrase_sealed", sealed); err != nil {
@@ -381,7 +381,7 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 
 		passphrase, err := crypto.Unseal(h.serverKey, sealed)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "unsealing passphrase: "+err.Error())
+			respondInternalError(w, fmt.Errorf("unsealing passphrase: %w", err))
 			return
 		}
 

@@ -37,7 +37,7 @@ func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
 	return &SMBAdapter{config: config}, nil
 }
 
-// smbDialTimeout is the maximum time allowed for dialling and mounting an SMB share.
+// smbDialTimeout is the maximum time allowed for dialling the SMB session.
 const smbDialTimeout = 30 * time.Second
 
 func (s *SMBAdapter) connect() (*smb2.Share, *smb2.Session, error) {
