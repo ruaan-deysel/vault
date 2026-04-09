@@ -54,7 +54,9 @@ var cleanupUninstallCmd = &cobra.Command{
 		cfg.LogPath, _ = cmd.Flags().GetString("log-path")
 		cfg.PIDFile, _ = cmd.Flags().GetString("pid-file")
 		cfg.HybridWorkingDir, _ = cmd.Flags().GetString("hybrid-working-dir")
-		cfg.DefaultSnapshotDB, _ = cmd.Flags().GetString("snapshot-path")
+		if cmd.Flags().Changed("snapshot-path") {
+			cfg.DefaultSnapshotDB, _ = cmd.Flags().GetString("snapshot-path")
+		}
 
 		return runUninstallCleanup(cfg)
 	},

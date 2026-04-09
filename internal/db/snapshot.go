@@ -366,7 +366,7 @@ func (sm *SnapshotManager) RestoreFromPath(sourcePath string) error {
 		return bck.Finish()
 	})
 	if err != nil {
-		return fmt.Errorf("restore from %s: %w", sourcePath, err)
+		return fmt.Errorf("restore from %s: %w", validPath, err)
 	}
 
 	sm.mu.Lock()

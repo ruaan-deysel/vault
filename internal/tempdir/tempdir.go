@@ -31,23 +31,28 @@ const StageDirName = ".vault-stage"
 //
 // Tests can override via SetCachePathsForTest.
 var (
-	cachePathsOnce sync.Once
-	cachePathsVal  []string
 	cachePathsMu   sync.Mutex
+	cachePathsVal  []string
+	cachePathsDone bool
 	cachePathsTest []string // non-nil when overridden by tests
 )
 
 func cachePaths() []string {
 	cachePathsMu.Lock()
+	defer cachePathsMu.Unlock()
+
 	if cachePathsTest != nil {
-		defer cachePathsMu.Unlock()
 		return cachePathsTest
 	}
-	cachePathsMu.Unlock()
 
-	cachePathsOnce.Do(func() {
+	// Don't permanently cache an empty result — pools may not be
+	// mounted yet at early startup. Retry discovery on next call.
+	if !cachePathsDone {
 		cachePathsVal = unraid.DiscoverPools()
-	})
+		if len(cachePathsVal) > 0 {
+			cachePathsDone = true
+		}
+	}
 	return cachePathsVal
 }
 
