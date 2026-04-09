@@ -76,6 +76,34 @@ func GetCachePaths() []string {
 	return cachePaths()
 }
 
+// PrependCachePaths adds paths to the front of the cache paths list so they
+// are tried first in the staging cascade. Duplicate paths are skipped.
+func PrependCachePaths(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	cachePathsMu.Lock()
+	defer cachePathsMu.Unlock()
+
+	existing := make(map[string]bool, len(cachePathsVal))
+	for _, p := range cachePathsVal {
+		existing[p] = true
+	}
+
+	var toAdd []string
+	for _, p := range paths {
+		if !existing[p] {
+			toAdd = append(toAdd, p)
+			existing[p] = true
+		}
+	}
+
+	if len(toAdd) > 0 {
+		cachePathsVal = append(toAdd, cachePathsVal...)
+		cachePathsDone = true
+	}
+}
+
 // StorageConfig is the minimal config subset needed to extract a local path.
 type StorageConfig struct {
 	Type   string

@@ -1,7 +1,7 @@
 <script>
   import { api } from '../lib/api.js'
 
-  let { value = $bindable(''), onselect = () => {} } = $props()
+  let { value = $bindable(''), onselect = () => {}, includeZfs = false } = $props()
 
   let open = $state(false)
   let entries = $state([])
@@ -21,7 +21,7 @@
   async function browse(path = '') {
     loading = true
     try {
-      const res = await api.browse(path)
+      const res = await api.browse(path, { includeZfs })
       entries = res.entries || []
       currentPath = res.path || ''
     } catch {

@@ -12,11 +12,29 @@ import (
 )
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.
-type BrowseHandler struct{}
+type BrowseHandler struct {
+	zfsLister ZFSMountpointLister
+}
+
+// ZFSMountpointLister enumerates ZFS dataset mountpoints for browse discovery.
+type ZFSMountpointLister interface {
+	ListZFSMountpoints() ([]ZFSMountInfo, error)
+}
+
+// ZFSMountInfo describes a ZFS pool mountpoint for browse discovery.
+type ZFSMountInfo struct {
+	Name       string
+	Mountpoint string
+}
 
 // NewBrowseHandler creates a new BrowseHandler.
 func NewBrowseHandler() *BrowseHandler {
 	return &BrowseHandler{}
+}
+
+// SetZFSLister sets the ZFS mountpoint lister for ZFS-aware browsing.
+func (h *BrowseHandler) SetZFSLister(lister ZFSMountpointLister) {
+	h.zfsLister = lister
 }
 
 // dirEntry represents a single directory in the browse response.
@@ -45,7 +63,8 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// No path — return well-known Unraid roots plus any array disks found.
 	if qpath == "" {
-		roots := h.discoverRoots()
+		includeZFS := r.URL.Query().Get("include_zfs") == "true"
+		roots := h.discoverRoots(includeZFS)
 		respondJSON(w, http.StatusOK, map[string]any{
 			"path":    "/mnt",
 			"entries": roots,
@@ -73,7 +92,8 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // discoverRoots returns Unraid well-known roots plus dynamically discovered
 // array disks (/mnt/disk1, /mnt/disk2, etc.) and cache/pool drives.
-func (h *BrowseHandler) discoverRoots() []dirEntry {
+// When includeZFS is true, ZFS dataset mountpoints are also included.
+func (h *BrowseHandler) discoverRoots(includeZFS bool) []dirEntry {
 	roots := make([]dirEntry, 0, len(unraidRoots)+8)
 
 	// Add well-known roots that actually exist on this system.
@@ -126,6 +146,28 @@ func (h *BrowseHandler) discoverRoots() []dirEntry {
 					Path:  "/mnt/" + name,
 					IsDir: true,
 				})
+			}
+		}
+	}
+
+	// Append ZFS pool mountpoints when requested.
+	if includeZFS && h.zfsLister != nil {
+		seen := make(map[string]bool, len(roots))
+		for _, r := range roots {
+			seen[r.Path] = true
+		}
+		zfsMounts, zfsErr := h.zfsLister.ListZFSMountpoints()
+		if zfsErr == nil {
+			for _, m := range zfsMounts {
+				if seen[m.Mountpoint] {
+					continue
+				}
+				roots = append(roots, dirEntry{
+					Name:  "ZFS Pool: " + m.Name,
+					Path:  m.Mountpoint,
+					IsDir: true,
+				})
+				seen[m.Mountpoint] = true
 			}
 		}
 	}
