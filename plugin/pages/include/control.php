@@ -74,7 +74,7 @@ switch ($action) {
         $service = preg_replace('/["\'\\\\\\r\\n]/', '', $service);
         $snapshot = preg_replace('/["\'\\\\\\r\\n]/', '', $snapshot);
         $content = "SERVICE=\"{$service}\"\nPORT=\"24085\"\nBIND_ADDRESS=\"127.0.0.1\"\nSNAPSHOT_PATH=\"{$snapshot}\"\n";
-        $written = file_put_contents($CONFIG, $content);
+        $written = file_put_contents($CONFIG, $content, LOCK_EX);
         if ($written === false) {
             http_response_code(500);
             echo json_encode(['error' => 'Failed to write config file']);
