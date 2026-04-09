@@ -194,7 +194,7 @@
     snapshotPathSaving = true
     try {
       databaseInfo = await api.setSnapshotPath('')
-      showToast('Snapshot path reset to default (takes effect on restart)', 'success')
+      showToast('Snapshot path reset to default', 'success')
     } catch (e) {
       showToast(e.message, 'error')
     } finally {

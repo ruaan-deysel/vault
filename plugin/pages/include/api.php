@@ -32,29 +32,54 @@ function vault_get_bind_address() {
 }
 
 function vault_get_local_ips() {
-    $output = @shell_exec('ip -4 addr show 2>/dev/null');
-    if (!$output) {
-        return [];
-    }
+    $commands = [
+        '4' => 'ip -4 addr show 2>/dev/null',
+        '6' => 'ip -6 addr show 2>/dev/null',
+    ];
+
     $result = [];
     $seen = [];
-    $lines = explode("\n", trim($output));
-    $iface = '';
-    foreach ($lines as $line) {
-        if (preg_match('/^\d+:\s+(\S+):/', $line, $m)) {
-            $iface = $m[1];
+
+    foreach ($commands as $family => $command) {
+        $output = @shell_exec($command);
+        if (!$output) {
+            continue;
         }
-        if (preg_match('/inet\s+([0-9.]+)\//', $line, $m) && $m[1] !== '127.0.0.1') {
-            $ip = $m[1];
-            if (isset($seen[$ip])) {
-                continue;
+
+        $lines = explode("\n", trim($output));
+        $iface = '';
+        foreach ($lines as $line) {
+            if (preg_match('/^\d+:\s+(\S+):/', $line, $m)) {
+                $iface = $m[1];
             }
+
             // Skip Docker bridges, libvirt bridges, and veth pairs.
-            if (preg_match('/^(docker|br-[0-9a-f]{12}|virbr|veth)/', $iface)) {
+            if ($iface !== '' && preg_match('/^(docker|br-[0-9a-f]{12}|virbr|veth)/', $iface)) {
                 continue;
             }
-            $seen[$ip] = true;
-            $result[] = ['ip' => $ip, 'iface' => $iface];
+
+            if ($family === '4') {
+                if (!preg_match('/inet\s+([0-9.]+)\//', $line, $m) || $m[1] === '127.0.0.1') {
+                    continue;
+                }
+            } else {
+                if (!preg_match('/inet6\s+([0-9a-fA-F:]+)\//', $line, $m) || strtolower($m[1]) === '::1') {
+                    continue;
+                }
+                // Skip link-local addresses (fe80::).
+                if (stripos($m[1], 'fe80:') === 0) {
+                    continue;
+                }
+            }
+
+            $ip = $m[1];
+            $key = $family . ':' . strtolower($ip);
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $result[] = ['ip' => $ip, 'iface' => $iface, 'family' => $family];
         }
     }
     return $result;

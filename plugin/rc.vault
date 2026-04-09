@@ -7,16 +7,15 @@ CONFIG=/boot/config/plugins/vault/vault.cfg
 LOG=/var/log/vault.log
 MAX_LOG_SIZE=$((256 * 1024))
 
-# Read bind address, port, and snapshot path from config.
-# SNAPSHOT_PATH is set by the daemon when the user configures a custom snapshot
-# location. It is read at startup before the database is restored.
+# Read bind address and port from config without sourcing (prevents code injection).
 BIND_ADDRESS=127.0.0.1
 PORT=24085
 if [ -f "$CONFIG" ]; then
-    # shellcheck source=/dev/null
-    source "$CONFIG"
-    BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
-    PORT="${PORT:-24085}"
+    _val="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"'].*//")"
+    [ -n "$_val" ] && BIND_ADDRESS="$_val"
+    _val="$(grep -E '^PORT=' "$CONFIG" | head -1 | sed "s/^PORT=//; s/^[\"']//; s/[\"'].*//")"
+    [ -n "$_val" ] && PORT="$_val"
+    unset _val
 fi
 
 # Validate bind address: only allow 127.0.0.1, 0.0.0.0, or a valid local IP.

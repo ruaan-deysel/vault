@@ -143,3 +143,47 @@ func TestPreferredPoolIn(t *testing.T) {
 		})
 	}
 }
+
+func TestIsMountedPoolFrom(t *testing.T) {
+	t.Parallel()
+
+	// Create a fake mountinfo file.
+	tmpDir := t.TempDir()
+	mountInfoFile := filepath.Join(tmpDir, "mountinfo")
+	content := `35 22 8:2 / /mnt/cache rw,relatime - btrfs /dev/sdb1 rw,space_cache
+40 22 8:3 / /mnt/nvme rw,relatime - xfs /dev/nvme0n1p1 rw
+50 22 8:4 / /mnt/pool\040name rw,relatime - btrfs /dev/sdc1 rw
+`
+	os.WriteFile(mountInfoFile, []byte(content), 0o644)
+
+	tests := []struct {
+		name     string
+		poolPath string
+		want     bool
+	}{
+		{"mounted cache pool", "/mnt/cache", true},
+		{"mounted nvme pool", "/mnt/nvme", true},
+		{"pool with space in name", "/mnt/pool name", true},
+		{"not mounted pool", "/mnt/ssd", false},
+		{"root is not a pool", "/", false},
+		{"empty path", "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isMountedPoolFrom(mountInfoFile, tc.poolPath)
+			if got != tc.want {
+				t.Errorf("isMountedPoolFrom(%q) = %v, want %v", tc.poolPath, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsMountedPoolFromMissingFile(t *testing.T) {
+	t.Parallel()
+	got := isMountedPoolFrom("/nonexistent/mountinfo", "/mnt/cache")
+	if got {
+		t.Error("expected false for nonexistent mountinfo file")
+	}
+}

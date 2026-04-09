@@ -70,10 +70,14 @@ switch ($action) {
                 $snapshot = $ini['SNAPSHOT_PATH'] ?? '';
             }
         }
-        // Sanitize values to prevent INI injection (remove newlines, quotes, backslashes).
-        $service = preg_replace('/["\'\\\\\\r\\n]/', '', $service);
-        $snapshot = preg_replace('/["\'\\\\\\r\\n]/', '', $snapshot);
-        $content = "SERVICE=\"{$service}\"\nPORT=\"24085\"\nBIND_ADDRESS=\"127.0.0.1\"\nSNAPSHOT_PATH=\"{$snapshot}\"\n";
+        // Constrain SERVICE to an allowlist.
+        if (!in_array($service, ['yes', 'no'], true)) {
+            $service = 'yes';
+        }
+        // Sanitize SNAPSHOT_PATH: only allow absolute paths with safe characters.
+        $snapshot = preg_replace('/[^a-zA-Z0-9_\-\/. ]/', '', $snapshot);
+        // Write values in single quotes to prevent shell expansion when sourced.
+        $content = "SERVICE='{$service}'\nPORT='24085'\nBIND_ADDRESS='127.0.0.1'\nSNAPSHOT_PATH='{$snapshot}'\n";
         $written = file_put_contents($CONFIG, $content, LOCK_EX);
         if ($written === false) {
             http_response_code(500);
