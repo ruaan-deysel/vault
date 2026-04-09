@@ -13,7 +13,8 @@ import (
 
 // BrowseHandler serves filesystem directory listings for the path browser UI.
 type BrowseHandler struct {
-	zfsLister ZFSMountpointLister
+	zfsLister         ZFSMountpointLister
+	extraAllowedRoots []string
 }
 
 // ZFSMountpointLister enumerates ZFS dataset mountpoints for browse discovery.
@@ -33,8 +34,28 @@ func NewBrowseHandler() *BrowseHandler {
 }
 
 // SetZFSLister sets the ZFS mountpoint lister for ZFS-aware browsing.
+// It also pre-populates extra allowed roots from ZFS mountpoints so path
+// validation accepts ZFS locations that may fall outside /mnt and /boot.
 func (h *BrowseHandler) SetZFSLister(lister ZFSMountpointLister) {
 	h.zfsLister = lister
+	if mounts, err := lister.ListZFSMountpoints(); err == nil {
+		for _, m := range mounts {
+			h.extraAllowedRoots = append(h.extraAllowedRoots, m.Mountpoint)
+		}
+	}
+}
+
+// normalizePath validates a browse path against the static allowed roots
+// plus any ZFS mountpoints discovered at startup.
+func (h *BrowseHandler) normalizePath(path string) (string, error) {
+	roots := browseAllowedRoots
+	if len(h.extraAllowedRoots) > 0 {
+		combined := make([]string, 0, len(browseAllowedRoots)+len(h.extraAllowedRoots))
+		combined = append(combined, browseAllowedRoots...)
+		combined = append(combined, h.extraAllowedRoots...)
+		roots = combined
+	}
+	return safepath.NormalizeAbsoluteUnderRoots(path, roots)
 }
 
 // dirEntry represents a single directory in the browse response.
@@ -72,9 +93,9 @@ func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalizedPath, err := normalizeBrowsePath(qpath)
+	normalizedPath, err := h.normalizePath(qpath)
 	if err != nil {
-		respondError(w, http.StatusForbidden, "browsing is restricted to /mnt/ and /boot/")
+		respondError(w, http.StatusForbidden, "path is outside allowed roots")
 		return
 	}
 

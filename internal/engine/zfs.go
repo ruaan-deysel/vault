@@ -380,15 +380,15 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// NVMePoolInfo describes a ZFS zpool composed entirely of NVMe devices.
-type NVMePoolInfo struct {
+// ZFSPoolInfo describes a ZFS zpool with its root dataset mountpoint.
+type ZFSPoolInfo struct {
 	Name       string `json:"name"`
 	Mountpoint string `json:"mountpoint"`
 }
 
 // ListNVMePools discovers ZFS zpools where every data vdev is backed by NVMe
 // devices. It returns only pools with valid, accessible mountpoints.
-func (h *ZFSHandler) ListNVMePools() ([]NVMePoolInfo, error) {
+func (h *ZFSHandler) ListNVMePools() ([]ZFSPoolInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -397,7 +397,7 @@ func (h *ZFSHandler) ListNVMePools() ([]NVMePoolInfo, error) {
 		return nil, fmt.Errorf("listing zpools: %w", err)
 	}
 
-	var result []NVMePoolInfo
+	var result []ZFSPoolInfo
 	for _, pool := range pools {
 		leaves := collectLeafVdevPaths(pool.Vdevs)
 		if len(leaves) == 0 {
@@ -419,7 +419,7 @@ func (h *ZFSHandler) ListNVMePools() ([]NVMePoolInfo, error) {
 			continue
 		}
 
-		result = append(result, NVMePoolInfo{
+		result = append(result, ZFSPoolInfo{
 			Name:       pool.Name,
 			Mountpoint: mountpoint,
 		})
@@ -428,10 +428,10 @@ func (h *ZFSHandler) ListNVMePools() ([]NVMePoolInfo, error) {
 	return result, nil
 }
 
-// ListZFSMountpoints returns mountpoints for all accessible ZFS filesystem
+// ListZFSMountpoints returns mountpoints for all accessible ZFS pool root
 // datasets. Used by the browse API to discover ZFS locations for database or
 // staging configuration.
-func (h *ZFSHandler) ListZFSMountpoints() ([]NVMePoolInfo, error) {
+func (h *ZFSHandler) ListZFSMountpoints() ([]ZFSPoolInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -440,7 +440,7 @@ func (h *ZFSHandler) ListZFSMountpoints() ([]NVMePoolInfo, error) {
 		return nil, fmt.Errorf("listing zpools: %w", err)
 	}
 
-	var result []NVMePoolInfo
+	var result []ZFSPoolInfo
 	for _, pool := range pools {
 		mountpoint, err := h.poolMountpoint(ctx, pool.Name)
 		if err != nil {
@@ -453,7 +453,7 @@ func (h *ZFSHandler) ListZFSMountpoints() ([]NVMePoolInfo, error) {
 			continue
 		}
 
-		result = append(result, NVMePoolInfo{
+		result = append(result, ZFSPoolInfo{
 			Name:       pool.Name,
 			Mountpoint: mountpoint,
 		})

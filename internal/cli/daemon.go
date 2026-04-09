@@ -222,9 +222,8 @@ var daemonCmd = &cobra.Command{
 			if nvmePools, err := zfsH.ListNVMePools(); err == nil && len(nvmePools) > 0 {
 				var paths []string
 				for _, p := range nvmePools {
-					stagingPath := filepath.Join(p.Mountpoint, ".vault-staging")
-					paths = append(paths, stagingPath)
-					log.Printf("NVMe ZFS pool detected: %s → staging at %s", p.Name, stagingPath)
+					paths = append(paths, p.Mountpoint)
+					log.Printf("NVMe ZFS pool detected: %s → cache base %s", p.Name, p.Mountpoint)
 				}
 				tempdir.PrependCachePaths(paths)
 			}

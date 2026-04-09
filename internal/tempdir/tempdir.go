@@ -78,12 +78,20 @@ func GetCachePaths() []string {
 
 // PrependCachePaths adds paths to the front of the cache paths list so they
 // are tried first in the staging cascade. Duplicate paths are skipped.
+// Discovery is triggered first (if not already completed) so the normal
+// pool cascade is preserved rather than being shadowed.
 func PrependCachePaths(paths []string) {
 	if len(paths) == 0 {
 		return
 	}
 	cachePathsMu.Lock()
 	defer cachePathsMu.Unlock()
+
+	// Run discovery first so we merge with (not replace) the
+	// conventional Unraid pool cascade.
+	if !cachePathsDone {
+		cachePathsVal = unraid.DiscoverPools()
+	}
 
 	existing := make(map[string]bool, len(cachePathsVal))
 	for _, p := range cachePathsVal {
@@ -100,8 +108,8 @@ func PrependCachePaths(paths []string) {
 
 	if len(toAdd) > 0 {
 		cachePathsVal = append(toAdd, cachePathsVal...)
-		cachePathsDone = true
 	}
+	cachePathsDone = true
 }
 
 // StorageConfig is the minimal config subset needed to extract a local path.

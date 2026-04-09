@@ -10,8 +10,8 @@ import (
 // ZFSHandler is a stub for non-Linux platforms where ZFS is not available.
 type ZFSHandler struct{}
 
-// NVMePoolInfo describes a ZFS zpool composed entirely of NVMe devices.
-type NVMePoolInfo struct {
+// ZFSPoolInfo describes a ZFS zpool with its root dataset mountpoint.
+type ZFSPoolInfo struct {
 	Name       string `json:"name"`
 	Mountpoint string `json:"mountpoint"`
 }
@@ -37,11 +37,11 @@ func (h *ZFSHandler) Restore(_ context.Context, _ BackupItem, _ string, _ Progre
 }
 
 // ListNVMePools returns an empty slice on non-Linux platforms.
-func (h *ZFSHandler) ListNVMePools() ([]NVMePoolInfo, error) {
+func (h *ZFSHandler) ListNVMePools() ([]ZFSPoolInfo, error) {
 	return nil, nil
 }
 
 // ListZFSMountpoints returns an empty slice on non-Linux platforms.
-func (h *ZFSHandler) ListZFSMountpoints() ([]NVMePoolInfo, error) {
+func (h *ZFSHandler) ListZFSMountpoints() ([]ZFSPoolInfo, error) {
 	return nil, nil
 }
