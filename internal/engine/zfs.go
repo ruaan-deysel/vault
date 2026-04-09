@@ -501,10 +501,16 @@ func allNVMe(paths []string) bool {
 }
 
 // isValidMountpoint returns true if the mountpoint is a usable filesystem path.
+// The root filesystem ("/") is explicitly rejected to prevent broadening browse
+// access to the entire host.
 func isValidMountpoint(mp string) bool {
 	switch mp {
 	case "", "none", "-", "legacy":
 		return false
 	}
-	return filepath.IsAbs(mp)
+	cleaned := filepath.Clean(mp)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
+	return cleaned != string(filepath.Separator)
 }

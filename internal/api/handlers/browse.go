@@ -37,16 +37,40 @@ func NewBrowseHandler() *BrowseHandler {
 // It also pre-populates extra allowed roots from ZFS mountpoints so path
 // validation accepts ZFS locations that may fall outside /mnt and /boot.
 func (h *BrowseHandler) SetZFSLister(lister ZFSMountpointLister) {
+	if lister == nil {
+		return
+	}
 	h.zfsLister = lister
-	if mounts, err := lister.ListZFSMountpoints(); err == nil {
-		for _, m := range mounts {
-			h.extraAllowedRoots = append(h.extraAllowedRoots, m.Mountpoint)
+
+	mounts, err := lister.ListZFSMountpoints()
+	if err != nil {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(h.extraAllowedRoots))
+	for _, root := range h.extraAllowedRoots {
+		seen[filepath.Clean(root)] = struct{}{}
+	}
+
+	for _, m := range mounts {
+		mp := filepath.Clean(m.Mountpoint)
+		if mp == "" || !filepath.IsAbs(mp) || mp == "/" {
+			continue
 		}
+		if _, ok := seen[mp]; ok {
+			continue
+		}
+		h.extraAllowedRoots = append(h.extraAllowedRoots, mp)
+		seen[mp] = struct{}{}
 	}
 }
 
 // normalizePath validates a browse path against the static allowed roots
-// plus any ZFS mountpoints discovered at startup.
+// plus any ZFS mountpoints discovered at startup. ZFS roots are always
+// included in path validation (not gated by include_zfs) because they are
+// legitimate filesystem locations used for database and staging configuration.
+// The include_zfs query parameter only controls whether ZFS roots appear in the
+// top-level root listing.
 func (h *BrowseHandler) normalizePath(path string) (string, error) {
 	roots := browseAllowedRoots
 	if len(h.extraAllowedRoots) > 0 {
@@ -75,8 +99,9 @@ var unraidRoots = []dirEntry{
 	{Name: "Remote Mounts", Path: "/mnt/remotes", IsDir: true},
 }
 
-// List returns subdirectories of a given path. Only paths under /mnt/ are allowed.
-// When no path query param is provided, it returns Unraid well-known roots.
+// List returns subdirectories of a given path. Paths must be under allowed roots
+// (/mnt, /boot, or discovered ZFS mountpoints). When no path query param is
+// provided, it returns Unraid well-known roots plus optional ZFS pools.
 //
 //	GET /api/v1/browse?path=/mnt/user
 func (h *BrowseHandler) List(w http.ResponseWriter, r *http.Request) {

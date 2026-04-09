@@ -90,7 +90,11 @@ func PrependCachePaths(paths []string) {
 	// Run discovery first so we merge with (not replace) the
 	// conventional Unraid pool cascade.
 	if !cachePathsDone {
-		cachePathsVal = unraid.DiscoverPools()
+		discovered := unraid.DiscoverPools()
+		if len(discovered) > 0 {
+			cachePathsVal = discovered
+			cachePathsDone = true
+		}
 	}
 
 	existing := make(map[string]bool, len(cachePathsVal))
@@ -109,7 +113,6 @@ func PrependCachePaths(paths []string) {
 	if len(toAdd) > 0 {
 		cachePathsVal = append(toAdd, cachePathsVal...)
 	}
-	cachePathsDone = true
 }
 
 // StorageConfig is the minimal config subset needed to extract a local path.
