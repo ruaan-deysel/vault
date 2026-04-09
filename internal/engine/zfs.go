@@ -412,6 +412,7 @@ func (h *ZFSHandler) ListNVMePools() ([]ZFSPoolInfo, error) {
 			log.Printf("zfs: skipping pool %s: %v", pool.Name, err)
 			continue
 		}
+		mountpoint = filepath.Clean(mountpoint)
 		if !isValidMountpoint(mountpoint) {
 			continue
 		}
@@ -446,6 +447,7 @@ func (h *ZFSHandler) ListZFSMountpoints() ([]ZFSPoolInfo, error) {
 		if err != nil {
 			continue
 		}
+		mountpoint = filepath.Clean(mountpoint)
 		if !isValidMountpoint(mountpoint) {
 			continue
 		}

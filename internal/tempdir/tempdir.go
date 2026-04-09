@@ -78,8 +78,11 @@ func GetCachePaths() []string {
 
 // PrependCachePaths adds paths to the front of the cache paths list so they
 // are tried first in the staging cascade. Duplicate paths are skipped.
+// Paths are normalized with filepath.Clean; "/" is rejected.
 // Discovery is triggered first (if not already completed) so the normal
 // pool cascade is preserved rather than being shadowed.
+// If test overrides are active (via SetCachePathsForTest), the prepend
+// targets the test slice so callers see the prepended paths.
 func PrependCachePaths(paths []string) {
 	if len(paths) == 0 {
 		return
@@ -87,9 +90,13 @@ func PrependCachePaths(paths []string) {
 	cachePathsMu.Lock()
 	defer cachePathsMu.Unlock()
 
-	// Run discovery first so we merge with (not replace) the
-	// conventional Unraid pool cascade.
-	if !cachePathsDone {
+	// Determine the target slice: test override or production.
+	target := &cachePathsVal
+	if cachePathsTest != nil {
+		target = &cachePathsTest
+	} else if !cachePathsDone {
+		// Run discovery first so we merge with (not replace) the
+		// conventional Unraid pool cascade.
 		discovered := unraid.DiscoverPools()
 		if len(discovered) > 0 {
 			cachePathsVal = discovered
@@ -97,21 +104,25 @@ func PrependCachePaths(paths []string) {
 		}
 	}
 
-	existing := make(map[string]bool, len(cachePathsVal))
-	for _, p := range cachePathsVal {
-		existing[p] = true
+	existing := make(map[string]bool, len(*target))
+	for _, p := range *target {
+		existing[filepath.Clean(p)] = true
 	}
 
 	var toAdd []string
 	for _, p := range paths {
-		if !existing[p] {
-			toAdd = append(toAdd, p)
-			existing[p] = true
+		cleaned := filepath.Clean(p)
+		if cleaned == "/" || cleaned == "" {
+			continue
+		}
+		if !existing[cleaned] {
+			toAdd = append(toAdd, cleaned)
+			existing[cleaned] = true
 		}
 	}
 
 	if len(toAdd) > 0 {
-		cachePathsVal = append(toAdd, cachePathsVal...)
+		*target = append(toAdd, *target...)
 	}
 }
 

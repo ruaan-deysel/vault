@@ -36,17 +36,28 @@ func NewBrowseHandler() *BrowseHandler {
 // SetZFSLister sets the ZFS mountpoint lister for ZFS-aware browsing.
 // It also pre-populates extra allowed roots from ZFS mountpoints so path
 // validation accepts ZFS locations that may fall outside /mnt and /boot.
+// The lister is only stored when mountpoints are successfully fetched so
+// that discoverRoots and normalizePath stay consistent.
 func (h *BrowseHandler) SetZFSLister(lister ZFSMountpointLister) {
 	if lister == nil {
 		return
 	}
-	h.zfsLister = lister
 
 	mounts, err := lister.ListZFSMountpoints()
 	if err != nil {
 		return
 	}
 
+	// Lister is only assigned after a successful fetch so discoverRoots
+	// and normalizePath stay in sync with extraAllowedRoots.
+	h.zfsLister = lister
+
+	h.mergeExtraRoots(mounts)
+}
+
+// mergeExtraRoots adds cleaned, deduplicated ZFS mountpoints to
+// extraAllowedRoots. It skips empty, non-absolute, and root ("/") paths.
+func (h *BrowseHandler) mergeExtraRoots(mounts []ZFSMountInfo) {
 	seen := make(map[string]struct{}, len(h.extraAllowedRoots))
 	for _, root := range h.extraAllowedRoots {
 		seen[filepath.Clean(root)] = struct{}{}
