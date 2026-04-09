@@ -24,7 +24,7 @@ $action = $_POST['action'] ?? $_GET['action'] ?? 'status';
 
 // Validate CSRF token for state-changing actions (defense-in-depth).
 if ($action !== 'status') {
-    $csrf = $_POST['csrf_token'] ?? $_GET['csrf_token'] ?? '';
+    $csrf = $_POST['csrf_token'] ?? '';
     if (!isset($var['csrf_token']) || $csrf !== $var['csrf_token']) {
         http_response_code(403);
         echo json_encode(['error' => 'Invalid CSRF token']);
@@ -63,9 +63,9 @@ switch ($action) {
                 $snapshot = $ini['SNAPSHOT_PATH'] ?? '';
             }
         }
-        // Sanitize values to prevent INI injection (remove newlines, quotes).
-        $service = preg_replace('/["\'\r\n]/', '', $service);
-        $snapshot = preg_replace('/["\'\r\n]/', '', $snapshot);
+        // Sanitize values to prevent INI injection (remove newlines, quotes, backslashes).
+        $service = preg_replace('/["\'\\\\\\r\\n]/', '', $service);
+        $snapshot = preg_replace('/["\'\\\\\\r\\n]/', '', $snapshot);
         $content = "SERVICE=\"{$service}\"\nPORT=\"24085\"\nBIND_ADDRESS=\"127.0.0.1\"\nSNAPSHOT_PATH=\"{$snapshot}\"\n";
         $written = file_put_contents($CONFIG, $content);
         if ($written === false) {

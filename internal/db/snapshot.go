@@ -96,8 +96,9 @@ func validateSnapshotPath(path string) (string, error) {
 	}
 
 	// Reject ".." components BEFORE cleaning — filepath.Clean would silently
-	// normalise them away, defeating traversal detection.
-	for _, part := range strings.Split(path, string(filepath.Separator)) {
+	// normalise them away, defeating traversal detection.  Use forward-slash
+	// splitting so the check works regardless of OS path separator.
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
 		if part == ".." {
 			return "", fmt.Errorf("path traversal not allowed in snapshot path")
 		}

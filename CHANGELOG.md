@@ -41,12 +41,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Mirrored SSD cache pools (e.g. `/mnt/cache2`, `/mnt/cache3`) not detected under Settings → Database Location and Temporary Work Area — pool discovery now scans `/mnt/` at runtime using exclusion-based filtering (closes #49)
 - Browse handler filesystem roots now dynamically discover all pool drives instead of relying on a hardcoded "Cache" entry
-- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` with `..` component rejection before `filepath.Clean` + `filepath.Abs` normalisation (closes #27, closes #28)
+- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` with `..` component rejection before `filepath.Clean` + `filepath.Abs` normalisation; uses `filepath.ToSlash` for cross-platform traversal detection (closes #27, closes #28)
 - Data race in `SaveSnapshot` reading `snapshotPath` without mutex protection — now reads the field under lock consistently with other accessors
 - Diagnostics collector hybrid-mode detection now checks that the preferred pool is mounted (matching daemon startup behaviour) instead of only checking directory existence
-- CSRF token validation added to `control.php` for state-changing actions (start, stop, restart, reset-config)
+- CSRF token validation added to `control.php` for state-changing actions (start, stop, restart, reset-config) — token sourced exclusively from POST
 - IPv6 loopback (`::1`) bind address now connects via `[::1]` instead of `127.0.0.1` in the PHP proxy, fixing connectivity when the daemon binds exclusively to IPv6
 - Bind-address validation in `apply.sh` and `rc.vault` now uses `grep -F` (fixed-string) to prevent regex wildcard matching of IPv4 dots, and `apply.sh` accepts IPv6 loopback/wildcard (`::1`, `::`)
+- `apply.sh` no longer sources the config file directly — safely extracts only the `BIND_ADDRESS` key via grep/sed to prevent arbitrary code execution from user-editable config
+- `apply.sh` now checks `sed -i` exit status and aborts with an error if the config update fails
+- INI sanitisation in `control.php` now strips backslashes in addition to quotes and newlines, preventing backslash-escape attacks on INI quoting
 - Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
 - Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (closes #11)
 - Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (closes #28)
