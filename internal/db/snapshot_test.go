@@ -18,8 +18,8 @@ func TestValidateSnapshotPath(t *testing.T) {
 		{"valid absolute path", "/mnt/cache/.vault/vault.db", false},
 		{"valid nested path", "/boot/config/plugins/vault/vault.db", false},
 		{"empty path", "", true},
-		{"traversal with dotdot", "/mnt/cache/../../etc/passwd", false}, // Clean resolves it to /etc/passwd — no ".." left
-		{"relative path resolves", "relative/path/vault.db", false},     // Abs makes it absolute
+		{"traversal with dotdot", "/mnt/cache/../../etc/passwd", true},
+		{"relative path resolves", "relative/path/vault.db", false}, // Abs makes it absolute
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,17 +35,13 @@ func TestValidateSnapshotPath(t *testing.T) {
 	}
 }
 
-func TestValidateSnapshotPath_CleansTraversal(t *testing.T) {
+func TestValidateSnapshotPath_RejectsTraversal(t *testing.T) {
 	t.Parallel()
 
-	// After Clean+Abs, traversal sequences are normalized — verify the function
-	// returns a clean absolute path without ".." components.
-	result, err := validateSnapshotPath("/mnt/cache/../cache/vault.db")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "/mnt/cache/vault.db" {
-		t.Errorf("got %q, want %q", result, "/mnt/cache/vault.db")
+	// Paths containing ".." components are rejected before normalisation.
+	_, err := validateSnapshotPath("/mnt/cache/../cache/vault.db")
+	if err == nil {
+		t.Fatal("expected error for path containing '..' component")
 	}
 }
 

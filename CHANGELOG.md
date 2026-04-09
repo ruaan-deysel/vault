@@ -8,36 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- `internal/unraid` package with `DiscoverPools()` and `PreferredPool()` for dynamic Unraid pool detection — replaces hardcoded `/mnt/cache` references across the codebase (closes #49)
-
-### Fixed
-
-- Mirrored SSD cache pools (e.g. `/mnt/cache2`, `/mnt/cache3`) not detected under Settings → Database Location and Temporary Work Area — pool discovery now scans `/mnt/` at runtime using exclusion-based filtering (closes #49)
-- Browse handler filesystem roots now dynamically discover all pool drives instead of relying on a hardcoded "Cache" entry
-- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` using `filepath.Clean` + `filepath.Abs` with `..` component rejection (closes #27, closes #28)
-- Data race in `SaveSnapshot` reading `snapshotPath` without mutex protection — now reads the field under lock consistently with other accessors
-
-### Changed
-
-- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
-- Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
-- Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
-- Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
-- Updated Database Location subtitle to explain that Vault's database tracks jobs, schedules, and restore points
-- Replaced "Hybrid (RAM + SSD snapshots)" with "Hybrid — runs in memory for speed, saves to SSD periodically"
-- Renamed "Working" to "Active database" with tooltip explaining hybrid mode operates from RAM
-- Renamed "Snapshot" to "Saved copy", "Last snapshot" to "Last saved", and "Snapshot size" to "Saved copy size"
-- Renamed "Custom Snapshot Path (optional)" to "Custom save location" with description: "Choose where the persistent database copy is stored. Defaults to SSD cache."
-- Enhanced USB warning to suggest adding a cache drive or setting a custom save location
-- Simplified Backup Targets subtitle to "Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery."
-
-### Added
-
+- `internal/unraid` package with `DiscoverPools()`, `PreferredPool()`, and `IsMountedPool()` for dynamic Unraid pool detection — replaces hardcoded `/mnt/cache` references across the codebase (closes #49)
 - Contextual tooltips across Settings, Jobs, Storage, and Replication pages — reusable `Tooltip.svelte` component with hover/click-to-toggle, viewport-aware positioning, keyboard dismissal, and full ARIA accessibility (closes #34)
-
-### Fixed
-
-- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
 - Enriched activity logs with contextual details for troubleshooting: backup started/completed and restore completed entries now include job name, backup type, storage destination, duration, and size; per-item container health check results are logged individually under a new "health" category; stop_all health check summary includes aggregate counts (containers checked/healthy/unhealthy) (closes #30)
 - "Health" category filter on the Logs page to isolate container health check entries
 - Smart formatting for activity log detail badges: backup types are capitalised, durations show unit suffixes, byte sizes are human-readable (e.g. 2.2 GB), and null values are hidden
@@ -67,6 +39,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Mirrored SSD cache pools (e.g. `/mnt/cache2`, `/mnt/cache3`) not detected under Settings → Database Location and Temporary Work Area — pool discovery now scans `/mnt/` at runtime using exclusion-based filtering (closes #49)
+- Browse handler filesystem roots now dynamically discover all pool drives instead of relying on a hardcoded "Cache" entry
+- Path traversal vulnerability (CWE-22) in `SnapshotManager` — added `validateSnapshotPath` defense-in-depth validation to `SaveSnapshot`, `SetSnapshotPath`, `RestoreFromSnapshot`, `RestoreFromPath`, `SetUSBBackupPath`, and `saveUSBBackup` with `..` component rejection before `filepath.Clean` + `filepath.Abs` normalisation (closes #27, closes #28)
+- Data race in `SaveSnapshot` reading `snapshotPath` without mutex protection — now reads the field under lock consistently with other accessors
+- Diagnostics collector hybrid-mode detection now checks that the preferred pool is mounted (matching daemon startup behaviour) instead of only checking directory existence
+- CSRF token validation added to `control.php` for state-changing actions (start, stop, restart, reset-config)
+- IPv6 loopback (`::1`) bind address now connects via `[::1]` instead of `127.0.0.1` in the PHP proxy, fixing connectivity when the daemon binds exclusively to IPv6
+- Bind-address validation in `apply.sh` and `rc.vault` now uses `grep -F` (fixed-string) to prevent regex wildcard matching of IPv4 dots, and `apply.sh` accepts IPv6 loopback/wildcard (`::1`, `::`)
+- Tooltip clipping when positioned near viewport edges — switched from `position: absolute` to `position: fixed` with JS-calculated viewport coordinates and horizontal clamping
 - Container path exclusion presets now load correctly when Vault runs behind the Unraid web proxy; `fetchContainerPresets()` uses `buildApiRequest()` instead of raw `fetch()` to route through the authenticated proxy endpoint (closes #11)
 - Stuck backup jobs can no longer run indefinitely — timeout and stall detection ensure jobs are always bounded (closes #28)
 - Time format detection now falls back to `[notify][time]` in `dynamix.cfg` when `[display][time]` is absent, fixing detection on Unraid 7.x where the time format preference is stored in the notification settings section
@@ -80,6 +61,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Container volume backups now skip Unix sockets, character/block devices, and named pipes instead of failing with "sockets not supported" errors; affected containers (e.g. those mounting `/var/run/docker.sock`) will complete successfully with a log entry for each skipped special file (closes #5)
 - Monthly schedule day picker now shows all 31 days instead of only days 1–28; previously `Array(27)` omitted days 29, 30, and 31 (closes #9)
 
+### Changed
+
+- Renamed "Staging Directory" section to "Temporary Work Area" with descriptive subtitle explaining its purpose (closes #13)
+- Replaced "SSD Cache (automatic)" label with "Using SSD cache for fast backup processing" and "Custom override" with "Custom location"
+- Renamed "Custom Path (optional)" to "Custom Location" with description: "Override the automatic location. Use this if you want backups to be assembled on a specific drive."
+- Renamed "Cascade order" to "Fallback locations" with description: "Vault tries each location in order and uses the first available one."
+- Updated Database Location subtitle to explain that Vault's database tracks jobs, schedules, and restore points
+- Replaced "Hybrid (RAM + SSD snapshots)" with "Hybrid — runs in memory for speed, saves to SSD periodically"
+- Renamed "Working" to "Active database" with tooltip explaining hybrid mode operates from RAM
+- Renamed "Snapshot" to "Saved copy", "Last snapshot" to "Last saved", and "Snapshot size" to "Saved copy size"
+- Renamed "Custom Snapshot Path (optional)" to "Custom save location" with description: "Choose where the persistent database copy is stored. Defaults to SSD cache."
+- Enhanced USB warning to suggest adding a cache drive or setting a custom save location
+- Simplified Backup Targets subtitle to "Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery."
+- `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
+- All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
+- `Runner.backupItem()` now receives and passes context to engine handlers
+
 ### Removed
 
 - API Access feature completely removed from Security settings — API key generation, rotation, revocation, and status endpoints are no longer available
@@ -89,12 +87,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `/auth/status`, `/settings/api-key/generate`, `/settings/api-key/rotate`, `/settings/api-key/revoke`, `/settings/api-key` endpoints removed
 - `api_key` column removed from `replication_sources` database schema
 - `LoginPrompt.svelte` component deleted (unused)
-
-### Changed
-
-- `engine.Handler` interface now accepts `context.Context` as the first parameter for `Backup()` and `Restore()`
-- All engine handlers (Container, VM, Folder, Plugin) updated to accept and propagate context
-- `Runner.backupItem()` now receives and passes context to engine handlers
 
 ## [2026.03.02] - 2026-03-19
 

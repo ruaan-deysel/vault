@@ -88,24 +88,24 @@ func (sm *SnapshotManager) DefaultSnapshotPath() string {
 	return sm.defaultSnapshotPath
 }
 
-// validateSnapshotPath normalises and validates a snapshot path to prevent
-// path traversal attacks (CWE-22). Returns the cleaned absolute path.
+// validateSnapshotPath rejects input containing path traversal components and
+// returns the cleaned absolute path.
 func validateSnapshotPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("snapshot path must not be empty")
 	}
 
-	absPath, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return "", fmt.Errorf("resolve snapshot path: %w", err)
-	}
-
-	// After Clean+Abs, a legitimate absolute path must not contain ".."
-	// path components. Reject any residual traversal.
-	for _, part := range strings.Split(absPath, string(filepath.Separator)) {
+	// Reject ".." components BEFORE cleaning — filepath.Clean would silently
+	// normalise them away, defeating traversal detection.
+	for _, part := range strings.Split(path, string(filepath.Separator)) {
 		if part == ".." {
 			return "", fmt.Errorf("path traversal not allowed in snapshot path")
 		}
+	}
+
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve snapshot path: %w", err)
 	}
 
 	return absPath, nil

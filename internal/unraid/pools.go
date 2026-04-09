@@ -94,3 +94,19 @@ func preferredPoolIn(root string) string {
 
 	return ""
 }
+
+// IsMountedPool reports whether a pool path exists and contains entries,
+// indicating a mounted filesystem rather than an empty mount-point stub.
+func IsMountedPool(poolPath string) bool {
+	entries, err := os.ReadDir(poolPath)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name != "." && name != ".." {
+			return true
+		}
+	}
+	return false
+}

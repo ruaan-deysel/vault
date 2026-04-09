@@ -4,6 +4,10 @@
 
 header('Content-Type: application/json');
 
+// Load Unraid state for CSRF validation.
+$stateFile = '/var/local/emhttp/var.ini';
+$var = file_exists($stateFile) ? @parse_ini_file($stateFile) : [];
+
 $RC = '/etc/rc.d/rc.vault';
 $PIDFILE = '/var/run/vault.pid';
 $CONFIG = '/boot/config/plugins/vault/vault.cfg';
@@ -17,6 +21,16 @@ function is_running() {
 }
 
 $action = $_POST['action'] ?? $_GET['action'] ?? 'status';
+
+// Validate CSRF token for state-changing actions (defense-in-depth).
+if ($action !== 'status') {
+    $csrf = $_POST['csrf_token'] ?? $_GET['csrf_token'] ?? '';
+    if (!isset($var['csrf_token']) || $csrf !== $var['csrf_token']) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Invalid CSRF token']);
+        exit;
+    }
+}
 
 switch ($action) {
     case 'start':

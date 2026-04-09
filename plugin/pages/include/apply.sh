@@ -11,10 +11,11 @@ if [ -f "$CONFIG" ]; then
     # shellcheck source=/dev/null
     source "$CONFIG"
     case "${BIND_ADDRESS:-}" in
-        127.0.0.1|0.0.0.0|"") ;; # valid
+        127.0.0.1|0.0.0.0|::1|::|"") ;; # valid loopback/wildcard
         *)
             # Check if it's a local interface IP; if not, reset to 127.0.0.1.
-            if ! ip addr show 2>/dev/null | grep -q "inet ${BIND_ADDRESS}/\|inet6 ${BIND_ADDRESS}/"; then
+            if ! ip addr show 2>/dev/null | grep -Fq "inet ${BIND_ADDRESS}/" && \
+               ! ip addr show 2>/dev/null | grep -Fq "inet6 ${BIND_ADDRESS}/"; then
                 echo "Warning: bind address '${BIND_ADDRESS}' is not local; resetting to 127.0.0.1"
                 sed -i 's/^BIND_ADDRESS=.*/BIND_ADDRESS=127.0.0.1/' "$CONFIG"
             fi

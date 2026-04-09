@@ -257,7 +257,7 @@ func (c *Collector) collectDatabaseInfo() DatabaseInfo {
 	// Detect hybrid mode by checking for a snapshot path setting.
 	if override, err := c.db.GetSetting("snapshot_path_override", ""); err == nil && override != "" {
 		info.Mode = "hybrid"
-	} else if pool := unraid.PreferredPool(); pool != "" {
+	} else if pool := unraid.PreferredPool(); pool != "" && unraid.IsMountedPool(pool) {
 		info.Mode = "hybrid"
 	}
 

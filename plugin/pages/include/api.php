@@ -114,9 +114,11 @@ function vault_http_host($host) {
 function vault_target_url($path = '') {
     $port = vault_get_port();
     $bind = vault_get_bind_address();
-    // For wildcard or loopback, connect via 127.0.0.1.
-    // For a specific LAN IP, connect via that IP directly.
-    if (vault_is_loopback_bind_address($bind) || vault_is_wildcard_bind_address($bind)) {
+    // For wildcard addresses, connect via IPv4 loopback (works for both 0.0.0.0 and ::).
+    // For specific or loopback addresses, use the configured address directly so that
+    // ::1 connects via [::1] instead of 127.0.0.1 (which would fail if the daemon
+    // only listens on IPv6).
+    if (vault_is_wildcard_bind_address($bind)) {
         $host = '127.0.0.1';
     } else {
         $host = vault_http_host($bind);
