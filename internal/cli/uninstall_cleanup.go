@@ -12,6 +12,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/tempdir"
+	"github.com/ruaan-deysel/vault/internal/unraid"
 	"github.com/spf13/cobra"
 )
 
@@ -73,8 +74,12 @@ func init() {
 }
 
 func defaultUninstallCleanupConfig() uninstallCleanupConfig {
-	cachePaths := make([]string, len(tempdir.CachePaths))
-	copy(cachePaths, tempdir.CachePaths)
+	paths := tempdir.GetCachePaths()
+
+	snapshotDB := "/mnt/cache/.vault/vault.db"
+	if pool := unraid.PreferredPool(); pool != "" {
+		snapshotDB = filepath.Join(pool, ".vault", "vault.db")
+	}
 
 	return uninstallCleanupConfig{
 		DBPath:            "/boot/config/plugins/vault/vault.db",
@@ -85,8 +90,8 @@ func defaultUninstallCleanupConfig() uninstallCleanupConfig {
 		LogPath:           "/var/log/vault.log",
 		PIDFile:           "/var/run/vault.pid",
 		HybridWorkingDir:  "/var/local/vault",
-		DefaultSnapshotDB: "/mnt/cache/.vault/vault.db",
-		CachePaths:        cachePaths,
+		DefaultSnapshotDB: snapshotDB,
+		CachePaths:        paths,
 	}
 }
 
