@@ -40,7 +40,7 @@ func (h *StorageHandler) notifyConfigChange() {
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	for i := range dests {
@@ -57,7 +57,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.db.CreateStorageDestination(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	dest.ID = id
@@ -85,7 +85,7 @@ func (h *StorageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.ID = id
 	if err := h.db.UpdateStorageDestination(dest); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, dest)
@@ -98,7 +98,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Check for dependent jobs.
 	jobCount, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	if jobCount > 0 && r.URL.Query().Get("force") != "true" {
@@ -120,7 +120,7 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteStorageDestination(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -160,7 +160,7 @@ func (h *StorageHandler) Scan(w http.ResponseWriter, r *http.Request) {
 
 	manifests, err := h.runner.ScanStorageManifests(dest)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 
 	imported, err := h.runner.ImportBackups(id, req.Backups)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -329,7 +329,7 @@ func (h *StorageHandler) DependentJobs(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	count, err := h.db.CountJobsByStorageDestID(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"job_count": count})

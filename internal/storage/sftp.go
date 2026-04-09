@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -115,6 +116,8 @@ func (s *SFTPAdapter) hostKeyCallback() ssh.HostKeyCallback {
 	}
 
 	// Fallback: accept any key (backward compatibility with existing configs).
+	log.Printf("Warning: SFTP connection to %s has no host key verification configured. "+
+		"Set host_key or known_hosts_file in storage config to prevent MITM attacks.", s.config.Host)
 	return ssh.InsecureIgnoreHostKey() //nolint:gosec // user chose not to configure host key
 }
 

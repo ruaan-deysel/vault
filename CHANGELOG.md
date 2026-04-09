@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)
+- SMB storage adapter now enforces a 30-second dial timeout via `context.WithTimeout` to prevent indefinite connection hangs
+- SFTP adapter logs a warning when falling back to `InsecureIgnoreHostKey` due to missing host key verification configuration
+- OAuth callback templates (Google Drive, OneDrive) restrict `postMessage` target origin from wildcard `*` to `window.location.origin`
+- Runner `SetSnapshotManager` write is now protected by mutex to prevent a data race with concurrent job execution
+- SMB `smbReadCloser.Close()` now uses `errors.Join` to surface file/share/session close failures instead of silently discarding them
+- NFS adapter `unmount()` now logs errors from `umount` and temp directory removal instead of silently discarding them
+
 ### Added
 
 - ZFS zpool support for database location: the path browser now includes ZFS pool mountpoints when browsing for custom database snapshot locations via `include_zfs` query parameter (closes #50)

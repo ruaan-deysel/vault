@@ -60,7 +60,7 @@ func (h *ReplicationHandler) notifyConfigChange() {
 func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.db.ListReplicationSources()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, sources)
@@ -107,7 +107,7 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	src.ID = id
@@ -158,7 +158,7 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -177,7 +177,7 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteReplicationSource(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -272,7 +272,7 @@ func (h *ReplicationHandler) ListReplicatedJobs(w http.ResponseWriter, r *http.R
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	jobs, err := h.db.ListReplicatedJobs(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, jobs)

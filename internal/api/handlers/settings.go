@@ -185,7 +185,7 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.db.SetSetting("snapshot_path_override", req.SnapshotPath); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -213,7 +213,7 @@ func (h *SettingsHandler) SetSnapshotPath(w http.ResponseWriter, r *http.Request
 func (h *SettingsHandler) List(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.db.GetAllSettings()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -256,7 +256,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	for k, v := range incoming {
 		if err := h.db.SetSetting(k, v); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 	}
@@ -293,12 +293,12 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 
 	hash, err := crypto.HashPassphrase(req.Passphrase)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	if err := h.db.SetSetting("encryption_passphrase_hash", hash); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
@@ -310,7 +310,7 @@ func (h *SettingsHandler) SetEncryption(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := h.db.SetSetting("encryption_passphrase_sealed", sealed); err != nil {
-			respondError(w, http.StatusInternalServerError, err.Error())
+			respondInternalError(w, err)
 			return
 		}
 	}
@@ -403,7 +403,7 @@ func (h *SettingsHandler) GetStagingInfo(w http.ResponseWriter, r *http.Request)
 	override, _ := h.db.GetSetting("staging_dir_override", "")
 	dests, err := h.db.ListStorageDestinations()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	configs := make([]tempdir.StorageConfig, len(dests))
@@ -438,7 +438,7 @@ func (h *SettingsHandler) SetStagingOverride(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.db.SetSetting("staging_dir_override", req.Override); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 

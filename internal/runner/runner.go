@@ -260,6 +260,8 @@ func (r *countingReader) Read(p []byte) (int, error) {
 // SetSnapshotManager sets the snapshot manager used to persist the database
 // to the cache drive after successful backup jobs.
 func (r *Runner) SetSnapshotManager(sm *db.SnapshotManager) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.snapshotManager = sm
 }
 
