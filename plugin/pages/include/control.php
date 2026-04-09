@@ -22,6 +22,13 @@ function is_running() {
 
 $action = $_POST['action'] ?? $_GET['action'] ?? 'status';
 
+// State-changing actions must be POST requests.
+if ($action !== 'status' && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['error' => 'State-changing actions require POST']);
+    exit;
+}
+
 // Validate CSRF token for state-changing actions (defense-in-depth).
 if ($action !== 'status') {
     $csrf = $_POST['csrf_token'] ?? '';

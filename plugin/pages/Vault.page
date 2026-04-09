@@ -6,6 +6,11 @@ Markdown="false"
 <?php
 require_once '/usr/local/emhttp/plugins/vault/include/api.php';
 
+// Ensure $var is available (Unraid's emhttpd normally pre-populates it for .page files).
+if (!isset($var)) {
+    $var = @parse_ini_file('state/var.ini') ?: [];
+}
+
 $plugin  = 'vault';
 $cfg     = vault_load_config();
 $port    = $cfg['PORT'] ?? '24085';
@@ -148,7 +153,7 @@ function resetDefaults() {
             }
         }
     };
-    xhr.send('action=reset-config&csrf_token=<?=$var["csrf_token"]?>');
+    xhr.send('action=reset-config&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
 }
 
 function serviceControl(action) {
@@ -201,6 +206,6 @@ function serviceControl(action) {
             if (restartBtn) restartBtn.disabled = true;
         }
     };
-    xhr.send('action=' + action + '&csrf_token=<?=$var["csrf_token"]?>');
+    xhr.send('action=' + action + '&csrf_token=' + encodeURIComponent(<?=json_encode($var['csrf_token'] ?? '')?>));
 }
 </script>
