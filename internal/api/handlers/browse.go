@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,6 +46,7 @@ func (h *BrowseHandler) SetZFSLister(lister ZFSMountpointLister) {
 
 	mounts, err := lister.ListZFSMountpoints()
 	if err != nil {
+		log.Printf("browse: failed to list ZFS mountpoints: %v", err)
 		return
 	}
 

@@ -112,7 +112,7 @@ func PrependCachePaths(paths []string) {
 	var toAdd []string
 	for _, p := range paths {
 		cleaned := filepath.Clean(p)
-		if cleaned == "/" || cleaned == "" {
+		if cleaned == "/" {
 			continue
 		}
 		if !existing[cleaned] {
