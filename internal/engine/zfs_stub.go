@@ -38,10 +38,10 @@ func (h *ZFSHandler) Restore(_ context.Context, _ BackupItem, _ string, _ Progre
 
 // ListNVMePools returns an empty slice on non-Linux platforms.
 func (h *ZFSHandler) ListNVMePools() ([]ZFSPoolInfo, error) {
-	return nil, nil
+	return []ZFSPoolInfo{}, nil
 }
 
 // ListZFSMountpoints returns an empty slice on non-Linux platforms.
 func (h *ZFSHandler) ListZFSMountpoints() ([]ZFSPoolInfo, error) {
-	return nil, nil
+	return []ZFSPoolInfo{}, nil
 }

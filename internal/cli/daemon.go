@@ -226,10 +226,14 @@ var daemonCmd = &cobra.Command{
 					log.Printf("NVMe ZFS pool detected: %s → cache base %s", p.Name, p.Mountpoint)
 				}
 				tempdir.PrependCachePaths(paths)
+			} else if err != nil {
+				log.Printf("Warning: failed to discover NVMe ZFS pools: %v", err)
 			}
 
 			// Wire ZFS mountpoint discovery into the browse handler.
 			srv.BrowseHandler().SetZFSLister(&zfsBrowseAdapter{handler: zfsH})
+		} else {
+			log.Printf("Warning: ZFS support disabled: %v", zfsErr)
 		}
 
 		// Register the snapshot manager with the runner so it can save
@@ -329,7 +333,7 @@ type zfsBrowseAdapter struct {
 func (a *zfsBrowseAdapter) ListZFSMountpoints() ([]handlers.ZFSMountInfo, error) {
 	pools, err := a.handler.ListZFSMountpoints()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing ZFS mountpoints for browse: %w", err)
 	}
 	result := make([]handlers.ZFSMountInfo, len(pools))
 	for i, p := range pools {

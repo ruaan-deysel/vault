@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - ZFS zpool support for database location: the path browser now includes ZFS pool mountpoints when browsing for custom database snapshot locations via `include_zfs` query parameter (closes #50)
-- ZFS zpool support for temporary work area: NVMe-backed ZFS zpools are automatically detected at daemon startup and prepended to the staging cascade, giving them highest priority for backup assembly (closes #51)
+- ZFS zpool support for temporary work area: NVMe-backed ZFS zpools are automatically detected at daemon startup and prepended to the staging cascade, giving them the highest priority for backup assembly (closes #51)
 - `ListNVMePools()` method on `ZFSHandler` to discover zpools composed entirely of NVMe devices
 - `ListZFSMountpoints()` method on `ZFSHandler` to enumerate all accessible ZFS dataset mountpoints
 - `PrependCachePaths()` function in `tempdir` package to inject high-priority staging paths at runtime
