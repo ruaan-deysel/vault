@@ -8,7 +8,7 @@ CONFIG="/boot/config/plugins/vault/vault.cfg"
 
 # Safely read only the BIND_ADDRESS key from config (avoid sourcing arbitrary code).
 if [ -f "$CONFIG" ]; then
-    BIND_ADDRESS="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed 's/^BIND_ADDRESS=//; s/^"//; s/"$//')"
+    BIND_ADDRESS="$(grep -E '^BIND_ADDRESS=' "$CONFIG" | head -1 | sed "s/^BIND_ADDRESS=//; s/^[\"']//; s/[\"']$//")"
     case "${BIND_ADDRESS:-}" in
         127.0.0.1|0.0.0.0|::1|::|"") ;; # valid loopback/wildcard
         *)
