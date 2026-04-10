@@ -191,7 +191,19 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	default: // remote_vault
-		client, clientErr := replication.NewClient(src.URL)
+		var cfg struct {
+			APIKey string `json:"api_key"`
+		}
+		if src.Config != "" && src.Config != "{}" {
+			_ = json.Unmarshal([]byte(src.Config), &cfg)
+		}
+		var client *replication.Client
+		var clientErr error
+		if cfg.APIKey != "" {
+			client, clientErr = replication.NewClientWithAPIKey(src.URL, cfg.APIKey)
+		} else {
+			client, clientErr = replication.NewClient(src.URL)
+		}
 		if clientErr != nil {
 			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 			return
@@ -205,10 +217,11 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 }
 
 // TestURL validates and normalizes a remote Vault URL before it is saved.
-// Accepts JSON body: {"url": "http://..."}.
+// Accepts JSON body: {"url": "http://...", "api_key": "..."}.
 func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		APIKey string `json:"api_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -224,6 +237,28 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid url: "+err.Error())
 		return
 	}
+
+	// If an API key is provided, perform live connectivity test.
+	if req.APIKey != "" {
+		client, clientErr := replication.NewClientWithAPIKey(normalizedURL, req.APIKey)
+		if clientErr != nil {
+			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
+			return
+		}
+		health, connErr := client.TestConnection()
+		if connErr != nil {
+			respondError(w, http.StatusBadGateway, connErr.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]string{
+			"status":  "ok",
+			"url":     normalizedURL,
+			"version": health.Version,
+			"message": "Connected successfully",
+		})
+		return
+	}
+
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"url":     normalizedURL,
