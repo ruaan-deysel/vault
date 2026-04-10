@@ -199,12 +199,12 @@ var gdriveCallbackTmpl = template.Must(template.New("gdrive-callback").Parse(`<!
 (function(){
 {{if .Success}}
   if(window.opener){
-    window.opener.postMessage({type:'gdrive-auth-code',code:{{.Code}}},window.location.origin);
+    window.opener.postMessage({type:'gdrive-auth-code',code:{{.Code}}},'*');
     setTimeout(function(){window.close()},2000);
   }
 {{else}}
   if(window.opener){
-    window.opener.postMessage({type:'gdrive-auth-error',error:{{.Error}}},window.location.origin);
+    window.opener.postMessage({type:'gdrive-auth-error',error:{{.Error}}},'*');
   }
   setTimeout(function(){window.close()},3000);
 {{end}}
