@@ -263,6 +263,13 @@
       const popup = window.open(result.url, 'gdrive-auth', 'width=600,height=700,scrollbars=yes')
       const code = await new Promise((resolve, reject) => {
         function onMessage(event) {
+          // Validate origin and source before processing
+          if (event.origin !== window.location.origin) {
+            return
+          }
+          if (event.source !== popup) {
+            return
+          }
           if (event.data?.type === 'gdrive-auth-code') {
             window.removeEventListener('message', onMessage)
             clearInterval(pollTimer)
@@ -317,6 +324,13 @@
       const popup = window.open(result.url, 'onedrive-auth', 'width=600,height=700,scrollbars=yes')
       const code = await new Promise((resolve, reject) => {
         function onMessage(event) {
+          // Validate origin and source before processing
+          if (event.origin !== window.location.origin) {
+            return
+          }
+          if (event.source !== popup) {
+            return
+          }
           if (event.data?.type === 'onedrive-auth-code') {
             window.removeEventListener('message', onMessage)
             clearInterval(pollTimer)
