@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"errors"
+)
 
 // GetSetting retrieves a setting value by key. Returns the default if not found.
 // Real database errors are propagated to the caller.
@@ -8,7 +11,7 @@ func (d *DB) GetSetting(key, defaultVal string) (string, error) {
 	var val string
 	err := d.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return defaultVal, nil
 		}
 		return defaultVal, err
