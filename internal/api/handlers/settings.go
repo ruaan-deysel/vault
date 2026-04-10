@@ -477,3 +477,116 @@ func (h *SettingsHandler) TestDiscordWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Test notification sent"})
 }
+
+// GetAPIKeyStatus returns whether an API key has been configured.
+//
+//	GET /api/v1/settings/api-key
+func (h *SettingsHandler) GetAPIKeyStatus(w http.ResponseWriter, _ *http.Request) {
+	hash, _ := h.db.GetSetting("api_key_hash", "")
+	respondJSON(w, http.StatusOK, map[string]any{
+		"enabled": hash != "",
+	})
+}
+
+// GenerateAPIKey creates a new API key, stores it sealed + hashed, and
+// returns the plaintext key once. Subsequent reads use GetAPIKey.
+//
+//	POST /api/v1/settings/api-key/generate
+func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request) {
+	key, err := crypto.GenerateAPIKey()
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("generating API key: %w", err))
+		return
+	}
+
+	hash, err := crypto.HashPassphrase(key)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("hashing API key: %w", err))
+		return
+	}
+
+	if len(h.serverKey) == 0 {
+		respondError(w, http.StatusInternalServerError, "server key is not configured")
+		return
+	}
+
+	sealed, err := crypto.Seal(h.serverKey, key)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("sealing API key: %w", err))
+		return
+	}
+
+	if err := h.db.SetSetting("api_key_hash", hash); err != nil {
+		respondInternalError(w, fmt.Errorf("storing API key hash: %w", err))
+		return
+	}
+	if err := h.db.SetSetting("api_key_sealed", sealed); err != nil {
+		respondInternalError(w, fmt.Errorf("storing sealed API key: %w", err))
+		return
+	}
+
+	h.notifyConfigChange()
+	respondJSON(w, http.StatusCreated, map[string]string{
+		"api_key": key,
+		"message": "API key generated — copy it now, it will not be shown in full again",
+	})
+}
+
+// GetAPIKey returns the stored API key by unsealing it. This allows the
+// user to view/copy the key from the Settings UI.
+//
+//	GET /api/v1/settings/api-key/reveal
+func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
+	sealed, _ := h.db.GetSetting("api_key_sealed", "")
+	if sealed == "" {
+		respondError(w, http.StatusNotFound, "no API key configured")
+		return
+	}
+
+	if len(h.serverKey) == 0 {
+		respondError(w, http.StatusInternalServerError, "server key is not configured")
+		return
+	}
+
+	key, err := crypto.Unseal(h.serverKey, sealed)
+	if err != nil {
+		respondInternalError(w, fmt.Errorf("unsealing API key: %w", err))
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"api_key": key})
+}
+
+// RotateAPIKey replaces the existing API key with a new random one.
+//
+//	POST /api/v1/settings/api-key/rotate
+func (h *SettingsHandler) RotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	// Verify an existing key is set.
+	hash, _ := h.db.GetSetting("api_key_hash", "")
+	if hash == "" {
+		respondError(w, http.StatusBadRequest, "no existing API key to rotate — generate one first")
+		return
+	}
+
+	// Generate handles all storage — reuse the handler.
+	h.GenerateAPIKey(w, r)
+}
+
+// RevokeAPIKey removes the stored API key, disabling authentication.
+//
+//	DELETE /api/v1/settings/api-key
+func (h *SettingsHandler) RevokeAPIKey(w http.ResponseWriter, _ *http.Request) {
+	if err := h.db.SetSetting("api_key_hash", ""); err != nil {
+		respondInternalError(w, fmt.Errorf("clearing API key hash: %w", err))
+		return
+	}
+	if err := h.db.SetSetting("api_key_sealed", ""); err != nil {
+		respondInternalError(w, fmt.Errorf("clearing sealed API key: %w", err))
+		return
+	}
+
+	h.notifyConfigChange()
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "API key revoked — authentication disabled",
+	})
+}

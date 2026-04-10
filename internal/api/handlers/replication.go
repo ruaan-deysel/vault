@@ -208,7 +208,13 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	default: // remote_vault
-		client, clientErr := replication.NewClient(src.URL)
+		var client *replication.Client
+		var clientErr error
+		if src.APIKey != "" {
+			client, clientErr = replication.NewClientWithAPIKey(src.URL, src.APIKey)
+		} else {
+			client, clientErr = replication.NewClient(src.URL)
+		}
 		if clientErr != nil {
 			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 			return

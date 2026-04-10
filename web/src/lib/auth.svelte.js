@@ -1,6 +1,6 @@
 /**
- * Auth module stub — API key authentication has been removed.
- * Exports are kept as no-ops so existing imports don't break during cleanup.
+ * Auth module — API key can be configured via Settings > Security.
+ * Exports are used by components that need to know if auth is active.
  */
 
 export function getApiKey() {
@@ -12,5 +12,5 @@ export function isAuthenticated() {
 }
 
 export async function checkAuthStatus() {
-  // No-op: auth is no longer required.
+  // No-op: auth status is driven by the API key settings endpoint.
 }
