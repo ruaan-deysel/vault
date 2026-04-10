@@ -15,12 +15,42 @@ import (
 // SyncerProvider returns the replication syncer (resolved lazily).
 type SyncerProvider = func() *replication.Syncer
 
+// replicationSourceRequest is the write-side DTO for creating/updating
+// replication sources. It mirrors db.ReplicationSource but includes
+// api_key so clients can supply it (the model uses json:"-" to prevent
+// the key from leaking in responses).
+type replicationSourceRequest struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	URL           string `json:"url"`
+	Config        string `json:"config"`
+	APIKey        string `json:"api_key"`
+	StorageDestID int64  `json:"storage_dest_id"`
+	Schedule      string `json:"schedule"`
+	Enabled       bool   `json:"enabled"`
+}
+
+// toModel converts the request DTO to a db.ReplicationSource.
+func (r *replicationSourceRequest) toModel() db.ReplicationSource {
+	return db.ReplicationSource{
+		Name:          r.Name,
+		Type:          r.Type,
+		URL:           r.URL,
+		Config:        r.Config,
+		APIKey:        r.APIKey,
+		StorageDestID: r.StorageDestID,
+		Schedule:      r.Schedule,
+		Enabled:       r.Enabled,
+	}
+}
+
 // ReplicationHandler handles CRUD and sync operations for replication sources.
 type ReplicationHandler struct {
-	db          *db.DB
-	getSyncer   SyncerProvider
-	serverKey   []byte
-	schedReload ScheduleReloader
+	db             *db.DB
+	getSyncer      SyncerProvider
+	serverKey      []byte
+	schedReload    ScheduleReloader
+	onConfigChange ConfigChangeHook
 }
 
 // NewReplicationHandler creates a new ReplicationHandler.
@@ -42,11 +72,24 @@ func (h *ReplicationHandler) reloadScheduler() {
 	}
 }
 
+// SetConfigChangeHook registers a function called after replication mutations
+// to flush the database to USB flash.
+func (h *ReplicationHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
+}
+
+// notifyConfigChange calls the config change hook if set.
+func (h *ReplicationHandler) notifyConfigChange() {
+	if h.onConfigChange != nil {
+		h.onConfigChange()
+	}
+}
+
 // List returns all replication sources.
 func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.db.ListReplicationSources()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, sources)
@@ -54,11 +97,13 @@ func (h *ReplicationHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Create adds a new replication source.
 func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var src db.ReplicationSource
-	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
+	var req replicationSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	src := req.toModel()
+
 	if src.Name == "" {
 		respondError(w, http.StatusBadRequest, "name is required")
 		return
@@ -93,12 +138,13 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.db.CreateReplicationSource(src)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	src.ID = id
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	respondJSON(w, http.StatusCreated, src)
 }
 
@@ -117,11 +163,12 @@ func (h *ReplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 
-	var src db.ReplicationSource
-	if err := json.NewDecoder(r.Body).Decode(&src); err != nil {
+	var req replicationSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	src := req.toModel()
 	src.ID = id
 
 	if src.Type == "" {
@@ -143,11 +190,12 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	respondJSON(w, http.StatusOK, src)
 }
 
@@ -161,11 +209,12 @@ func (h *ReplicationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteReplicationSource(id); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 
 	h.reloadScheduler()
+	h.notifyConfigChange()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -191,7 +240,13 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		}
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	default: // remote_vault
-		client, clientErr := replication.NewClient(src.URL)
+		var client *replication.Client
+		var clientErr error
+		if src.APIKey != "" {
+			client, clientErr = replication.NewClientWithAPIKey(src.URL, src.APIKey)
+		} else {
+			client, clientErr = replication.NewClient(src.URL)
+		}
 		if clientErr != nil {
 			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 			return
@@ -255,7 +310,7 @@ func (h *ReplicationHandler) ListReplicatedJobs(w http.ResponseWriter, r *http.R
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	jobs, err := h.db.ListReplicatedJobs(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondInternalError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, jobs)

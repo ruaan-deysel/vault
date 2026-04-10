@@ -9,7 +9,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button
-- Fixed nil pointer dereference on startup: `BrowseHandler` was not assigned to the server struct in `setupRoutes`, causing a panic when `SetZFSLister` was called
 
 - API key authentication middleware with loopback exemption: non-localhost requests require a valid `X-API-Key` header when an API key is configured; localhost and Unraid PHP proxy connections are always exempt
 - API key middleware now fails closed on database errors instead of allowing unauthenticated access
