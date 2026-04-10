@@ -5,12 +5,18 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/storage"
 )
+
+// testConnectionTimeout is the HTTP client timeout used for connectivity
+// checks so that Test Connection / Test URL fail fast instead of blocking
+// for the default 10-minute transfer timeout.
+const testConnectionTimeout = 15 * time.Second
 
 // SyncerProvider returns the replication syncer (resolved lazily).
 type SyncerProvider = func() *replication.Syncer
@@ -195,7 +201,10 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 			APIKey string `json:"api_key"`
 		}
 		if src.Config != "" && src.Config != "{}" {
-			_ = json.Unmarshal([]byte(src.Config), &cfg)
+			if err := json.Unmarshal([]byte(src.Config), &cfg); err != nil {
+				respondError(w, http.StatusBadRequest, "invalid config JSON: "+err.Error())
+				return
+			}
 		}
 		var client *replication.Client
 		var clientErr error
@@ -208,6 +217,7 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 			return
 		}
+		client.SetTimeout(testConnectionTimeout)
 		if _, connErr := client.TestConnection(); connErr != nil {
 			respondError(w, http.StatusBadGateway, connErr.Error())
 			return
@@ -216,8 +226,10 @@ func (h *ReplicationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// TestURL validates and normalizes a remote Vault URL before it is saved.
-// Accepts JSON body: {"url": "http://...", "api_key": "..."}.
+// TestURL validates a remote Vault URL and performs a live connectivity check
+// by hitting the /api/v1/health endpoint on the remote server. Returns the
+// normalized URL and remote version on success, or 502 if the remote is
+// unreachable. Accepts JSON body: {"url": "http://...", "api_key": "..."}.
 func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL    string `json:"url"`
@@ -250,6 +262,7 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 		return
 	}
+	client.SetTimeout(testConnectionTimeout)
 	health, connErr := client.TestConnection()
 	if connErr != nil {
 		respondError(w, http.StatusBadGateway, connErr.Error())

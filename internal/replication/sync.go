@@ -86,7 +86,12 @@ func (s *Syncer) syncRemoteVault(src db.ReplicationSource, progress ProgressFunc
 	// Extract optional API key from config.
 	var cfg remoteVaultConfig
 	if src.Config != "" && src.Config != "{}" {
-		_ = json.Unmarshal([]byte(src.Config), &cfg)
+		if err := json.Unmarshal([]byte(src.Config), &cfg); err != nil {
+			errMsg := fmt.Sprintf("invalid config JSON for source %q: %v", src.Name, err)
+			s.updateSyncStatus(sourceID, "failed", errMsg)
+			s.logSyncError(sourceID, src.Name, errMsg)
+			return nil, fmt.Errorf("unmarshal source config: %w", err)
+		}
 	}
 
 	// Build the remote client.
