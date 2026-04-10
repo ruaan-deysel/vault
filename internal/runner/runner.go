@@ -888,8 +888,11 @@ func (r *Runner) RunJob(jobID int64) {
 		r.backupDatabase(dest, basePath)
 
 		// Persist database to cache drive and USB backup after successful backup.
-		if r.snapshotManager != nil {
-			if err := r.snapshotManager.SaveSnapshotAndUSBBackup(); err != nil {
+		r.mu.Lock()
+		sm := r.snapshotManager
+		r.mu.Unlock()
+		if sm != nil {
+			if err := sm.SaveSnapshotAndUSBBackup(); err != nil {
 				log.Printf("runner: snapshot save error: %v", err)
 			}
 		}

@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-### Security
+### Fixed
 
 - API key authentication middleware with loopback exemption: non-localhost requests require a valid `X-API-Key` header when an API key is configured; localhost and Unraid PHP proxy connections are always exempt
 - API error responses no longer leak internal error details to clients; all 500 responses now return a generic "internal server error" message while the real error is logged server-side (OWASP A09)

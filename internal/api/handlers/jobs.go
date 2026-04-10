@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -293,7 +294,7 @@ func (h *JobHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		// Look up job items to resolve types.
 		jobItems, itemsErr := h.db.GetJobItems(id)
 		if itemsErr != nil {
-			respondError(w, http.StatusInternalServerError, itemsErr.Error())
+			respondInternalError(w, fmt.Errorf("fetching job items: %w", itemsErr))
 			return
 		}
 		itemTypeMap := make(map[string]string, len(jobItems))

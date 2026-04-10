@@ -110,10 +110,13 @@ func validateSnapshotPath(path string) (string, error) {
 	}
 
 	// Defence-in-depth: verify the normalised absolute path contains no
-	// traversal components. This also serves as a CodeQL-recognised
-	// sanitiser barrier for go/path-injection.
-	if strings.Contains(absPath, "..") {
-		return "", fmt.Errorf("path traversal not allowed in snapshot path")
+	// traversal components by checking path elements, not substrings, so
+	// legitimate names like "backups..2026" are not rejected. This also
+	// serves as a CodeQL-recognised sanitiser barrier for go/path-injection.
+	for _, part := range strings.Split(filepath.ToSlash(absPath), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path traversal not allowed in snapshot path")
+		}
 	}
 
 	return absPath, nil

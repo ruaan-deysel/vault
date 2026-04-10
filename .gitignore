@@ -21,7 +21,7 @@ coverage.html
 # Dependencies
 vendor/
 
-# Python bytecode
+# Python bytecode (from .claude skills)
 __pycache__/
 *.pyc
 

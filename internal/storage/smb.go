@@ -130,11 +130,17 @@ type smbReadCloser struct {
 
 func (r *smbReadCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
 func (r *smbReadCloser) Close() error {
-	return errors.Join(
-		r.file.Close(),
-		r.share.Umount(),
-		r.session.Logoff(),
-	)
+	var errs []error
+	if err := r.file.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("close smb file: %w", err))
+	}
+	if err := r.share.Umount(); err != nil {
+		errs = append(errs, fmt.Errorf("umount smb share: %w", err))
+	}
+	if err := r.session.Logoff(); err != nil {
+		errs = append(errs, fmt.Errorf("logoff smb session: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func (s *SMBAdapter) Delete(path string) error {

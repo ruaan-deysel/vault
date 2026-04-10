@@ -86,13 +86,13 @@ func (h *SettingsHandler) GetDiagnostics(w http.ResponseWriter, _ *http.Request)
 
 	bundle, err := h.diagnosticsCollector.Collect()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("collecting diagnostics: %v", err))
+		respondInternalError(w, fmt.Errorf("collecting diagnostics: %w", err))
 		return
 	}
 
 	zipReader, err := diagnostics.PackageAsZip(bundle)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("packaging diagnostics: %v", err))
+		respondInternalError(w, fmt.Errorf("packaging diagnostics: %w", err))
 		return
 	}
 	if closer, ok := zipReader.(io.Closer); ok {
