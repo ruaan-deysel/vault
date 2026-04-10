@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
+	goauth2 "google.golang.org/api/oauth2/v2"
+	"google.golang.org/api/option"
 )
 
 // Environment variable names for embedded Google Drive OAuth credentials.
@@ -21,31 +24,25 @@ import (
 const (
 	envGDriveClientID     = "VAULT_GDRIVE_CLIENT_ID"
 	envGDriveClientSecret = "VAULT_GDRIVE_CLIENT_SECRET" //nolint:gosec // env var name, not a credential
+
+	// gdriveBackupFolderName is the folder name automatically created
+	// in the user's Google Drive to store Vault backups.
+	gdriveBackupFolderName = "Vault Backups"
 )
 
 type gdriveAuthURLRequest struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	RedirectURI  string `json:"redirect_uri"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
 type gdriveExchangeRequest struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Code         string `json:"code"`
-	RedirectURI  string `json:"redirect_uri"`
+	Code        string `json:"code"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
-// resolveGDriveCredentials returns the effective client_id and client_secret,
-// falling back to environment variables when the request values are empty.
-func resolveGDriveCredentials(clientID, clientSecret string) (string, string) {
-	if clientID == "" {
-		clientID = os.Getenv(envGDriveClientID)
-	}
-	if clientSecret == "" {
-		clientSecret = os.Getenv(envGDriveClientSecret)
-	}
-	return clientID, clientSecret
+// resolveGDriveCredentials returns the embedded client_id and client_secret
+// from environment variables.
+func resolveGDriveCredentials() (string, string) {
+	return os.Getenv(envGDriveClientID), os.Getenv(envGDriveClientSecret)
 }
 
 // GDriveStatus reports whether embedded Google Drive OAuth credentials are
@@ -53,15 +50,14 @@ func resolveGDriveCredentials(clientID, clientSecret string) (string, string) {
 //
 //	GET /api/v1/replication/gdrive/status
 func (h *ReplicationHandler) GDriveStatus(w http.ResponseWriter, _ *http.Request) {
-	id, secret := resolveGDriveCredentials("", "")
+	id, secret := resolveGDriveCredentials()
 	respondJSON(w, http.StatusOK, map[string]bool{
 		"configured": id != "" && secret != "",
 	})
 }
 
 // GDriveAuthURL generates a Google OAuth2 consent URL.
-// When client_id and client_secret are omitted the server falls back to
-// environment-provided defaults (VAULT_GDRIVE_CLIENT_ID / _SECRET).
+// Uses Vault's built-in OAuth credentials (from environment variables).
 //
 //	POST /api/v1/replication/gdrive/auth-url
 func (h *ReplicationHandler) GDriveAuthURL(w http.ResponseWriter, r *http.Request) {
@@ -75,10 +71,10 @@ func (h *ReplicationHandler) GDriveAuthURL(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	clientID, clientSecret := resolveGDriveCredentials(req.ClientID, req.ClientSecret)
+	clientID, clientSecret := resolveGDriveCredentials()
 	if clientID == "" || clientSecret == "" {
 		respondError(w, http.StatusBadRequest,
-			"Google Drive is not configured. Set VAULT_GDRIVE_CLIENT_ID and VAULT_GDRIVE_CLIENT_SECRET environment variables, or provide client_id and client_secret.")
+			"Google Drive is not configured. Set VAULT_GDRIVE_CLIENT_ID and VAULT_GDRIVE_CLIENT_SECRET environment variables.")
 		return
 	}
 
@@ -86,7 +82,7 @@ func (h *ReplicationHandler) GDriveAuthURL(w http.ResponseWriter, r *http.Reques
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  req.RedirectURI,
-		Scopes:       []string{drive.DriveFileScope},
+		Scopes:       []string{drive.DriveFileScope, "openid", "email"},
 		Endpoint:     google.Endpoint,
 	}
 
@@ -104,9 +100,9 @@ func (h *ReplicationHandler) GDriveAuthURL(w http.ResponseWriter, r *http.Reques
 	respondJSON(w, http.StatusOK, map[string]string{"url": url, "state": state})
 }
 
-// GDriveExchangeToken exchanges an OAuth2 authorisation code for a refresh token.
-// When client_id and client_secret are omitted the server falls back to
-// environment-provided defaults.
+// GDriveExchangeToken exchanges an OAuth2 authorisation code for a refresh
+// token, retrieves the user's email, and finds or creates a "Vault Backups"
+// folder in Google Drive. Returns all connection details needed by the frontend.
 //
 //	POST /api/v1/replication/gdrive/exchange-token
 func (h *ReplicationHandler) GDriveExchangeToken(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +116,7 @@ func (h *ReplicationHandler) GDriveExchangeToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	clientID, clientSecret := resolveGDriveCredentials(req.ClientID, req.ClientSecret)
+	clientID, clientSecret := resolveGDriveCredentials()
 	if clientID == "" || clientSecret == "" {
 		respondError(w, http.StatusBadRequest, "Google Drive credentials not available")
 		return
@@ -130,11 +126,12 @@ func (h *ReplicationHandler) GDriveExchangeToken(w http.ResponseWriter, r *http.
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  req.RedirectURI,
-		Scopes:       []string{drive.DriveFileScope},
+		Scopes:       []string{drive.DriveFileScope, "openid", "email"},
 		Endpoint:     google.Endpoint,
 	}
 
-	token, err := cfg.Exchange(context.Background(), req.Code)
+	ctx := context.Background()
+	token, err := cfg.Exchange(ctx, req.Code)
 	if err != nil {
 		log.Printf("gdrive token exchange failed: %v", err)
 		respondError(w, http.StatusBadRequest, "token exchange failed")
@@ -146,7 +143,69 @@ func (h *ReplicationHandler) GDriveExchangeToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"refresh_token": token.RefreshToken})
+	// Fetch the user's email address.
+	httpClient := cfg.Client(ctx, token)
+	email := ""
+	oauth2Svc, err := goauth2.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err == nil {
+		userinfo, uiErr := oauth2Svc.Userinfo.Get().Do()
+		if uiErr == nil {
+			email = userinfo.Email
+		} else {
+			log.Printf("gdrive: failed to fetch user info: %v", uiErr)
+		}
+	} else {
+		log.Printf("gdrive: failed to create oauth2 service: %v", err)
+	}
+
+	// Find or create the "Vault Backups" folder.
+	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		log.Printf("gdrive: failed to create drive service: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to connect to Google Drive")
+		return
+	}
+
+	folderID, err := gdriveEnsureBackupFolder(driveSvc)
+	if err != nil {
+		log.Printf("gdrive: failed to ensure backup folder: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to create backup folder in Google Drive")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"refresh_token": token.RefreshToken,
+		"email":         email,
+		"folder_id":     folderID,
+		"folder_name":   gdriveBackupFolderName,
+	})
+}
+
+// gdriveEnsureBackupFolder finds or creates a folder named "Vault Backups"
+// in the root of the user's Google Drive. Only app-created folders are matched.
+func gdriveEnsureBackupFolder(svc *drive.Service) (string, error) {
+	// Search for existing folder created by this app.
+	q := fmt.Sprintf("name = '%s' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false",
+		gdriveBackupFolderName)
+	result, err := svc.Files.List().Q(q).Fields("files(id, name)").PageSize(1).Do()
+	if err != nil {
+		return "", fmt.Errorf("search for backup folder: %w", err)
+	}
+	if len(result.Files) > 0 {
+		return result.Files[0].Id, nil
+	}
+
+	// Create the folder.
+	folder := &drive.File{
+		Name:     gdriveBackupFolderName,
+		MimeType: "application/vnd.google-apps.folder",
+		Parents:  []string{"root"},
+	}
+	created, err := svc.Files.Create(folder).Fields("id").Do()
+	if err != nil {
+		return "", fmt.Errorf("create backup folder: %w", err)
+	}
+	return created.Id, nil
 }
 
 // GDriveCallback handles the OAuth2 redirect from Google after the user grants

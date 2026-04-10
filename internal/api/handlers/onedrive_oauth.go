@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +18,10 @@ import (
 const (
 	envOneDriveClientID     = "VAULT_ONEDRIVE_CLIENT_ID"
 	envOneDriveClientSecret = "VAULT_ONEDRIVE_CLIENT_SECRET" //nolint:gosec // env var name, not a credential
+
+	// onedriveBackupFolderName is the folder name automatically created
+	// in the user's OneDrive to store Vault backups.
+	onedriveBackupFolderName = "Vault Backups"
 )
 
 // Microsoft identity platform endpoints for personal (consumer) accounts.
@@ -24,28 +31,18 @@ var msOneDriveEndpoint = oauth2.Endpoint{ //nolint:gosec // OAuth endpoint URLs,
 }
 
 type onedriveAuthURLRequest struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	RedirectURI  string `json:"redirect_uri"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
 type onedriveExchangeRequest struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Code         string `json:"code"`
-	RedirectURI  string `json:"redirect_uri"`
+	Code        string `json:"code"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
-// resolveOneDriveCredentials returns the effective client_id and client_secret,
-// falling back to environment variables when the request values are empty.
-func resolveOneDriveCredentials(clientID, clientSecret string) (string, string) {
-	if clientID == "" {
-		clientID = os.Getenv(envOneDriveClientID)
-	}
-	if clientSecret == "" {
-		clientSecret = os.Getenv(envOneDriveClientSecret)
-	}
-	return clientID, clientSecret
+// resolveOneDriveCredentials returns the embedded client_id and client_secret
+// from environment variables.
+func resolveOneDriveCredentials() (string, string) {
+	return os.Getenv(envOneDriveClientID), os.Getenv(envOneDriveClientSecret)
 }
 
 // OneDriveStatus reports whether embedded OneDrive OAuth credentials are
@@ -53,13 +50,14 @@ func resolveOneDriveCredentials(clientID, clientSecret string) (string, string) 
 //
 //	GET /api/v1/replication/onedrive/status
 func (h *ReplicationHandler) OneDriveStatus(w http.ResponseWriter, _ *http.Request) {
-	id, secret := resolveOneDriveCredentials("", "")
+	id, secret := resolveOneDriveCredentials()
 	respondJSON(w, http.StatusOK, map[string]bool{
 		"configured": id != "" && secret != "",
 	})
 }
 
 // OneDriveAuthURL generates a Microsoft OAuth2 consent URL.
+// Uses Vault's built-in OAuth credentials (from environment variables).
 //
 //	POST /api/v1/replication/onedrive/auth-url
 func (h *ReplicationHandler) OneDriveAuthURL(w http.ResponseWriter, r *http.Request) {
@@ -73,10 +71,10 @@ func (h *ReplicationHandler) OneDriveAuthURL(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	clientID, clientSecret := resolveOneDriveCredentials(req.ClientID, req.ClientSecret)
+	clientID, clientSecret := resolveOneDriveCredentials()
 	if clientID == "" || clientSecret == "" {
 		respondError(w, http.StatusBadRequest,
-			"OneDrive is not configured. Set VAULT_ONEDRIVE_CLIENT_ID and VAULT_ONEDRIVE_CLIENT_SECRET environment variables, or provide client_id and client_secret.")
+			"OneDrive is not configured. Set VAULT_ONEDRIVE_CLIENT_ID and VAULT_ONEDRIVE_CLIENT_SECRET environment variables.")
 		return
 	}
 
@@ -84,7 +82,7 @@ func (h *ReplicationHandler) OneDriveAuthURL(w http.ResponseWriter, r *http.Requ
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  req.RedirectURI,
-		Scopes:       []string{"Files.ReadWrite.All", "offline_access"},
+		Scopes:       []string{"Files.ReadWrite", "offline_access", "User.Read"},
 		Endpoint:     msOneDriveEndpoint,
 	}
 
@@ -102,7 +100,9 @@ func (h *ReplicationHandler) OneDriveAuthURL(w http.ResponseWriter, r *http.Requ
 	respondJSON(w, http.StatusOK, map[string]string{"url": url, "state": state})
 }
 
-// OneDriveExchangeToken exchanges an OAuth2 authorisation code for a refresh token.
+// OneDriveExchangeToken exchanges an OAuth2 authorisation code for a refresh
+// token, retrieves the user's email, and finds or creates a "Vault Backups"
+// folder in OneDrive. Returns all connection details needed by the frontend.
 //
 //	POST /api/v1/replication/onedrive/exchange-token
 func (h *ReplicationHandler) OneDriveExchangeToken(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +116,7 @@ func (h *ReplicationHandler) OneDriveExchangeToken(w http.ResponseWriter, r *htt
 		return
 	}
 
-	clientID, clientSecret := resolveOneDriveCredentials(req.ClientID, req.ClientSecret)
+	clientID, clientSecret := resolveOneDriveCredentials()
 	if clientID == "" || clientSecret == "" {
 		respondError(w, http.StatusBadRequest, "OneDrive credentials not available")
 		return
@@ -126,11 +126,12 @@ func (h *ReplicationHandler) OneDriveExchangeToken(w http.ResponseWriter, r *htt
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  req.RedirectURI,
-		Scopes:       []string{"Files.ReadWrite.All", "offline_access"},
+		Scopes:       []string{"Files.ReadWrite", "offline_access", "User.Read"},
 		Endpoint:     msOneDriveEndpoint,
 	}
 
-	token, err := cfg.Exchange(context.Background(), req.Code)
+	ctx := context.Background()
+	token, err := cfg.Exchange(ctx, req.Code)
 	if err != nil {
 		log.Printf("onedrive token exchange failed: %v", err)
 		respondError(w, http.StatusBadRequest, "token exchange failed")
@@ -142,7 +143,124 @@ func (h *ReplicationHandler) OneDriveExchangeToken(w http.ResponseWriter, r *htt
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"refresh_token": token.RefreshToken})
+	httpClient := cfg.Client(ctx, token)
+
+	// Fetch user profile email.
+	email := onedriveGetUserEmail(httpClient)
+
+	// Find or create the "Vault Backups" folder.
+	folderID, driveID, err := onedriveEnsureBackupFolder(httpClient)
+	if err != nil {
+		log.Printf("onedrive: failed to ensure backup folder: %v", err)
+		respondError(w, http.StatusInternalServerError, "failed to create backup folder in OneDrive")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"refresh_token": token.RefreshToken,
+		"email":         email,
+		"folder_id":     folderID,
+		"drive_id":      driveID,
+		"folder_name":   onedriveBackupFolderName,
+	})
+}
+
+const graphBaseURLHandlers = "https://graph.microsoft.com/v1.0"
+
+// onedriveGetUserEmail fetches the user's email from Microsoft Graph /me endpoint.
+func onedriveGetUserEmail(client *http.Client) string {
+	resp, err := client.Get(graphBaseURLHandlers + "/me")
+	if err != nil {
+		log.Printf("onedrive: failed to fetch user profile: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	var profile struct {
+		Mail              string `json:"mail"`
+		UserPrincipalName string `json:"userPrincipalName"`
+	}
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return ""
+	}
+	if profile.Mail != "" {
+		return profile.Mail
+	}
+	return profile.UserPrincipalName
+}
+
+// onedriveEnsureBackupFolder finds or creates a "Vault Backups" folder
+// in the root of the user's OneDrive. Returns (folderItemID, driveID, error).
+func onedriveEnsureBackupFolder(client *http.Client) (string, string, error) {
+	// Try to get existing folder by path.
+	checkURL := fmt.Sprintf("%s/me/drive/root:/%s", graphBaseURLHandlers, onedriveBackupFolderName)
+	resp, err := client.Get(checkURL)
+	if err != nil {
+		return "", "", fmt.Errorf("check for backup folder: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		var item struct {
+			ID        string `json:"id"`
+			ParentRef struct {
+				DriveID string `json:"driveId"`
+			} `json:"parentReference"`
+		}
+		if err := json.Unmarshal(body, &item); err != nil {
+			return "", "", fmt.Errorf("parse folder response: %w", err)
+		}
+		return item.ID, item.ParentRef.DriveID, nil
+	}
+
+	// Folder doesn't exist — create it.
+	createURL := graphBaseURLHandlers + "/me/drive/root/children"
+	createBody, _ := json.Marshal(map[string]any{
+		"name":                              onedriveBackupFolderName,
+		"folder":                            map[string]any{},
+		"@microsoft.graph.conflictBehavior": "fail",
+	})
+
+	resp2, err := client.Post(createURL, "application/json", byteReader(createBody))
+	if err != nil {
+		return "", "", fmt.Errorf("create backup folder: %w", err)
+	}
+	defer resp2.Body.Close()
+
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("read create response: %w", err)
+	}
+
+	if resp2.StatusCode != http.StatusCreated && resp2.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("create folder failed (HTTP %d): %s", resp2.StatusCode, string(body2))
+	}
+
+	var created struct {
+		ID        string `json:"id"`
+		ParentRef struct {
+			DriveID string `json:"driveId"`
+		} `json:"parentReference"`
+	}
+	if err := json.Unmarshal(body2, &created); err != nil {
+		return "", "", fmt.Errorf("parse created folder: %w", err)
+	}
+	return created.ID, created.ParentRef.DriveID, nil
+}
+
+// byteReader wraps a byte slice in an io.Reader for http.Client.Post.
+func byteReader(b []byte) io.Reader {
+	return bytes.NewReader(b)
 }
 
 // OneDriveCallback handles the OAuth2 redirect from Microsoft after the user

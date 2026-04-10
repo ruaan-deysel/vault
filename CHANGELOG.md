@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- Simplified Google Drive and OneDrive cloud replication UI — removed Client ID, Client Secret, Folder ID, Folder Path, and Advanced Settings inputs; users now only click "Connect" to sign in with OAuth
+- Cloud replication OAuth exchange now auto-creates a "Vault Backups" folder in the user's cloud storage and fetches the connected account email
+- Connected cloud accounts display email and folder name with Reconnect/Disconnect options instead of manual credential fields
+- OneDrive storage adapter scope narrowed from `Files.ReadWrite.All` to `Files.ReadWrite` (least privilege)
+- Cloud replication targets can now be created before OAuth connection is completed (config populated on connect)
+
 ### Fixed
 
 - Removed duplicate action buttons on Jobs, Storage, and Replication pages — top-right header button now only appears when items exist, eliminating redundancy with the empty-state center button

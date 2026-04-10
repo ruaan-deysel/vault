@@ -87,9 +87,10 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		src.URL = normalizedURL
 	case "gdrive", "onedrive":
-		if src.Config == "" || src.Config == "{}" {
-			respondError(w, http.StatusBadRequest, "config is required for cloud targets")
-			return
+		// Cloud targets don't require config at creation time — the user
+		// connects via OAuth after creating the target.
+		if src.Config == "" {
+			src.Config = "{}"
 		}
 		src.StorageDestID = 0
 	default:

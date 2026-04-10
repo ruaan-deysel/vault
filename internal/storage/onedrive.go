@@ -65,7 +65,7 @@ func (o *OneDriveAdapter) httpClient(ctx context.Context) *http.Client {
 		ClientID:     o.config.ClientID,
 		ClientSecret: o.config.ClientSecret,
 		Endpoint:     msOAuth2Endpoint,
-		Scopes:       []string{"Files.ReadWrite.All", "offline_access"},
+		Scopes:       []string{"Files.ReadWrite", "offline_access"},
 	}
 	token := &oauth2.Token{RefreshToken: o.config.RefreshToken}
 	return cfg.Client(ctx, token)
