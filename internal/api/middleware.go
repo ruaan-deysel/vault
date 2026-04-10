@@ -129,9 +129,21 @@ func APIKeyAuth(database *db.DB) func(http.Handler) http.Handler {
 				return
 			}
 
+			// OAuth callback routes cannot carry API keys because the
+			// browser is redirected by the provider. Exempt them.
+			if isOAuthCallback(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Check if an API key has been configured.
 			hash, err := database.GetSetting("api_key_hash", "")
-			if err != nil || hash == "" {
+			if err != nil {
+				// Fail closed: DB errors must not allow unauthenticated access.
+				respondUnauthorized(w)
+				return
+			}
+			if hash == "" {
 				// No API key set — all requests pass.
 				next.ServeHTTP(w, r)
 				return
@@ -168,6 +180,24 @@ func isLoopback(remoteAddr string) bool {
 		return false
 	}
 	return ip.IsLoopback()
+}
+
+// oauthCallbackSuffixes are URL path suffixes that indicate an OAuth provider
+// redirect. These cannot carry API keys, so they must be exempt.
+var oauthCallbackSuffixes = []string{
+	"/gdrive/callback",
+	"/onedrive/callback",
+}
+
+// isOAuthCallback returns true when the request path ends with a known
+// OAuth callback suffix.
+func isOAuthCallback(path string) bool {
+	for _, suffix := range oauthCallbackSuffixes {
+		if strings.HasSuffix(path, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func respondUnauthorized(w http.ResponseWriter) {

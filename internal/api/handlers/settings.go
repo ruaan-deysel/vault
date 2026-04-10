@@ -244,6 +244,8 @@ var sensitiveSettingKeys = []string{
 	"encryption_passphrase",
 	"encryption_passphrase_hash",
 	"encryption_passphrase_sealed",
+	"api_key_hash",
+	"api_key_sealed",
 }
 
 // Update accepts a JSON object of key-value pairs and upserts them.
@@ -375,7 +377,7 @@ func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http
 	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
 	if sealed != "" {
 		if len(h.serverKey) == 0 {
-			respondError(w, http.StatusInternalServerError, "server key is not configured")
+			respondInternalError(w, fmt.Errorf("server key is not configured"))
 			return
 		}
 
@@ -506,7 +508,7 @@ func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request)
 	}
 
 	if len(h.serverKey) == 0 {
-		respondError(w, http.StatusInternalServerError, "server key is not configured")
+		respondInternalError(w, fmt.Errorf("server key is not configured"))
 		return
 	}
 
@@ -516,19 +518,23 @@ func (h *SettingsHandler) GenerateAPIKey(w http.ResponseWriter, _ *http.Request)
 		return
 	}
 
-	if err := h.db.SetSetting("api_key_hash", hash); err != nil {
-		respondInternalError(w, fmt.Errorf("storing API key hash: %w", err))
-		return
-	}
+	// Write sealed key first so that if the hash write fails no auth is
+	// enabled yet, avoiding a state where remote clients get locked out.
 	if err := h.db.SetSetting("api_key_sealed", sealed); err != nil {
 		respondInternalError(w, fmt.Errorf("storing sealed API key: %w", err))
+		return
+	}
+	if err := h.db.SetSetting("api_key_hash", hash); err != nil {
+		// Roll back the sealed value to avoid a dangling sealed key.
+		_ = h.db.SetSetting("api_key_sealed", "")
+		respondInternalError(w, fmt.Errorf("storing API key hash: %w", err))
 		return
 	}
 
 	h.notifyConfigChange()
 	respondJSON(w, http.StatusCreated, map[string]string{
 		"api_key": key,
-		"message": "API key generated — copy it now, it will not be shown in full again",
+		"message": "API key generated — you can reveal it later from Settings › Security",
 	})
 }
 
@@ -544,7 +550,7 @@ func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	if len(h.serverKey) == 0 {
-		respondError(w, http.StatusInternalServerError, "server key is not configured")
+		respondInternalError(w, fmt.Errorf("server key is not configured"))
 		return
 	}
 
@@ -554,6 +560,7 @@ func (h *SettingsHandler) GetAPIKey(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	respondJSON(w, http.StatusOK, map[string]string{"api_key": key})
 }
 

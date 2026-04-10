@@ -425,10 +425,14 @@
     }
   }
 
-  function copyApiKey() {
+  async function copyApiKey() {
     if (apiKeyRevealed) {
-      navigator.clipboard.writeText(apiKeyRevealed)
-      showToast('API key copied to clipboard', 'success')
+      try {
+        await navigator.clipboard.writeText(apiKeyRevealed)
+        showToast('API key copied to clipboard', 'success')
+      } catch {
+        showToast('Failed to copy — clipboard access denied', 'error')
+      }
     }
   }
 

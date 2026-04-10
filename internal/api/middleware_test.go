@@ -179,9 +179,13 @@ func TestAPIKeyAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset api_key_hash setting for each subtest.
-			database.SetSetting("api_key_hash", "")
+			if err := database.SetSetting("api_key_hash", ""); err != nil {
+				t.Fatalf("resetting api_key_hash: %v", err)
+			}
 			if tt.setupKey {
-				database.SetSetting("api_key_hash", hash)
+				if err := database.SetSetting("api_key_hash", hash); err != nil {
+					t.Fatalf("setting api_key_hash: %v", err)
+				}
 			}
 
 			req := httptest.NewRequest("GET", "/", nil)
