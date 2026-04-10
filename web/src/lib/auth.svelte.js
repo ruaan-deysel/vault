@@ -1,6 +1,13 @@
 /**
- * Auth module — API key can be configured via Settings > Security.
- * Exports are used by components that need to know if auth is active.
+ * Auth stub — no-op placeholder.
+ *
+ * API key authentication is enforced server-side by the APIKeyAuth
+ * middleware (internal/api/middleware.go). The browser UI is always
+ * exempt because it connects via loopback; only remote / LAN clients
+ * must supply the X-API-Key header.
+ *
+ * These exports exist so that future client-side auth features can
+ * import from a single module without a refactor.
  */
 
 export function getApiKey() {

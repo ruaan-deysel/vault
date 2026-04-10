@@ -201,7 +201,5 @@ func isOAuthCallback(path string) bool {
 }
 
 func respondUnauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":"valid API key required"}`))
+	respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "valid API key required"})
 }
