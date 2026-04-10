@@ -238,31 +238,28 @@ func (h *ReplicationHandler) TestURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If an API key is provided, perform live connectivity test.
+	// Build client with or without API key and perform live connectivity test.
+	var client *replication.Client
+	var clientErr error
 	if req.APIKey != "" {
-		client, clientErr := replication.NewClientWithAPIKey(normalizedURL, req.APIKey)
-		if clientErr != nil {
-			respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
-			return
-		}
-		health, connErr := client.TestConnection()
-		if connErr != nil {
-			respondError(w, http.StatusBadGateway, connErr.Error())
-			return
-		}
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "ok",
-			"url":     normalizedURL,
-			"version": health.Version,
-			"message": "Connected successfully",
-		})
+		client, clientErr = replication.NewClientWithAPIKey(normalizedURL, req.APIKey)
+	} else {
+		client, clientErr = replication.NewClient(normalizedURL)
+	}
+	if clientErr != nil {
+		respondError(w, http.StatusBadRequest, "invalid url: "+clientErr.Error())
 		return
 	}
-
+	health, connErr := client.TestConnection()
+	if connErr != nil {
+		respondError(w, http.StatusBadGateway, connErr.Error())
+		return
+	}
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"url":     normalizedURL,
-		"message": "URL format is valid. Save the source and use Test Connection to verify remote reachability.",
+		"version": health.Version,
+		"message": "Connected successfully",
 	})
 }
 

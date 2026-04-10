@@ -153,7 +153,7 @@ func TestReplicationHandlerValidation(t *testing.T) {
 	}
 }
 
-func TestReplicationHandlerTestURLValidatesFormatOnly(t *testing.T) {
+func TestReplicationHandlerTestURLConnectsToRemote(t *testing.T) {
 	t.Parallel()
 
 	h, _ := setupReplicationTest(t)
@@ -163,16 +163,9 @@ func TestReplicationHandlerTestURLValidatesFormatOnly(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.TestURL(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["url"] != "https://vault.example.com:24085" {
-		t.Fatalf("normalized url = %q", resp["url"])
+	// The URL is valid but the host is unreachable, so we expect a 502.
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("TestURL: got %d, want %d; body: %s", w.Code, http.StatusBadGateway, w.Body.String())
 	}
 }
 
