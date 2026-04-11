@@ -115,18 +115,4 @@ export const api = {
   testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
-
-  // Google Drive OAuth
-  getGDriveStatus: () => request('GET', '/replication/gdrive/status'),
-  getGDriveAuthUrl: (redirectUri) =>
-    request('POST', '/replication/gdrive/auth-url', { redirect_uri: redirectUri }),
-  exchangeGDriveToken: (code, redirectUri) =>
-    request('POST', '/replication/gdrive/exchange-token', { code, redirect_uri: redirectUri }),
-
-  // OneDrive OAuth
-  getOneDriveStatus: () => request('GET', '/replication/onedrive/status'),
-  getOneDriveAuthUrl: (redirectUri) =>
-    request('POST', '/replication/onedrive/auth-url', { redirect_uri: redirectUri }),
-  exchangeOneDriveToken: (code, redirectUri) =>
-    request('POST', '/replication/onedrive/exchange-token', { code, redirect_uri: redirectUri }),
 }

@@ -30,12 +30,6 @@
   let modalTestResult = $state(null)
   const liveMode = getLiveMode()
 
-  // Cloud OAuth state
-  let gdriveConnecting = $state(false)
-  let gdriveEmbeddedCreds = $state(false)
-  let onedriveConnecting = $state(false)
-  let onedriveEmbeddedCreds = $state(false)
-
   let form = $state(defaultForm())
 
   function defaultForm() {
@@ -142,8 +136,6 @@
       enabled: src.enabled,
     }
     modalTestResult = null
-    if (src.type === 'gdrive') checkGDriveStatus()
-    if (src.type === 'onedrive') checkOneDriveStatus()
     showModal = true
   }
 
@@ -231,156 +223,18 @@
     form.config = '{}'
     form.storage_dest_id = 0
     modalTestResult = null
-    if (form.type === 'gdrive') checkGDriveStatus()
-    if (form.type === 'onedrive') checkOneDriveStatus()
-  }
-
-  async function checkGDriveStatus() {
-    try {
-      const status = await api.getGDriveStatus()
-      gdriveEmbeddedCreds = status?.configured ?? false
-    } catch {
-      gdriveEmbeddedCreds = false
-    }
-  }
-
-  async function connectGDrive() {
-    if (!gdriveEmbeddedCreds) {
-      showToast('Google Drive is not configured. Ask your Vault administrator to set VAULT_GDRIVE_CLIENT_ID and VAULT_GDRIVE_CLIENT_SECRET.', 'error')
-      return
-    }
-    gdriveConnecting = true
-    try {
-      const redirectUri = window.location.origin + '/api/v1/replication/gdrive/callback'
-      const result = await api.getGDriveAuthUrl(redirectUri)
-      const popup = window.open(result.url, 'gdrive-auth', 'width=600,height=700,scrollbars=yes')
-      const code = await new Promise((resolve, reject) => {
-        function onMessage(event) {
-          // Validate origin and source before processing
-          if (event.origin !== window.location.origin) {
-            return
-          }
-          if (event.source !== popup) {
-            return
-          }
-          if (event.data?.type === 'gdrive-auth-code') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            resolve(event.data.code)
-          } else if (event.data?.type === 'gdrive-auth-error') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            reject(new Error(event.data.error || 'Authorization failed'))
-          }
-        }
-        window.addEventListener('message', onMessage)
-        const pollTimer = setInterval(() => {
-          if (popup && popup.closed) {
-            clearInterval(pollTimer)
-            window.removeEventListener('message', onMessage)
-            const manualCode = prompt('If the popup closed without connecting, paste the authorization code here:')
-            if (manualCode) resolve(manualCode)
-            else reject(new Error('Authorization cancelled'))
-          }
-        }, 1000)
-      })
-      const tokenResult = await api.exchangeGDriveToken(code, redirectUri)
-      setCloudConfig({
-        refresh_token: tokenResult.refresh_token,
-        email: tokenResult.email || '',
-        folder_id: tokenResult.folder_id || '',
-        folder_name: tokenResult.folder_name || 'Vault Backups',
-      })
-      showToast('Google Drive connected successfully!', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      gdriveConnecting = false
-    }
-  }
-
-  async function checkOneDriveStatus() {
-    try {
-      const status = await api.getOneDriveStatus()
-      onedriveEmbeddedCreds = status?.configured ?? false
-    } catch {
-      onedriveEmbeddedCreds = false
-    }
-  }
-
-  async function connectOneDrive() {
-    if (!onedriveEmbeddedCreds) {
-      showToast('OneDrive is not configured. Ask your Vault administrator to set VAULT_ONEDRIVE_CLIENT_ID and VAULT_ONEDRIVE_CLIENT_SECRET.', 'error')
-      return
-    }
-    onedriveConnecting = true
-    try {
-      const redirectUri = window.location.origin + '/api/v1/replication/onedrive/callback'
-      const result = await api.getOneDriveAuthUrl(redirectUri)
-      const popup = window.open(result.url, 'onedrive-auth', 'width=600,height=700,scrollbars=yes')
-      const code = await new Promise((resolve, reject) => {
-        function onMessage(event) {
-          // Validate origin and source before processing
-          if (event.origin !== window.location.origin) {
-            return
-          }
-          if (event.source !== popup) {
-            return
-          }
-          if (event.data?.type === 'onedrive-auth-code') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            resolve(event.data.code)
-          } else if (event.data?.type === 'onedrive-auth-error') {
-            window.removeEventListener('message', onMessage)
-            clearInterval(pollTimer)
-            reject(new Error(event.data.error || 'Authorization failed'))
-          }
-        }
-        window.addEventListener('message', onMessage)
-        const pollTimer = setInterval(() => {
-          if (popup && popup.closed) {
-            clearInterval(pollTimer)
-            window.removeEventListener('message', onMessage)
-            const manualCode = prompt('If the popup closed without connecting, paste the authorization code here:')
-            if (manualCode) resolve(manualCode)
-            else reject(new Error('Authorization cancelled'))
-          }
-        }, 1000)
-      })
-      const tokenResult = await api.exchangeOneDriveToken(code, redirectUri)
-      setCloudConfig({
-        refresh_token: tokenResult.refresh_token,
-        email: tokenResult.email || '',
-        folder_id: tokenResult.folder_id || '',
-        drive_id: tokenResult.drive_id || '',
-        folder_name: tokenResult.folder_name || 'Vault Backups',
-        folder_path: tokenResult.folder_name || 'Vault Backups',
-      })
-      showToast('OneDrive connected successfully!', 'success')
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      onedriveConnecting = false
-    }
   }
 
   const typeLabels = {
     remote_vault: 'Remote Vault',
-    gdrive: 'Google Drive',
-    onedrive: 'OneDrive',
   }
 
   const typeIcons = {
     remote_vault: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
-    gdrive: 'M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71L12 2z',
-    onedrive: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z',
   }
 
   const typeColors = {
     remote_vault: 'text-vault',
-    gdrive: 'text-sky-400',
-    onedrive: 'text-cyan-400',
   }
 
   function statusBadge(src) {
@@ -398,7 +252,7 @@
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold text-text">Replication</h1>
-      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers or cloud storage for disaster recovery</p>
+      <p class="text-sm text-text-muted mt-1">Replicate backups to remote Vault servers for disaster recovery</p>
     </div>
     {#if sources.length > 0}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
@@ -411,7 +265,7 @@
   {#if loading}
     <Spinner text="Loading replication targets..." />
   {:else if sources.length === 0}
-    <EmptyState title="No replication targets" description="Add a remote Vault server, Google Drive, or OneDrive target to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
+    <EmptyState title="No replication targets" description="Add a remote Vault server to replicate backups for disaster recovery." actionLabel="Add Target" onaction={() => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
       {/snippet}
@@ -430,13 +284,7 @@
                 <div>
                   <h2 class="font-semibold text-text">{src.name}</h2>
                   <p class="text-xs text-text-dim mt-0.5 font-mono">
-                    {#if src.type === 'gdrive'}
-                      Google Drive
-                    {:else if src.type === 'onedrive'}
-                      OneDrive
-                    {:else}
                       {src.url}
-                    {/if}
                   </p>
                 </div>
               </div>
@@ -566,8 +414,6 @@
         <select id="repl-type" bind:value={form.type} onchange={onTypeChange} disabled={!!editing}
           class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault">
           <option value="remote_vault">Remote Vault Server</option>
-          <option value="gdrive">Google Drive</option>
-          <option value="onedrive">OneDrive</option>
         </select>
       </div>
 
@@ -612,103 +458,6 @@
           {/if}
         </div>
 
-      <!-- Google Drive Fields -->
-      {:else if form.type === 'gdrive'}
-        <div class="space-y-3">
-          {#if cloudConfig.refresh_token}
-            <div class="flex items-center gap-2">
-              <div class="flex items-center gap-2 text-sm text-success">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                Connected to Google Drive
-              </div>
-              {#if cloudConfig.email}
-                <span class="text-xs text-text-muted">as {cloudConfig.email}</span>
-              {/if}
-            </div>
-            {#if cloudConfig.folder_name}
-              <div class="flex items-center gap-2 text-sm text-text-muted">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                Backups will be stored in {cloudConfig.folder_name}
-              </div>
-            {/if}
-            <div class="flex items-center gap-3">
-              <button type="button" onclick={connectGDrive} disabled={gdriveConnecting}
-                class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors disabled:opacity-40">
-                Reconnect account
-              </button>
-              <button type="button" onclick={() => { setCloudConfig({}) }}
-                class="px-3 py-1.5 text-xs font-medium text-danger/70 hover:text-danger bg-danger/5 hover:bg-danger/10 rounded-lg transition-colors">
-                Disconnect
-              </button>
-            </div>
-            <p class="text-xs text-text-dim">Vault will automatically create and use a backup folder in your cloud storage.</p>
-          {:else}
-            <button type="button" onclick={connectGDrive} disabled={gdriveConnecting || !gdriveEmbeddedCreds}
-              class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-2">
-              {#if gdriveConnecting}
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                Connecting...
-              {:else}
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
-                Connect Google Drive
-              {/if}
-            </button>
-            {#if !gdriveEmbeddedCreds}
-              <span class="text-xs text-warning">Google Drive is not configured on this server</span>
-            {:else}
-              <p class="text-xs text-text-dim mt-2">Vault will automatically create and use a backup folder in your cloud storage.</p>
-            {/if}
-          {/if}
-        </div>
-
-      <!-- OneDrive Fields -->
-      {:else if form.type === 'onedrive'}
-        <div class="space-y-3">
-          {#if cloudConfig.refresh_token}
-            <div class="flex items-center gap-2">
-              <div class="flex items-center gap-2 text-sm text-success">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                Connected to OneDrive
-              </div>
-              {#if cloudConfig.email}
-                <span class="text-xs text-text-muted">as {cloudConfig.email}</span>
-              {/if}
-            </div>
-            {#if cloudConfig.folder_name}
-              <div class="flex items-center gap-2 text-sm text-text-muted">
-                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                Backups will be stored in {cloudConfig.folder_name}
-              </div>
-            {/if}
-            <div class="flex items-center gap-3">
-              <button type="button" onclick={connectOneDrive} disabled={onedriveConnecting}
-                class="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors disabled:opacity-40">
-                Reconnect account
-              </button>
-              <button type="button" onclick={() => { setCloudConfig({}) }}
-                class="px-3 py-1.5 text-xs font-medium text-danger/70 hover:text-danger bg-danger/5 hover:bg-danger/10 rounded-lg transition-colors">
-                Disconnect
-              </button>
-            </div>
-            <p class="text-xs text-text-dim">Vault will automatically create and use a backup folder in your cloud storage.</p>
-          {:else}
-            <button type="button" onclick={connectOneDrive} disabled={onedriveConnecting || !onedriveEmbeddedCreds}
-              class="px-4 py-2 text-sm font-medium text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-2">
-              {#if onedriveConnecting}
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                Connecting...
-              {:else}
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
-                Connect OneDrive
-              {/if}
-            </button>
-            {#if !onedriveEmbeddedCreds}
-              <span class="text-xs text-warning">OneDrive is not configured on this server</span>
-            {:else}
-              <p class="text-xs text-text-dim mt-2">Vault will automatically create and use a backup folder in your cloud storage.</p>
-            {/if}
-          {/if}
-        </div>
       {/if}
 
       <div>

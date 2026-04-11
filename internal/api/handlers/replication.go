@@ -86,15 +86,8 @@ func (h *ReplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		src.URL = normalizedURL
-	case "gdrive", "onedrive":
-		// Cloud targets don't require config at creation time — the user
-		// connects via OAuth after creating the target.
-		if src.Config == "" {
-			src.Config = "{}"
-		}
-		src.StorageDestID = 0
 	default:
-		respondError(w, http.StatusBadRequest, "invalid type: must be remote_vault, gdrive, or onedrive")
+		respondError(w, http.StatusBadRequest, "invalid type: must be remote_vault")
 		return
 	}
 
@@ -145,8 +138,6 @@ func (h *ReplicationHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 			src.URL = normalizedURL
 		}
-	case "gdrive", "onedrive":
-		src.StorageDestID = 0
 	}
 
 	if err := h.db.UpdateReplicationSource(src); err != nil {
