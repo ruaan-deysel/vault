@@ -1620,7 +1620,7 @@
         </div>
         <div class="p-5">
           <p class="text-sm text-text-muted mb-4">
-            The full Vault manual &mdash; getting started, guides, and a complete settings reference &mdash; is published online and stays in sync with each release.
+            The full Vault manual (getting started, guides, and a complete settings reference) is published online and stays in sync with each release.
           </p>
           <a href="https://ruaan-deysel.github.io/vault/" target="_blank" rel="noopener"
             aria-label="Open documentation (opens in a new tab)"
