@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -111,26 +112,50 @@ func TestBuildAnomalyEmbed_ScopeField(t *testing.T) {
 	}
 }
 
-// TestBuildAnomalyEmbed_DetailsTruncation verifies very long Details strings are
-// capped so the Discord embed doesn't exceed field limits.
-func TestBuildAnomalyEmbed_DetailsTruncation(t *testing.T) {
+// TestBuildAnomalyEmbed_ContextRendering verifies the embed surfaces friendly,
+// labelled context derived from the Details JSON rather than dumping the raw
+// blob (or leaking purely technical fields like z_score) at the user.
+func TestBuildAnomalyEmbed_ContextRendering(t *testing.T) {
 	t.Parallel()
-
-	longDetails := make([]byte, 1000)
-	for i := range longDetails {
-		longDetails[i] = 'x'
-	}
 
 	embed := BuildAnomalyEmbed(AnomalyEmbedParams{
 		Severity: "warning",
-		Summary:  "test",
-		Details:  string(longDetails),
+		Summary:  "This backup grew to 20 GB, about 5× its usual 4 GB.",
+		Details:  `{"z_score":11.06,"growth_factor":5,"window_size":10}`,
 	})
 
+	var ctx string
 	for _, f := range embed.Fields {
+		if f.Name == "Context" {
+			ctx = f.Value
+		}
 		if f.Name == "Details" {
-			if len([]rune(f.Value)) > 256 {
-				t.Errorf("Details field length %d exceeds 256 runes", len([]rune(f.Value)))
+			t.Errorf("embed still exposes a raw Details field: %q", f.Value)
+		}
+	}
+	if want := "Based on the last 10 runs"; ctx != want {
+		t.Errorf("Context = %q, want %q", ctx, want)
+	}
+	if strings.Contains(ctx, "z_score") {
+		t.Errorf("Context leaked a technical field: %q", ctx)
+	}
+}
+
+// TestBuildAnomalyEmbed_OmitsUnrenderableContext verifies that empty, non-JSON,
+// or purely-technical Details payloads produce no Context field at all (the
+// self-explanatory Summary stands on its own) rather than raw JSON.
+func TestBuildAnomalyEmbed_OmitsUnrenderableContext(t *testing.T) {
+	t.Parallel()
+
+	for _, details := range []string{"", "not json", `{"pct_free":2.3}`} {
+		embed := BuildAnomalyEmbed(AnomalyEmbedParams{
+			Severity: "warning",
+			Summary:  "test",
+			Details:  details,
+		})
+		for _, f := range embed.Fields {
+			if f.Name == "Context" {
+				t.Errorf("details %q: unexpected Context field %q", details, f.Value)
 			}
 		}
 	}

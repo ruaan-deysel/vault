@@ -1,6 +1,10 @@
 package notify
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // Anomaly Discord embed colour constants (hex values stored as int).
 // Used by BuildAnomalyEmbed so callers don't hard-code magic numbers.
@@ -64,10 +68,10 @@ func BuildAnomalyEmbed(p AnomalyEmbedParams) DiscordEmbed {
 		Value:  p.Severity,
 		Inline: true,
 	})
-	if p.Details != "" {
+	if ctx := renderAnomalyDetails(p.Details); ctx != "" {
 		fields = append(fields, DiscordField{
-			Name:  "Details",
-			Value: truncate(p.Details, 256),
+			Name:  "Context",
+			Value: truncate(ctx, 256),
 		})
 	}
 
@@ -88,7 +92,53 @@ func BuildAnomalyEmbed(p AnomalyEmbedParams) DiscordEmbed {
 // the call is a no-op that logs and returns nil — same behaviour as Send.
 func SendAnomalyUnraid(summary, details, severity string) error {
 	imp := importanceForSeverity(severity)
-	return Send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), details, imp)
+	return Send("Vault", fmt.Sprintf("Anomaly detected: %s", summary), renderAnomalyDetails(details), imp)
+}
+
+// renderAnomalyDetails converts an anomaly's structured Details JSON into
+// short, human-readable context lines for notifications, replacing the raw
+// JSON blob that used to be shown to users. It only surfaces fields that add
+// approachable context and deliberately omits purely statistical values
+// (e.g. z_score, slope) that the plain-English Summary already conveys.
+//
+// Unrecognised or unparsable payloads yield an empty string so the caller
+// simply omits the context rather than dumping raw JSON. The underlying
+// Details JSON is left untouched for the API, MCP, and web UI that parse it.
+func renderAnomalyDetails(details string) string {
+	if strings.TrimSpace(details) == "" {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(details), &m); err != nil {
+		return ""
+	}
+
+	var lines []string
+	if n, ok := intField(m, "window_size"); ok {
+		lines = append(lines, fmt.Sprintf("Based on the last %d runs", n))
+	}
+	if n, ok := intField(m, "streak"); ok {
+		lines = append(lines, fmt.Sprintf("%d consecutive failed runs", n))
+	}
+	if newest, ok := m["newest_status"].(string); ok {
+		if prev, ok2 := m["previous_status"].(string); ok2 {
+			lines = append(lines, fmt.Sprintf("Latest verification %s (previous run %s)", newest, prev))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// intField reads a numeric JSON field as an int. JSON numbers decode to
+// float64 through map[string]any, so it accepts float64 (and int for safety).
+func intField(m map[string]any, key string) (int, bool) {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	default:
+		return 0, false
+	}
 }
 
 func importanceForSeverity(severity string) Importance {
