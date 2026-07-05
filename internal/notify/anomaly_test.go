@@ -139,6 +139,29 @@ func TestBuildAnomalyEmbed_ContextRendering(t *testing.T) {
 	if strings.Contains(ctx, "z_score") {
 		t.Errorf("Context leaked a technical field: %q", ctx)
 	}
+	// The Context field must stay within Discord's per-field limit.
+	if n := len([]rune(ctx)); n > 256 {
+		t.Errorf("Context field length %d exceeds 256 runes", n)
+	}
+}
+
+// TestTruncate verifies the field-length guard that keeps notification embed
+// fields within Discord's 256-rune limit (regression guard for long values).
+func TestTruncate(t *testing.T) {
+	t.Parallel()
+
+	if got := truncate("short", 256); got != "short" {
+		t.Errorf("truncate short string = %q, want %q", got, "short")
+	}
+
+	long := strings.Repeat("x", 1000)
+	got := truncate(long, 256)
+	if n := len([]rune(got)); n > 256 {
+		t.Errorf("truncate() length %d exceeds 256 runes", n)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncate() should append an ellipsis when truncating, got %q", got)
+	}
 }
 
 // TestBuildAnomalyEmbed_OmitsUnrenderableContext verifies that empty, non-JSON,
