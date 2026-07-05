@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- **Immich container backups are now correct for both image variants** (closes #187). The exclusion preset previously only covered the imagegenius fork's `/photos` layout; it now also covers the official `immich-app` image's `/data` layout, excluding only regeneratable thumbnails and re-encoded video while always keeping the original `upload`/`library`/`profile` assets and Immich's built-in `backups/` database dumps. The wizard now also surfaces a warning that Immich's PostgreSQL database runs in a separate container and must be captured via Immich's built-in database backup, a dedicated Postgres backup job, or a `pg_dump` pre-script — see the [backup guide](https://ruaan-deysel.github.io/vault/guides/backup-jobs/).
+- **Immich container backups are now correct for both image variants** (closes #187). The exclusion preset previously only covered the imagegenius fork's `/photos` layout; it now also covers the official `immich-app` image's `/data` layout, excluding only regeneratable thumbnails and re-encoded video while always keeping the original `upload`/`library`/`profile` assets and Immich's built-in `backups/` database dumps. The wizard now also surfaces a warning that Immich's PostgreSQL database runs in a separate container and must be captured via Immich's built-in database backup, a dedicated Postgres backup job, or a `pg_dump` pre-script — see the Backup Jobs guide in the documentation for the recommended setup.
 
 ## [2026.07.01] - 2026-07-04
 
