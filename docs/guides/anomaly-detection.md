@@ -101,7 +101,7 @@ Anomaly messages are written as plain-English sentences that state what happened
 - **Reliability:** _This backup has failed 3 runs in a row and needs attention._
 - **Capacity:** _Storage "backups" is filling up — at the current rate of 12 GB per day it will run out of free space in about 6 days._
 
-Notifications show the same sentence plus a short line of context (e.g. _Based on the last 10 runs_) instead of a raw JSON blob. The precise statistics (z-score, growth factor, window size) are still available in the structured `details` field via the API, MCP, and the web UI's **Raw details** expander.
+Notifications show the same sentence plus a short line of context (e.g. _Based on the last 10 samples_) instead of a raw JSON blob. The precise statistics (z-score, growth factor, window size) are still available in the structured `details` field via the API, MCP, and the web UI's **Raw details** expander.
 
 ---
 

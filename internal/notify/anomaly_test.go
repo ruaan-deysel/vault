@@ -133,7 +133,7 @@ func TestBuildAnomalyEmbed_ContextRendering(t *testing.T) {
 			t.Errorf("embed still exposes a raw Details field: %q", f.Value)
 		}
 	}
-	if want := "Based on the last 10 runs"; ctx != want {
+	if want := "Based on the last 10 samples"; ctx != want {
 		t.Errorf("Context = %q, want %q", ctx, want)
 	}
 	if strings.Contains(ctx, "z_score") {
@@ -158,6 +158,39 @@ func TestBuildAnomalyEmbed_OmitsUnrenderableContext(t *testing.T) {
 				t.Errorf("details %q: unexpected Context field %q", details, f.Value)
 			}
 		}
+	}
+}
+
+// TestRenderAnomalyDetails covers the readable-context rendering: neutral
+// "sample(s)"/"run(s)" wording with singular/plural handling, verify-regression
+// phrasing, and rejection of fractional/negative counts.
+func TestRenderAnomalyDetails(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		details string
+		want    string
+	}{
+		{"window plural", `{"z_score":8.2,"window_size":10}`, "Based on the last 10 samples"},
+		{"window singular", `{"window_size":1}`, "Based on the last 1 sample"},
+		{"streak plural", `{"streak":3}`, "3 runs failed in a row"},
+		{"streak singular", `{"streak":1}`, "1 run failed in a row"},
+		{"verify regression", `{"newest_status":"failed","previous_status":"passed"}`, "Latest verification failed (previous run passed)"},
+		{"fractional window rejected", `{"window_size":10.9}`, ""},
+		{"negative window rejected", `{"window_size":-4}`, ""},
+		{"low-free has no context", `{"free_bytes":1000,"total_bytes":50000,"pct_free":2}`, ""},
+		{"empty", "", ""},
+		{"not json", "not json", ""},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := renderAnomalyDetails(c.details); got != c.want {
+				t.Errorf("renderAnomalyDetails(%q) = %q, want %q", c.details, got, c.want)
+			}
+		})
 	}
 }
 

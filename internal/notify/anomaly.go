@@ -3,6 +3,7 @@ package notify
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -114,11 +115,15 @@ func renderAnomalyDetails(details string) string {
 	}
 
 	var lines []string
-	if n, ok := intField(m, "window_size"); ok {
-		lines = append(lines, fmt.Sprintf("Based on the last %d runs", n))
+	// window_size counts the samples the detector looked back over — backup
+	// runs for drift/reliability, but capacity health-check samples for the
+	// capacity detector — so use the neutral "sample(s)" label rather than
+	// "runs", which would misdescribe capacity anomalies.
+	if n, ok := intField(m, "window_size"); ok && n > 0 {
+		lines = append(lines, "Based on the last "+countLabel(n, "sample"))
 	}
-	if n, ok := intField(m, "streak"); ok {
-		lines = append(lines, fmt.Sprintf("%d consecutive failed runs", n))
+	if n, ok := intField(m, "streak"); ok && n > 0 {
+		lines = append(lines, countLabel(n, "run")+" failed in a row")
 	}
 	if newest, ok := m["newest_status"].(string); ok {
 		if prev, ok2 := m["previous_status"].(string); ok2 {
@@ -128,17 +133,28 @@ func renderAnomalyDetails(details string) string {
 	return strings.Join(lines, "\n")
 }
 
+// countLabel renders a count with a singular/plural unit, e.g. countLabel(1,
+// "sample") → "1 sample" and countLabel(3, "run") → "3 runs".
+func countLabel(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
+
 // intField reads a numeric JSON field as an int. JSON numbers decode to
-// float64 through map[string]any, so it accepts float64 (and int for safety).
+// float64 through map[string]any, so only float64 is accepted; fractional,
+// non-finite, or out-of-range values are rejected (ok=false) so malformed
+// payloads never produce nonsense counts in user-facing notification text.
 func intField(m map[string]any, key string) (int, bool) {
-	switch v := m[key].(type) {
-	case float64:
-		return int(v), true
-	case int:
-		return v, true
-	default:
+	f, ok := m[key].(float64)
+	if !ok {
 		return 0, false
 	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || f < math.MinInt || f > math.MaxInt {
+		return 0, false
+	}
+	return int(f), true
 }
 
 func importanceForSeverity(severity string) Importance {
