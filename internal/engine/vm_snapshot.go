@@ -182,6 +182,17 @@ func parseDomainDiskInventory(xmlDesc string) (domainDiskInventory, error) {
 	return inventory, nil
 }
 
+// resolveDiskFormat returns a disk's effective image format: the domain XML
+// <driver type> when present, otherwise the path-extension heuristic. Shared by
+// summariseDiskFormat and allDisksQcow2 so the "supports incremental" and
+// "all qcow2" decisions can never diverge on the fallback rule.
+func resolveDiskFormat(d domainDisk) string {
+	if d.Format != "" {
+		return d.Format
+	}
+	return backupDriverType(d.Path)
+}
+
 // summariseDiskFormat condenses a domain's disks into a single format label
 // ("qcow2", "raw", the shared format, or "mixed") plus whether the VM supports
 // libvirt checkpoint-based incremental/differential backups (qcow2-only).
@@ -196,10 +207,7 @@ func summariseDiskFormat(disks []domainDisk) (format string, supportsIncremental
 	first := ""
 	uniform := true
 	for i, d := range disks {
-		f := d.Format
-		if f == "" {
-			f = backupDriverType(d.Path)
-		}
+		f := resolveDiskFormat(d)
 		if i == 0 {
 			first = f
 		} else if f != first {
@@ -217,11 +225,7 @@ func summariseDiskFormat(disks []domainDisk) (format string, supportsIncremental
 // for callers that did not populate Format.
 func allDisksQcow2(disks []domainDisk) bool {
 	for _, d := range disks {
-		format := d.Format
-		if format == "" {
-			format = backupDriverType(d.Path)
-		}
-		if format != "qcow2" {
+		if resolveDiskFormat(d) != "qcow2" {
 			return false
 		}
 	}
