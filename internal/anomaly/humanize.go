@@ -69,11 +69,22 @@ func humanizeDuration(seconds float64) string {
 // humanizeMultiplier renders a growth factor as a friendly "N×" string for use
 // in summary sentences (e.g. 1.18 → "1.2×", 5.0 → "5×"). Whole multiples drop
 // the decimal so "5×" reads cleanly; fractional ones keep one decimal.
+//
+// A tight MAD can fire a z-score anomaly at a growth factor only just above 1,
+// where rounding to a bare "1×" would read like no change at all. Such values
+// collapse to ">1×" (and "<1×" below 1) so the summary still signals a real
+// deviation.
 func humanizeMultiplier(factor float64) string {
 	if math.IsNaN(factor) || math.IsInf(factor, 0) {
 		return "—"
 	}
 	r := roundTo(factor, 1)
+	if r == 1 && factor > 1 {
+		return ">1×"
+	}
+	if r == 1 && factor < 1 {
+		return "<1×"
+	}
 	if r == math.Trunc(r) {
 		return fmt.Sprintf("%.0f×", r)
 	}

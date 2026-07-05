@@ -72,7 +72,9 @@ func TestHumanizeMultiplier(t *testing.T) {
 	}{
 		{"whole", 5, "5×"},
 		{"fractional", 1.18, "1.2×"},
-		{"just over one", 1.04, "1×"},
+		{"exactly one", 1, "1×"},
+		{"just over one stays a deviation", 1.04, ">1×"},
+		{"just under one stays a deviation", 0.97, "<1×"},
 		{"large fractional", 12.35, "12.4×"},
 		{"infinity", math.Inf(1), "—"},
 		{"NaN", math.NaN(), "—"},
