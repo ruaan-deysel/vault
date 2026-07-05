@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Pre/post-backup scripts now receive job context as environment variables** (part of #187). The job editor has long promised `VAULT_JOB_NAME` and `VAULT_STATUS` to hook scripts, but they were never actually set. Vault now exports `VAULT_JOB_NAME`, `VAULT_STATUS` (`starting` for pre-scripts, the run's final status for post-scripts), `VAULT_JOB_ID`, and `VAULT_RUN_ID` into every pre/post-backup script's environment — enabling, for example, an Immich `pg_dump` pre-script that targets the right job.
+- **Container exclusion presets can now carry advisory notes and warnings** (part of #187). `GET /api/v1/presets/exclusions` returns optional `notes`/`warnings` for apps that need a caveat, and the job wizard shows them inline beneath the container's exclusions.
+
+### Changed
+
+- **Immich container backups are now correct for both image variants** (closes #187). The exclusion preset previously only covered the imagegenius fork's `/photos` layout; it now also covers the official `immich-app` image's `/data` layout, excluding only regeneratable thumbnails and re-encoded video while always keeping the original `upload`/`library`/`profile` assets and Immich's built-in `backups/` database dumps. The wizard now also surfaces a warning that Immich's PostgreSQL database runs in a separate container and must be captured via Immich's built-in database backup, a dedicated Postgres backup job, or a `pg_dump` pre-script — see the [backup guide](https://ruaan-deysel.github.io/vault/guides/backup-jobs/).
+
 ## [2026.07.01] - 2026-07-04
 
 ### Added
