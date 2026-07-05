@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -44,10 +45,15 @@ func TestGetExclusionPreset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			paths := GetExclusionPreset(tt.image)
-			if tt.wantMatch && len(paths) == 0 {
-				t.Errorf("GetExclusionPreset(%q) returned empty, expected match for key %q", tt.image, tt.wantKey)
-			}
-			if !tt.wantMatch && len(paths) > 0 {
+			if tt.wantMatch {
+				// Assert it resolved to the *specific* expected preset, not just
+				// any non-empty one — otherwise a substring collision or ordering
+				// change that matched the wrong key would slip through.
+				if !slices.Equal(paths, ContainerExclusionPresets[tt.wantKey]) {
+					t.Errorf("GetExclusionPreset(%q) = %v, want the %q preset %v",
+						tt.image, paths, tt.wantKey, ContainerExclusionPresets[tt.wantKey])
+				}
+			} else if len(paths) > 0 {
 				t.Errorf("GetExclusionPreset(%q) returned %v, expected no match", tt.image, paths)
 			}
 		})

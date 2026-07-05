@@ -95,9 +95,12 @@ var ContainerExclusionPresets = map[string][]string{
 	// Transcoding/Processing
 	// Tdarr stores its database (DB2), plugins, samples and config JSON under
 	// /app/server and /app/configs — both are kept so settings and statistics
-	// restore cleanly. Only the transcode cache (/temp) and logs are dropped;
-	// the large /media library is skipped automatically by the shared-data
-	// heuristic. The same key matches the tdarr_node image via substring.
+	// restore cleanly. Only the transcode cache (/temp) and logs are dropped.
+	// The media library is not excluded here: when it is bind-mounted from an
+	// Unraid shared-data path (e.g. /mnt/user/media) the engine's shared-data
+	// heuristic auto-skips it by host source; a media mount from an unusual
+	// host path can be unchecked in the job editor. The same key matches the
+	// tdarr_node image via substring.
 	"tdarr": {
 		"/temp",
 		"/app/logs",
