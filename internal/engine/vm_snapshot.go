@@ -21,6 +21,7 @@ var (
 	_ = selectBackupDiskXML
 	_ = stripDomainBackingStores
 	_ = allDisksQcow2
+	_ = summariseDiskFormat
 	_ = describeDomainDisks
 	_ = formatSkippedDomainDisks
 )
@@ -179,6 +180,36 @@ func parseDomainDiskInventory(xmlDesc string) (domainDiskInventory, error) {
 	}
 
 	return inventory, nil
+}
+
+// summariseDiskFormat condenses a domain's disks into a single format label
+// ("qcow2", "raw", the shared format, or "mixed") plus whether the VM supports
+// libvirt checkpoint-based incremental/differential backups (qcow2-only).
+//
+// An empty disk list (no file-backed disks, e.g. block/network-only or an
+// unreadable inventory) is reported as "unknown" / not incremental-capable so
+// callers surface a conservative default rather than a misleading format.
+func summariseDiskFormat(disks []domainDisk) (format string, supportsIncremental bool) {
+	if len(disks) == 0 {
+		return "unknown", false
+	}
+	first := ""
+	uniform := true
+	for i, d := range disks {
+		f := d.Format
+		if f == "" {
+			f = backupDriverType(d.Path)
+		}
+		if i == 0 {
+			first = f
+		} else if f != first {
+			uniform = false
+		}
+	}
+	if !uniform {
+		return "mixed", false
+	}
+	return first, first == "qcow2"
 }
 
 // allDisksQcow2 reports whether every disk is qcow2-formatted, which gates
