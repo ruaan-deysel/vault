@@ -34,6 +34,10 @@ func TestGetExclusionPreset(t *testing.T) {
 		{"watchtower", "containrrr/watchtower:latest", true, "watchtower"},
 		{"dozzle", "amir20/dozzle:latest", true, "dozzle"},
 		{"dockhand", "ghcr.io/scottyhardy/dockhand:latest", true, "dockhand"},
+		// Tdarr server and node images both resolve to the "tdarr" preset via
+		// substring matching (issue #188).
+		{"tdarr server", "ghcr.io/haveagitgat/tdarr:latest", true, "tdarr"},
+		{"tdarr node", "ghcr.io/haveagitgat/tdarr_node:latest", true, "tdarr"},
 	}
 
 	for _, tt := range tests {

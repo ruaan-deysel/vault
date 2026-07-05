@@ -93,9 +93,15 @@ var ContainerExclusionPresets = map[string][]string{
 	},
 
 	// Transcoding/Processing
+	// Tdarr stores its database (DB2), plugins, samples and config JSON under
+	// /app/server and /app/configs — both are kept so settings and statistics
+	// restore cleanly. Only the transcode cache (/temp) and logs are dropped;
+	// the large /media library is skipped automatically by the shared-data
+	// heuristic. The same key matches the tdarr_node image via substring.
 	"tdarr": {
 		"/temp",
 		"/app/logs",
+		"*.log",
 	},
 	"unmanic": {
 		"/tmp/unmanic",

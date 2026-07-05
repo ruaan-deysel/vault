@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Tdarr container backups now drop stray log files and are covered by tests** (closes #188). The Tdarr exclusion preset already skipped the transcode cache (`/temp`) and log directory (`/app/logs`); it now also excludes stray `*.log` files, while deliberately keeping `/app/server` (the DB2 database, plugins and samples) and `/app/configs` so Tdarr settings and statistics restore cleanly. Both the combined `tdarr` image and the `tdarr_node` image are recognised, now with regression tests to keep detection working.
+
 ## [2026.07.01] - 2026-07-04
 
 ### Added
