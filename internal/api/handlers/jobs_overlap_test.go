@@ -31,6 +31,30 @@ func TestPathsOverlap(t *testing.T) {
 	}
 }
 
+func TestNormalizeCompressionLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		compression string
+		level       string
+		want        string
+	}{
+		{"none clears level", "none", "best", ""},
+		{"default collapses to empty", "zstd", "default", ""},
+		{"empty stays empty", "zstd", "", ""},
+		{"unknown collapses to empty", "zstd", "wild", ""},
+		{"valid best kept", "zstd", "best", "best"},
+		{"valid fastest kept", "gzip", "fastest", "fastest"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeCompressionLevel(tc.compression, tc.level); got != tc.want {
+				t.Errorf("normalizeCompressionLevel(%q,%q) = %q, want %q", tc.compression, tc.level, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFolderSourceOverlap(t *testing.T) {
 	t.Parallel()
 	// Flash items are folder-typed (Type "folder" with preset "flash"), so the

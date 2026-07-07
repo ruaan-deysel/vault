@@ -135,7 +135,24 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
 		return false
 	}
+	job.CompressionLevel = normalizeCompressionLevel(job.Compression, job.CompressionLevel)
 	return true
+}
+
+// normalizeCompressionLevel constrains the level to the known set so junk values
+// never persist: it clears the level when compression is off or when the value
+// is empty/"default"/unknown (the engine's default level), and otherwise keeps
+// the recognised fastest/better/best.
+func normalizeCompressionLevel(compression, level string) string {
+	if compression == "none" {
+		return ""
+	}
+	switch level {
+	case "fastest", "better", "best":
+		return level
+	default:
+		return ""
+	}
 }
 
 // pathsOverlap reports whether two paths are equal or one is nested inside the
