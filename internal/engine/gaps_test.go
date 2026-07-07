@@ -31,6 +31,29 @@ func TestBackupableMount(t *testing.T) {
 	}
 }
 
+func TestRestorableVolume(t *testing.T) {
+	t.Parallel()
+	anon := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	tests := []struct {
+		name   string
+		typ    string
+		volume string
+		want   bool
+	}{
+		{"bind is always restorable", "bind", "", true},
+		{"named volume", "volume", "postgres-data", true},
+		{"anonymous 64-hex volume", "volume", anon, false},
+		{"volume with no name", "volume", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := restorableVolume(tc.typ, tc.volume); got != tc.want {
+				t.Errorf("restorableVolume(%q,%q) = %v, want %v", tc.typ, tc.volume, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSparseInfo(t *testing.T) {
 	t.Parallel()
 

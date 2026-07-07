@@ -757,7 +757,7 @@ func TestContainerChunkedBackupIncludesVolumesSkipsTmpfs(t *testing.T) {
 				State:  &containertypes.State{Running: false},
 				Mounts: []containertypes.MountPoint{
 					{Type: mounttypes.TypeBind, Source: bindSrc, Destination: "/data"},
-					{Type: mounttypes.TypeVolume, Source: volSrc, Destination: "/cache"},
+					{Type: mounttypes.TypeVolume, Name: "cachevol", Source: volSrc, Destination: "/cache"},
 					{Type: mounttypes.TypeTmpfs, Source: "", Destination: "/tmp"},
 				},
 			},

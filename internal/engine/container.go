@@ -138,6 +138,33 @@ func backupableMount(mountType string) bool {
 	return mountType == "bind" || mountType == "volume"
 }
 
+// isHex64 reports whether s is a 64-character lowercase hex string — Docker's
+// identifier format for an anonymous volume.
+func isHex64(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// restorableVolume reports whether a volume mount can be reliably restored.
+// Only *named* volumes appear in the container's HostConfig.Binds (as
+// "<name>:<dest>") and are reattached when the container is recreated;
+// anonymous volumes (a 64-hex id, or no name) are not in Binds, so backing them
+// up would orphan the data on restore. Such volumes are skipped to avoid a
+// false sense of safety. Bind mounts are always restorable.
+func restorableVolume(mountType, name string) bool {
+	if mountType != "volume" {
+		return true
+	}
+	return name != "" && !isHex64(name)
+}
+
 // sparseWarnMinBytes is the logical-size floor below which a sparse file isn't
 // worth warning about — the read is fast regardless.
 const sparseWarnMinBytes = 1 << 30 // 1 GiB
@@ -437,7 +464,7 @@ func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]Mount
 	}
 	mounts := make([]MountInfo, 0, len(inspectResult.Container.Mounts))
 	for _, m := range inspectResult.Container.Mounts {
-		if !backupableMount(string(m.Type)) {
+		if !backupableMount(string(m.Type)) || !restorableVolume(string(m.Type), m.Name) {
 			continue
 		}
 		skip, reason := shouldSkipVolume(m.Source)
@@ -622,6 +649,14 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				Index:       i,
 				Source:      mount.Source,
 				Destination: mount.Destination,
+			}
+
+			if !restorableVolume(string(mount.Type), mount.Name) {
+				log.Printf("engine: skipping anonymous volume %q for %s (not restorable — no stable name)", mount.Destination, item.Name)
+				entry.BackedUp = false
+				entry.SkipReason = "anonymous volume (not restorable)"
+				manifest = append(manifest, entry)
+				continue
 			}
 
 			if skip, reason := shouldSkipVolume(mount.Source); skip {
@@ -900,7 +935,15 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 
 		targetPath := mount.Source
 		if restoreDest != "" {
-			volumeName, err := normalizeRestoreComponent(filepath.Base(mount.Source))
+			// For named volumes the recreated container's bind is rewritten to
+			// restoreDest/<volume-name> (see recreateAndStartContainer), so the
+			// data must land there too — not restoreDest/_data (base of the
+			// /var/lib/docker/volumes/<name>/_data source).
+			component := filepath.Base(mount.Source)
+			if mount.Type == "volume" && mount.Name != "" {
+				component = mount.Name
+			}
+			volumeName, err := normalizeRestoreComponent(component)
 			if err != nil {
 				return err
 			}
@@ -1011,6 +1054,7 @@ type restoreInspect struct {
 	} `json:"State"`
 	Mounts []struct {
 		Type        string `json:"Type"`
+		Name        string `json:"Name"`
 		Source      string `json:"Source"`
 		Destination string `json:"Destination"`
 	} `json:"Mounts"`
@@ -1358,6 +1402,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			continue
 		}
 		key := containerVolPrefix + mnt.Destination
+		if !restorableVolume(string(mnt.Type), mnt.Name) {
+			log.Printf("engine: chunked: skipping anonymous volume %q for %s (not restorable)", mnt.Destination, item.Name)
+			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+			continue
+		}
 		if skip, reason := shouldSkipVolume(mnt.Source); skip {
 			log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
 			m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}

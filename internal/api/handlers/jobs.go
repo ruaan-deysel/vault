@@ -154,15 +154,28 @@ func isSubPath(child, parent string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// resolvePath resolves symlinks best-effort so a symlinked destination inside a
+// source tree can't slip past the overlap check. Falls back to a lexical clean
+// when the path doesn't exist yet (e.g. a not-yet-created backup destination).
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
 // folderSourceOverlap returns a reason and true when destPath is the same as,
 // inside, or a parent of any folder/flash item's source path — the classic
 // "backing itself up" footgun where each run archives the previous run's output
-// and the source grows without bound. An empty destPath (a remote destination
-// with no on-array path) never overlaps.
+// and the source grows without bound. Flash items are folder-typed, so the
+// "folder" guard covers them. An empty destPath (a remote destination with no
+// on-array path) never overlaps. Symlinks are resolved so a symlinked
+// destination inside a source can't evade the check.
 func folderSourceOverlap(destPath string, items []db.JobItem) (string, bool) {
 	if strings.TrimSpace(destPath) == "" {
 		return "", false
 	}
+	dest := resolvePath(destPath)
 	for _, it := range items {
 		if it.ItemType != "folder" {
 			continue
@@ -173,7 +186,7 @@ func folderSourceOverlap(destPath string, items []db.JobItem) (string, bool) {
 		if json.Unmarshal([]byte(it.Settings), &s) != nil || s.Path == "" {
 			continue
 		}
-		if pathsOverlap(s.Path, destPath) {
+		if pathsOverlap(resolvePath(s.Path), dest) {
 			return fmt.Sprintf(
 				"backup destination %q overlaps the backup source %q — the job would back up into its own source; choose a destination outside the source tree",
 				filepath.Clean(destPath), filepath.Clean(s.Path)), true
@@ -292,7 +305,14 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !validateJobInput(w, &req.Job) {
 		return
 	}
-	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
+	// A PUT that omits items leaves the persisted items in place, so check the
+	// overlap against those rather than the (nil) request items — otherwise a
+	// destination change alone could sneak the job into its own source.
+	overlapItems := req.Items
+	if overlapItems == nil {
+		overlapItems, _ = h.db.GetJobItems(id)
+	}
+	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), overlapItems); bad {
 		respondError(w, http.StatusBadRequest, reason)
 		return
 	}
