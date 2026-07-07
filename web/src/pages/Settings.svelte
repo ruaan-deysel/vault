@@ -775,8 +775,8 @@
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
-      <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex items-center gap-2 overflow-x-auto">
-        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim shrink-0">Jump to</span>
+      <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
+        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
         {#each generalSections as sec (sec.id)}
           <button type="button" onclick={() => jumpToSetting(sec.id)}
             class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors whitespace-nowrap shrink-0">
