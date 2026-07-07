@@ -349,6 +349,98 @@
     return { used, total, pct: total > 0 ? Math.round((used / total) * 100) : 0, count: storageCaps.length }
   })
 
+  // Top recent backups by size (for the Largest-backups tile), one row per job.
+  const largestBackups = $derived.by(() => {
+    const byJob = {}
+    for (const r of recentRuns) {
+      if ((r.run_type || 'backup') !== 'backup' || !r.size_bytes) continue
+      if (byJob[r.jobName] == null || r.size_bytes > byJob[r.jobName]) byJob[r.jobName] = r.size_bytes
+    }
+    return Object.entries(byJob).map(([name, size]) => ({ name, size })).sort((a, b) => b.size - a.size).slice(0, 5)
+  })
+
+  // ── Lazily-loaded data for optional tiles (default-off, so fetched only when
+  // the user adds the tile). Each guards against duplicate in-flight loads. ──
+  /** @type {{ points: Array<{start: string, total_bytes: number}> } | null} */
+  let trendData = $state(null)
+  let trendLoading = false
+  async function loadTrend() {
+    if (trendLoading || trendData) return
+    trendLoading = true
+    try { trendData = await api.getHistoryTrend('30d') } catch { /* ignore */ } finally { trendLoading = false }
+  }
+
+  /** @type {{ ratio: number, logical: number, physical: number } | null} */
+  let dedupSummary = $state(null)
+  let dedupLoading = false
+  async function loadDedup() {
+    if (dedupLoading || dedupSummary) return
+    dedupLoading = true
+    try {
+      const dests = storage.filter(s => s.dedup_enabled)
+      const stats = await Promise.all(dests.map(d => api.dedupStats(d.id).catch(() => null)))
+      let logical = 0, physical = 0
+      for (const st of stats) { if (st) { logical += st.logical_bytes || 0; physical += st.physical_bytes || 0 } }
+      dedupSummary = physical > 0 ? { ratio: logical / physical, logical, physical } : null
+    } catch { /* ignore */ } finally { dedupLoading = false }
+  }
+
+  /** @type {{ name: string, days: number, perDay: number } | null} */
+  let forecastSummary = $state(null)
+  let forecastLoading = false
+  async function loadForecast() {
+    if (forecastLoading || forecastSummary) return
+    forecastLoading = true
+    try {
+      const dests = storage.filter(s => s.capacity && s.capacity.total_bytes > 0)
+      const trajectories = await Promise.all(dests.map(d => api.getCapacityTrajectory(d.id).then(t => ({ d, t })).catch(() => null)))
+      let soonest = null
+      for (const entry of trajectories) {
+        if (!entry) continue
+        const samples = (entry.t?.samples || []).filter(sm => sm.free_bytes != null)
+        if (samples.length < 2) continue
+        const first = samples[0], last = samples[samples.length - 1]
+        const days = (new Date(last.sampled_at).getTime() - new Date(first.sampled_at).getTime()) / 86400000
+        if (days <= 0) continue
+        const perDay = (first.free_bytes - last.free_bytes) / days // bytes consumed/day
+        if (perDay <= 0) continue // not filling
+        const daysToFull = last.free_bytes / perDay
+        if (!soonest || daysToFull < soonest.days) soonest = { name: entry.d.name, days: Math.round(daysToFull), perDay }
+      }
+      forecastSummary = soonest
+    } catch { /* ignore */ } finally { forecastLoading = false }
+  }
+
+  // Trigger the lazy loaders whenever a tile that needs their data is present.
+  $effect(() => {
+    if ((layout.order.includes('sizeTrend') || layout.order.includes('calendar')) && !trendData) loadTrend()
+    if (layout.order.includes('savings') && !dedupSummary) loadDedup()
+    if (layout.order.includes('forecast') && !forecastSummary) loadForecast()
+  })
+
+  const trendChange = $derived.by(() => {
+    const pts = trendData?.points?.filter(p => p.total_bytes > 0) || []
+    if (pts.length < 2) return null
+    const first = pts[0].total_bytes, last = pts[pts.length - 1].total_bytes
+    return { first, last, pctChange: first > 0 ? Math.round(((last - first) / first) * 100) : 0 }
+  })
+
+  // SVG polyline points for the size-trend sparkline (normalized to 300×64).
+  const trendPolyline = $derived.by(() => {
+    const pts = (trendData?.points || []).map(p => p.total_bytes)
+    if (pts.length < 2) return ''
+    const max = Math.max(...pts, 1)
+    return pts.map((v, i) => `${(i / (pts.length - 1) * 300).toFixed(1)},${(64 - (v / max) * 58).toFixed(1)}`).join(' ')
+  })
+
+  // Recent days as heatmap cells (backup ran that day → coloured by size).
+  const calendarCells = $derived.by(() => {
+    const pts = trendData?.points || []
+    if (!pts.length) return []
+    const max = Math.max(...pts.map(p => p.total_bytes), 1)
+    return pts.slice(-35).map(p => ({ date: p.start, ran: p.total_bytes > 0, intensity: p.total_bytes / max }))
+  })
+
   const healthScore = $derived(healthSummary?.health_score ?? 0)
   const healthColor = $derived(healthScore >= 80 ? 'var(--color-success)' : healthScore >= 50 ? 'var(--color-warning)' : 'var(--color-danger)')
   const healthSummaryText = $derived.by(() => {
@@ -385,6 +477,11 @@
     successrate:  { name: 'Success rate',       span: 4, glyph: '%' },
     anomalies:    { name: 'Anomalies',          span: 4, glyph: '⚠' },
     quickactions: { name: 'Quick actions',      span: 4, glyph: '⚡' },
+    sizeTrend:    { name: 'Backup size trend',  span: 6, glyph: '📈' },
+    calendar:     { name: 'Backup calendar',    span: 6, glyph: '▦' },
+    savings:      { name: 'Dedup & compression', span: 4, glyph: '⇊' },
+    forecast:     { name: 'Storage forecast',   span: 4, glyph: '◔' },
+    largest:      { name: 'Largest backups',    span: 6, glyph: '⬒' },
   }
 
   const layout = createDashboardLayout(Object.keys(CATALOG))
@@ -396,6 +493,10 @@
     if (id === 'storageCombined' || id === 'storagePerTarget') return storageCaps.length > 0
     if (id === 'anomalies') return getAnomalyEnabled()
     if (id === 'protection') return totalItems > 0
+    if (id === 'savings') return storage.some(s => s.dedup_enabled)
+    if (id === 'largest') return largestBackups.length > 0
+    // sizeTrend / calendar / forecast render their own loading/empty state, so
+    // they stay visible while data loads or if the series is thin.
     return true
   }
 
@@ -447,7 +548,7 @@
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex items-center gap-3">
+  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex items-center gap-3 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     <div class="relative w-14 h-14 shrink-0">
       <svg aria-hidden="true" viewBox="0 0 36 36" class="w-full h-full -rotate-90">
         <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-surface-4)" stroke-width="4" />
@@ -480,7 +581,7 @@
 {/snippet}
 
 {#snippet tNextRun()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/jobs') }}>
     <p class="text-xs text-text-muted">Next run</p>
     {#if soonestNextRun}
       <p class="text-lg font-bold text-text mt-1">{relTimeUntil(soonestNextRun)}</p>
@@ -493,7 +594,7 @@
 {/snippet}
 
 {#snippet tLastBackup()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     <p class="text-xs text-text-muted">Last backup</p>
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
@@ -691,7 +792,7 @@
 
 {#snippet tStorageCombined()}
   {#if storageCombined}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
       <p class="text-xs text-text-muted">Storage — combined</p>
       <p class="text-xl font-bold text-text mt-1">{formatBytes(storageCombined.used)}</p>
       <p class="text-[11px] text-text-dim mt-0.5">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
@@ -701,7 +802,7 @@
 {/snippet}
 
 {#snippet tStoragePerTarget()}
-  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full">
+  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
     <h2 class="text-sm font-semibold text-text mb-3">Storage — per target</h2>
     {#if storageCaps.length}
       <div class="flex flex-col gap-3">
@@ -726,7 +827,7 @@
 {/snippet}
 
 {#snippet tAttention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     <p class="text-xs text-text-muted">Needs attention</p>
     <p class="text-2xl font-bold mt-1 {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
     <p class="text-[11px] text-text-dim mt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
@@ -734,7 +835,7 @@
 {/snippet}
 
 {#snippet tSuccessRate()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     <p class="text-xs text-text-muted">Success rate · recent</p>
     {#if successStats}
       <p class="text-2xl font-bold text-text mt-1">{successStats.pct}%</p>
@@ -769,6 +870,94 @@
   </div>
 {/snippet}
 
+{#snippet tSizeTrend()}
+  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    <div class="flex items-center mb-3">
+      <h2 class="text-sm font-semibold text-text">Backup size trend</h2>
+      {#if trendChange}
+        <span class="ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full {trendChange.pctChange >= 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{trendChange.pctChange}% / 30d</span>
+      {/if}
+    </div>
+    {#if trendPolyline}
+      <svg viewBox="0 0 300 70" preserveAspectRatio="none" class="w-full h-16" aria-hidden="true">
+        <polyline points={trendPolyline} fill="none" stroke="var(--color-vault)" stroke-width="2.5" vector-effect="non-scaling-stroke" />
+      </svg>
+      {#if trendChange}<p class="text-[11px] text-text-dim mt-2">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
+    {:else}
+      <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet tCalendar()}
+  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    <div class="flex items-center mb-3">
+      <h2 class="text-sm font-semibold text-text">Backup calendar</h2>
+      <span class="ml-auto text-[11px] text-text-dim">Last 30 days</span>
+    </div>
+    {#if calendarCells.length}
+      <div class="grid gap-1" style="grid-template-columns: repeat(15, minmax(0, 1fr));">
+        {#each calendarCells as cell (cell.date)}
+          <div class="aspect-square rounded-sm {cell.ran ? '' : 'bg-surface-4'}" style={cell.ran ? `background: color-mix(in srgb, var(--color-success) ${Math.round(35 + cell.intensity * 65)}%, transparent)` : ''} title="{new Date(cell.date).toLocaleDateString()} — {cell.ran ? 'backed up' : 'no backup'}"></div>
+        {/each}
+      </div>
+      <p class="text-[11px] text-text-dim mt-2">Shaded = a backup ran that day (darker = larger)</p>
+    {:else}
+      <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet tSavings()}
+  {#if dedupSummary}
+    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+      <p class="text-xs text-text-muted">Dedup &amp; compression</p>
+      <p class="text-2xl font-bold text-success mt-1">{dedupSummary.ratio.toFixed(1)}×</p>
+      <p class="text-[11px] text-text-dim mt-1.5">{formatBytes(dedupSummary.logical)} logical → {formatBytes(dedupSummary.physical)} stored</p>
+    </div>
+  {:else}
+    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+      <p class="text-xs text-text-muted">Dedup &amp; compression</p>
+      <p class="text-[11px] text-text-dim mt-2">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet tForecast()}
+  {#if forecastSummary}
+    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+      <p class="text-xs text-text-muted">Storage forecast</p>
+      <p class="text-xl font-bold text-text mt-1">~{forecastSummary.days} days</p>
+      <p class="text-[11px] text-text-dim mt-1.5">until {forecastSummary.name} is full</p>
+      <p class="text-[11px] text-warning mt-0.5 font-medium">+{formatBytes(forecastSummary.perDay)}/day</p>
+    </div>
+  {:else}
+    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
+      <p class="text-xs text-text-muted">Storage forecast</p>
+      <p class="text-[11px] text-text-dim mt-2">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet tLargest()}
+  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full">
+    <h2 class="text-sm font-semibold text-text mb-3">Largest backups</h2>
+    {#if largestBackups.length}
+      {@const max = largestBackups[0].size}
+      <div class="flex flex-col gap-2.5">
+        {#each largestBackups as b (b.name)}
+          <div>
+            <div class="flex justify-between text-xs mb-1"><span class="text-text truncate">{b.name}</span><span class="text-text-dim shrink-0 ml-2">{formatBytes(b.size)}</span></div>
+            <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden"><div class="h-full bg-vault" style="width: {Math.round(b.size / max * 100)}%"></div></div>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-xs text-text-dim py-4 text-center">No sized backups yet</p>
+    {/if}
+  </div>
+{/snippet}
+
 {#snippet tileBody(id)}
   {#if id === 'health'}{@render tHealth()}
   {:else if id === 'protected'}{@render tProtected()}
@@ -786,6 +975,11 @@
   {:else if id === 'successrate'}{@render tSuccessRate()}
   {:else if id === 'anomalies'}{@render tAnomalies()}
   {:else if id === 'quickactions'}{@render tQuickActions()}
+  {:else if id === 'sizeTrend'}{@render tSizeTrend()}
+  {:else if id === 'calendar'}{@render tCalendar()}
+  {:else if id === 'savings'}{@render tSavings()}
+  {:else if id === 'forecast'}{@render tForecast()}
+  {:else if id === 'largest'}{@render tLargest()}
   {/if}
 {/snippet}
 
