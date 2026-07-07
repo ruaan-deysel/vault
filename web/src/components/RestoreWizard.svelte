@@ -12,6 +12,7 @@
 
   let step = $state(1)
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
+  let autoSelectApplied = false // deep-link auto-select is one-time per mount
   let selectedPoint = $state(null)
   let restoreDestination = $state('')
   let showDestOverride = $state(false)
@@ -181,23 +182,28 @@
         }
       }
       allItems = Array.from(itemMap.values())
-      // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
-      if (initialJobId && selectedItems.size === 0) {
-        const jid = Number(initialJobId)
-        for (const item of allItems) {
-          if (item.jobs.some(j => j.id === jid)) {
-            const key = `${item.type}:${item.name}`
-            selectedItems.set(key, item)
+      // Deep-link auto-select runs once per mount so a later gatherItems refresh
+      // (e.g. a WS event) can't re-select items the user has since cleared.
+      if (!autoSelectApplied) {
+        autoSelectApplied = true
+        // Auto-select items from a pre-selected job (e.g. quick restore from Dashboard)
+        if (initialJobId) {
+          const jid = Number(initialJobId)
+          for (const item of allItems) {
+            if (item.jobs.some(j => j.id === jid)) {
+              const key = `${item.type}:${item.name}`
+              selectedItems.set(key, item)
+            }
           }
         }
-      }
-      // Auto-select a specific item from a type+name deep-link (Dashboard restore
-      // buttons and the command palette). Only matches items that are actually in
-      // a backup job, so unknown/never-backed-up names just land on the picker.
-      if (initialType && initialName && selectedItems.size === 0) {
-        const key = `${initialType}:${initialName}`
-        const item = allItems.find(i => `${i.type}:${i.name}` === key)
-        if (item) selectedItems.set(key, item)
+        // Auto-select a specific item from a type+name deep-link (Dashboard restore
+        // buttons and the command palette). Only matches items that are actually in
+        // a backup job, so unknown/never-backed-up names just land on the picker.
+        if (initialType && initialName && selectedItems.size === 0) {
+          const key = `${initialType}:${initialName}`
+          const item = allItems.find(i => `${i.type}:${i.name}` === key)
+          if (item) selectedItems.set(key, item)
+        }
       }
     } catch { /* ignore */ } finally {
       loading = false

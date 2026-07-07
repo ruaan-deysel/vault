@@ -2176,9 +2176,12 @@
             Next
           </button>
         {:else}
+          <!-- Final save is gated by the full validation (canSaveExpress), not
+               just the current step, so jumping the stepper straight to Review
+               can't save a job with a missing name/item/storage. -->
           <button
             type="button"
-            disabled={saving || !canNext}
+            disabled={saving || !canSaveExpress}
             onclick={() => saveJob(true)}
             class="px-4 py-2 text-sm font-medium text-vault border border-vault/50 hover:bg-vault/10 rounded-lg transition-colors disabled:opacity-40"
           >
@@ -2186,7 +2189,7 @@
           </button>
           <button
             type="submit"
-            disabled={saving || !canNext}
+            disabled={saving || !canSaveExpress}
             class="px-5 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40"
           >
             {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Create Job'}{/if}

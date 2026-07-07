@@ -36,18 +36,23 @@
   const generalSections = [
     { id: 'set-appearance', label: 'Appearance' },
     { id: 'set-targets', label: 'Backup Targets' },
-    { id: 'set-history', label: 'History Retention' },
-    { id: 'set-about', label: 'About' },
     { id: 'set-retry', label: 'Retry Policy' },
     { id: 'set-dedup', label: 'Dedup' },
     { id: 'set-anomaly', label: 'Anomaly Detection' },
     { id: 'set-logging', label: 'Storage Logging' },
+    { id: 'set-history', label: 'History Retention' },
     { id: 'set-server', label: 'Server Info' },
     { id: 'set-database', label: 'Database' },
     { id: 'set-diagnostics', label: 'Diagnostics' },
+    { id: 'set-about', label: 'About' },
   ]
   function jumpToSetting(id) {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Move focus so keyboard / screen-reader users land in the target section.
+    el.setAttribute('tabindex', '-1')
+    el.focus({ preventScroll: true })
   }
 
   // Encryption state

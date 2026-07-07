@@ -804,9 +804,9 @@
 
     <div>
       <span class="block text-sm font-medium text-text-muted mb-1.5">Type</span>
-      <div role="radiogroup" aria-label="Storage type" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <div role="group" aria-label="Storage type" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {#each storageTypes as t (t.value)}
-          <button type="button" role="radio" aria-checked={form.type === t.value}
+          <button type="button" aria-pressed={form.type === t.value}
             onclick={() => applyType(t.value)}
             class="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm text-left transition-colors
               {form.type === t.value ? 'border-vault bg-vault/10 text-text' : 'border-border bg-surface-3 text-text-muted hover:border-border-hover hover:text-text'}">
