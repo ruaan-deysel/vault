@@ -187,7 +187,7 @@
 
   // Wizard step
   let step = $state(1)
-  const totalSteps = 7
+  const totalSteps = 4
   // Express mode renders every primary field on one scrollable page for power
   // users; the step-by-step wizard stays the default (issue #207 / E10).
   let expressMode = $state(false)
@@ -747,7 +747,7 @@
         })),
       }
       editing = null
-      step = 3
+      step = 2
       expressMode = false
       showModal = true
     } catch (e) {
@@ -789,24 +789,23 @@
     return storageList.find(s => s.id === id)?.name || 'Unknown'
   }
 
-  // Wizard validation. Steps: 1 Type · 2 Items · 3 When (schedule+storage) ·
-  // 4 How (mode/type/compression/encryption, all defaulted) · 5 Details ·
-  // 6 Advanced · 7 Review.
+  // Wizard validation. 4 steps, each merging what used to be separate screens:
+  // 1 What (type + items) · 2 Where & when (storage + schedule) ·
+  // 3 How (mode/type/compression/encryption + Advanced accordions) ·
+  // 4 Name & review (name/description + summary).
   let canNext = $derived.by(() => {
-    if (step === 1) return form.selectedTypes.length > 0
-    if (step === 2) return form.items.length > 0
-    if (step === 3) return form.storage_dest_id > 0
-    if (step === 5) return form.name.trim().length > 0
-    if (step === 6) return vmRestoreVerifyErrors.length === 0
+    if (step === 1) return form.selectedTypes.length > 0 && form.items.length > 0
+    if (step === 2) return form.storage_dest_id > 0
+    if (step === 3) return vmRestoreVerifyErrors.length === 0
     return true
   })
 
   let stepHint = $derived.by(() => {
     if (step === 1 && form.selectedTypes.length === 0) return 'Select at least one backup type'
-    if (step === 2 && form.items.length === 0) return 'Select at least one item to back up'
-    if (step === 3 && form.storage_dest_id === 0) return 'Select a storage destination'
-    if (step === 5 && !form.name.trim()) return 'Enter a job name to continue'
-    if (step === 6 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+    if (step === 1 && form.items.length === 0) return 'Select at least one item to back up'
+    if (step === 2 && form.storage_dest_id === 0) return 'Select a storage destination'
+    if (step === 3 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
+    if (step === 4 && !form.name.trim()) return 'Enter a job name to continue'
     return ''
   })
 
@@ -1299,7 +1298,7 @@
       </div>
       {#if !expressMode}
         <div class="flex items-center gap-1 sm:gap-2 overflow-x-auto">
-          {#each [{n:1, label:'Type'}, {n:2, label:'Items'}, {n:3, label:'When'}, {n:4, label:'How'}, {n:5, label:'Details'}, {n:6, label:'Advanced'}, {n:7, label:'Review'}] as s (s.n)}
+          {#each [{n:1, label:'What'}, {n:2, label:'Where & when'}, {n:3, label:'How'}, {n:4, label:'Name & review'}] as s (s.n)}
             <button
               type="button"
               onclick={() => { if (s.n < step || canNext) step = s.n }}
@@ -1400,21 +1399,21 @@
         <p class="text-xs text-text-dim">Advanced settings (retention, verification, scripts, retry) use sensible defaults here — switch to step-by-step to fine-tune them.</p>
       </div>
     {:else}
-    <!-- Step 1: Choose Backup Types -->
+    <!-- Step 1 · What — backup types then the items for those types -->
     {#if step === 1}
       <div class="space-y-4">
         <TypePicker bind:selectedTypes={form.selectedTypes} />
       </div>
-
-    <!-- Step 2: Select Items -->
-    {:else if step === 2}
-      <div class="space-y-4">
+    {/if}
+    {#if step === 1}
+      <div class="space-y-4 mt-6">
         <p class="text-sm text-text-muted">Select the specific items to include in this backup job.</p>
         <ItemPicker bind:items={form.items} allowedTypes={form.selectedTypes} />
       </div>
+    {/if}
 
-    <!-- Step 3: When — schedule + storage destination -->
-    {:else if step === 3}
+    <!-- Step 2 · Where & when — storage destination + schedule -->
+    {#if step === 2}
       <div class="space-y-5">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Schedule</span>
@@ -1452,8 +1451,10 @@
         </div>
       </div>
 
-    <!-- Step 4: How — backup mode, type, compression, encryption (all defaulted) -->
-    {:else if step === 4}
+    {/if}
+
+    <!-- Step 3 · How — mode/type/compression/encryption, then Advanced accordions -->
+    {#if step === 3}
       <div class="space-y-5">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Mode</span>
@@ -1527,8 +1528,10 @@
         </div>
       </div>
 
-    <!-- Step 5: Job Details -->
-    {:else if step === 5}
+    {/if}
+
+    <!-- Step 4 · Name & review — details then the plain-language summary -->
+    {#if step === 4}
       <div class="space-y-5">
         <div>
           <label for="name" class="block text-sm font-medium text-text-muted mb-1.5">Job Name <Tooltip text="Used for display and log identification. No strict naming constraints." /></label>
@@ -1552,9 +1555,15 @@
         </div>
       </div>
 
-    <!-- Step 6: Advanced Settings -->
-    {:else if step === 6}
-      <div class="space-y-5">
+    {/if}
+
+    <!-- Step 3 (cont.) · Advanced options — same accordions, now hosted under How -->
+    {#if step === 3}
+      <div class="space-y-5 mt-6 pt-6 border-t border-border">
+        <div class="flex items-center gap-2">
+          <h3 class="text-sm font-semibold text-text">Advanced options</h3>
+          <span class="text-xs text-text-muted">optional — sensible defaults applied</span>
+        </div>
         <!-- Advanced: Retention -->
         <details class="group" open>
           <summary class="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-muted hover:text-text">
@@ -2038,9 +2047,11 @@
         {/if}
       </div>
 
-    <!-- Step 6: Review & Create -->
-    {:else}
-      <div class="space-y-5">
+    {/if}
+
+    <!-- Step 4 (cont.) · Review — plain-language summary of the job -->
+    {#if step === 4}
+      <div class="space-y-5 mt-6 pt-6 border-t border-border">
         <!-- Summary card -->
         <div class="bg-surface-3/50 border border-border rounded-lg p-4 space-y-3 text-sm">
           <div class="flex justify-between">

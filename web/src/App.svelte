@@ -66,14 +66,17 @@
   // header only appears when its section has ≥1 visible child, so hidden /
   // feature-flagged items never leave an empty section behind.
   let navSections = $derived.by(() => {
-    const order = []
-    const map = new Map()
+    const groups = []
+    const bySection = {}
     for (const item of nav) {
-      const section = item.section ?? null
-      if (!map.has(section)) { map.set(section, []); order.push(section) }
-      map.get(section).push(item)
+      const key = item.section ?? '__none__'
+      if (!bySection[key]) {
+        bySection[key] = { section: item.section ?? null, items: [] }
+        groups.push(bySection[key])
+      }
+      bySection[key].items.push(item)
     }
-    return order.map(section => ({ section, items: map.get(section) }))
+    return groups
   })
 
   // Guard direct deep-links to a hidden route – redirect to Dashboard. Wait
