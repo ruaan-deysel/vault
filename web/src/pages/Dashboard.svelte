@@ -567,36 +567,49 @@
 
 <!-- ═══ Tile bodies ═══ -->
 
-{#snippet metricCardEmpty(label)}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-    <p class="text-sm font-semibold text-text mb-1">{label}</p>
-    <p class="text-xs text-text-dim mt-2">Not available yet</p>
+<!-- Shared compact metric header: icon chip + uppercase label. Keeps every
+     tile visually consistent and adds the icon richness the flat look lacked. -->
+{#snippet mHead(icon, label)}
+  <div class="flex items-center gap-2 mb-2.5">
+    <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0">
+      <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={icon}/></svg>
+    </span>
+    <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">{label}</span>
+  </div>
+{/snippet}
+
+{#snippet metricCardEmpty(icon, label)}
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    {@render mHead(icon, label)}
+    <p class="text-xs text-text-dim mt-auto">Not available yet</p>
   </div>
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex items-center gap-3 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <div class="relative w-14 h-14 shrink-0">
-      <svg aria-hidden="true" viewBox="0 0 36 36" class="w-full h-full -rotate-90">
-        <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-surface-4)" stroke-width="4" />
-        <circle cx="18" cy="18" r="15" fill="none" stroke={healthColor} stroke-width="4" stroke-linecap="round"
-          stroke-dasharray={2 * Math.PI * 15} stroke-dashoffset={2 * Math.PI * 15 * (1 - healthScore / 100)} class="transition-all duration-700" />
-      </svg>
-      <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text">{healthScore}</div>
-    </div>
-    <div class="min-w-0">
-      <p class="text-sm font-semibold text-text mb-1">Health score</p>
-      <p class="text-xs text-text-muted truncate">{healthSummaryText || 'Backup health'}</p>
-      {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5">avg {avgSpeed}</p>{/if}
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    {@render mHead(CATALOG.health.icon, 'Health score')}
+    <div class="flex items-center gap-3 mt-auto">
+      <div class="relative w-12 h-12 shrink-0">
+        <svg aria-hidden="true" viewBox="0 0 36 36" class="w-full h-full -rotate-90">
+          <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-surface-4)" stroke-width="4" />
+          <circle cx="18" cy="18" r="15" fill="none" stroke={healthColor} stroke-width="4" stroke-linecap="round"
+            stroke-dasharray={2 * Math.PI * 15} stroke-dashoffset={2 * Math.PI * 15 * (1 - healthScore / 100)} class="transition-all duration-700" />
+        </svg>
+        <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text tabular-nums">{healthScore}</div>
+      </div>
+      <div class="min-w-0">
+        <p class="text-xs font-medium text-text truncate">{healthSummaryText || 'Backup health'}</p>
+        {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5 tabular-nums">avg {avgSpeed}</p>{/if}
+      </div>
     </div>
   </div>
 {/snippet}
 
 {#snippet tProtected()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-    <p class="text-sm font-semibold text-text mb-1">Protected</p>
-    <p class="text-2xl font-bold text-text mt-1">{totalProtected}<span class="text-sm text-text-dim font-semibold">/{totalItems}</span></p>
-    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    {@render mHead(CATALOG.protected.icon, 'Protected')}
+    <p class="text-[26px] leading-none font-bold text-text tabular-nums">{totalProtected}<span class="text-base text-text-dim font-semibold">/{totalItems}</span></p>
+    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
       <div class="h-full {barColor(protectionPct)} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
     {#if hasUnprotectedItems}
@@ -608,34 +621,34 @@
 {/snippet}
 
 {#snippet tNextRun()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/jobs') }}>
-    <p class="text-sm font-semibold text-text mb-1">Next run</p>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/jobs') }}>
+    {@render mHead(CATALOG.nextrun.icon, 'Next run')}
     {#if soonestNextRun}
-      <p class="text-lg font-bold text-text mt-1">{relTimeUntil(soonestNextRun)}</p>
-      {#if soonestJob}<p class="text-[11px] text-text-dim mt-0.5 truncate">{soonestJob.name}</p>{/if}
+      <p class="text-xl font-bold text-text tabular-nums leading-none">{relTimeUntil(soonestNextRun)}</p>
+      {#if soonestJob}<p class="text-[11px] text-text-dim mt-1 truncate">{soonestJob.name}</p>{/if}
     {:else}
-      <p class="text-lg font-bold text-text-dim mt-1">No schedule</p>
+      <p class="text-xl font-bold text-text-dim leading-none">No schedule</p>
     {/if}
-    <p class="text-[11px] text-vault-text font-medium mt-1.5">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
+    <p class="text-[11px] text-vault-text font-medium mt-auto pt-1.5 tabular-nums">{jobs.length} job{jobs.length === 1 ? '' : 's'} · {enabledJobs.length} enabled</p>
   </div>
 {/snippet}
 
 {#snippet tLastBackup()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-sm font-semibold text-text mb-1">Last backup</p>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    {@render mHead(CATALOG.lastbackup.icon, 'Last backup')}
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
       {@const running = lastBackup.status === 'running'}
-      <p class="text-sm font-bold mt-1 flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : 'text-danger'}">
+      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : 'text-danger'}">
         <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : 'bg-danger'}"></span>
         {ok ? 'Success' : running ? 'Running' : 'Failed'}
       </p>
-      <p class="text-[11px] text-text-dim mt-0.5 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
+      <p class="text-[11px] text-text-dim mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
-        <p class="text-[11px] text-text-muted mt-0.5">{formatBytes(lastBackup.size_bytes || 0)}{lastBackup.duration_seconds ? ` · ${fmtDur(lastBackup.duration_seconds)}` : ''}</p>
+        <p class="text-[11px] text-text-muted mt-auto pt-1 tabular-nums">{formatBytes(lastBackup.size_bytes || 0)}{lastBackup.duration_seconds ? ` · ${fmtDur(lastBackup.duration_seconds)}` : ''}</p>
       {/if}
     {:else}
-      <p class="text-sm font-bold text-text-dim mt-1">No runs yet</p>
+      <p class="text-base font-bold text-text-dim">No runs yet</p>
     {/if}
   </div>
 {/snippet}
@@ -655,28 +668,30 @@
     {@const overallPct = progress.overallTotal > 0 ? Math.min(100, Math.round((((progress.overallDone + progress.overallFailed) + (activeItemPct / 100)) / progress.overallTotal) * 100)) : activeItemPct}
     {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
     {@const activeRunLabel = progress.activeRun.run_type === 'restore' ? 'Restore in progress' : 'Backup in progress'}
-    <div class="bg-surface-2 border border-vault/30 rounded-xl p-5 h-full" role="status" aria-live="polite">
-      <div class="flex items-center gap-2.5 mb-3">
-        <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse"></div>
-        <h2 class="text-sm font-semibold text-text">{activeRunLabel}</h2>
-        <span class="ml-auto text-[11px] px-2.5 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
+    <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5 h-full" role="status" aria-live="polite">
+      <div class="flex items-center gap-2 mb-2.5">
+        <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
+        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-vault/15 text-vault font-medium truncate max-w-[45%]">{progress.activeRun.job_name}</span>
       </div>
       <div class="flex items-center justify-between text-xs text-text-muted mb-1.5">
-        <span>Overall progress</span><span class="font-mono text-text-dim">{overallPct}%</span>
+        <span>Overall progress</span><span class="font-mono text-text-dim tabular-nums">{overallPct}%</span>
       </div>
       <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden">
         <div class="h-full rounded-full transition-all duration-300 {overallPct < 100 ? 'shimmer-bar' : 'bg-vault'}" style="width: {overallPct}%"></div>
       </div>
-      <p class="text-[11px] text-text-dim mt-2">
+      <p class="text-[11px] text-text-dim mt-2 tabular-nums">
         {progress.overallDone}/{progress.overallTotal} items · {elapsedStr}{#if progress.overallFailed > 0} · <span class="text-danger">{progress.overallFailed} failed</span>{/if}{#if liveSpeed} · <span class="text-info">{liveSpeed}</span>{/if}
       </p>
       {#if progress.phaseMessage}<p class="text-[11px] text-warning animate-pulse mt-1">{progress.phaseMessage}</p>{/if}
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-5 h-full min-h-[120px] flex flex-col items-center justify-center text-center">
-      <svg aria-hidden="true" class="w-7 h-7 text-text-dim mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-      <p class="text-sm font-medium text-text">No backup running</p>
-      {#if soonestNextRun}<p class="text-xs text-text-dim mt-1">Next: {relTimeUntil(soonestNextRun)}</p>{/if}
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+      {@render mHead(CATALOG.progress.icon, 'Backup in progress')}
+      <div class="flex items-center gap-2 mt-auto text-text-dim">
+        <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        <div><p class="text-sm font-medium text-text">No backup running</p>{#if soonestNextRun}<p class="text-[11px] text-text-dim tabular-nums">Next: {relTimeUntil(soonestNextRun)}</p>{/if}</div>
+      </div>
     </div>
   {/if}
 {/snippet}
@@ -687,8 +702,9 @@
 
 {#snippet tJobs()}
   <div class="bg-surface-2 border border-border rounded-xl h-full">
-    <div class="px-5 py-4 border-b border-border flex items-center">
-      <h2 class="text-sm font-semibold text-text">Backup Jobs</h2>
+    <div class="px-4 py-3 border-b border-border flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
+      <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
       <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:text-vault-dark font-medium">View all →</button>
     </div>
     {#if jobs.length === 0}
@@ -748,10 +764,11 @@
 {#snippet tProtection()}
   {#if totalItems > 0}
     <div class="bg-surface-2 border border-border rounded-xl h-full">
-      <div class="px-5 py-4 flex items-center justify-between {protectionExpanded ? 'border-b border-border' : ''}">
-        <div class="flex items-center gap-3">
-          <h2 class="text-sm font-semibold text-text">Protection Status</h2>
-          <span class="text-xs px-2.5 py-1 rounded-full font-medium {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
+      <div class="px-4 py-3 flex items-center justify-between gap-2 {protectionExpanded ? 'border-b border-border' : ''}">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.protection.icon}/></svg></span>
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Protection</span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
             {totalProtected}/{totalItems} · {protectionPct}%
           </span>
         </div>
@@ -821,109 +838,112 @@
 
 {#snippet tStorageCombined()}
   {#if storageCombined}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-sm font-semibold text-text mb-1">Storage — combined</p>
-      <p class="text-xl font-bold text-text mt-1">{formatBytes(storageCombined.used)}</p>
-      <p class="text-[11px] text-text-dim mt-0.5">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
-      <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+      {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
+      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
+      <p class="text-[11px] text-text-dim mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
+      <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
     </div>
-  {:else}{@render metricCardEmpty('Storage — combined')}{/if}
+  {:else}{@render metricCardEmpty(CATALOG.storageCombined.icon, 'Storage used')}{/if}
 {/snippet}
 
 {#snippet tStoragePerTarget()}
-  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-    <h2 class="text-sm font-semibold text-text mb-3">Storage — per target</h2>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+    {@render mHead(CATALOG.storagePerTarget.icon, 'Storage per target')}
     {#if storageCaps.length}
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-2.5">
         {#each storageCaps as s (s.id)}
           {@const pct = s.capacity.total_bytes > 0 ? Math.round((s.capacity.used_bytes || 0) / s.capacity.total_bytes * 100) : 0}
           <div>
-            <div class="flex justify-between text-xs mb-1"><span class="text-text truncate">{s.name}</span><span class="text-text-dim shrink-0 ml-2">{formatBytes(s.capacity.used_bytes || 0)}</span></div>
+            <div class="flex justify-between text-xs mb-1"><span class="text-text truncate">{s.name}</span><span class="text-text-dim shrink-0 ml-2 tabular-nums">{formatBytes(s.capacity.used_bytes || 0)}</span></div>
             <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden"><div class="h-full bg-vault" style="width: {pct}%"></div></div>
           </div>
         {/each}
       </div>
-    {:else}<p class="text-xs text-text-dim">No capacity data yet — probe a destination on the Storage page.</p>{/if}
+    {:else}<p class="text-xs text-text-dim mt-auto">No capacity data yet — probe a destination on the Storage page.</p>{/if}
   </div>
 {/snippet}
 
 {#snippet tRecovery()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/recovery') }}>
-    <p class="text-sm font-semibold text-text mb-1">Recovery readiness</p>
-    <p class="text-2xl font-bold mt-1 {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
-    <p class="text-[11px] text-text-dim mt-1.5">{totalProtected}/{totalItems} items recoverable</p>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/recovery') }}>
+    {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
+    <p class="text-[26px] leading-none font-bold tabular-nums {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
+    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {barColor(protectionPct)}" style="width: {protectionPct}%"></div></div>
+    <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
   </div>
 {/snippet}
 
 {#snippet tAttention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-sm font-semibold text-text mb-1">Needs attention</p>
-    <p class="text-2xl font-bold mt-1 {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
-    <p class="text-[11px] text-text-dim mt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    {@render mHead(CATALOG.attention.icon, 'Needs attention')}
+    <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
+    <p class="text-[11px] text-text-dim mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
   </div>
 {/snippet}
 
 {#snippet tSuccessRate()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-sm font-semibold text-text mb-1">Success rate · recent</p>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    {@render mHead(CATALOG.successrate.icon, 'Success rate')}
     {#if successStats}
-      <p class="text-2xl font-bold text-text mt-1">{successStats.pct}%</p>
-      <p class="text-[11px] text-text-dim mt-1.5">{successStats.ok} of {successStats.total} recent runs succeeded</p>
+      <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
+      <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {successStats.pct >= 90 ? 'bg-success' : successStats.pct >= 50 ? 'bg-warning' : 'bg-danger'}" style="width: {successStats.pct}%"></div></div>
+      <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{successStats.ok} of {successStats.total} recent runs</p>
     {:else}
-      <p class="text-2xl font-bold text-text-dim mt-1">—</p>
-      <p class="text-[11px] text-text-dim mt-1.5">No completed runs yet</p>
+      <p class="text-[26px] leading-none font-bold text-text-dim">—</p>
+      <p class="text-[11px] text-text-dim mt-auto pt-1.5">No completed runs yet</p>
     {/if}
   </div>
 {/snippet}
 
 {#snippet tAnomalies()}
   {#if getAnomalyEnabled()}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/anomalies') }}>
-      <p class="text-sm font-semibold text-text mb-1">Anomalies</p>
-      <p class="text-2xl font-bold mt-1 {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
-      <p class="text-[11px] text-text-dim mt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/anomalies') }}>
+      {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
+      <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
+      <p class="text-[11px] text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
     </div>
-  {:else}{@render metricCardEmpty('Anomalies')}{/if}
+  {:else}{@render metricCardEmpty(CATALOG.anomalies.icon, 'Anomalies')}{/if}
 {/snippet}
 
 {#snippet tQuickActions()}
-  <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col">
-    <p class="text-sm font-semibold text-text mb-3">Quick actions</p>
-    <div class="flex flex-wrap gap-2">
-      <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    {@render mHead(CATALOG.quickactions.icon, 'Quick actions')}
+    <div class="flex flex-col gap-1.5 mt-auto">
+      <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
         {runningAll ? 'Starting…' : 'Run all backups'}
       </button>
-      <button onclick={() => navigate('/jobs')} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
-      <button onclick={() => navigate('/restore')} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore…</button>
+      <div class="flex gap-1.5">
+        <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
+        <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore</button>
+      </div>
     </div>
   </div>
 {/snippet}
 
 {#snippet tSizeTrend()}
-  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <div class="flex items-center mb-3">
-      <h2 class="text-sm font-semibold text-text">Backup size trend</h2>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    <div class="flex items-center gap-2 mb-2.5">
+      <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
+      <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
       {#if trendChange}
-        <span class="ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full {trendChange.pctChange >= 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{trendChange.pctChange}% / 30d</span>
+        <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums {trendChange.pctChange > 0 ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">{trendChange.pctChange >= 0 ? '+' : ''}{trendChange.pctChange}% · 30d</span>
       {/if}
     </div>
     {#if trendPolyline}
-      <svg viewBox="0 0 300 70" preserveAspectRatio="none" class="w-full h-16" aria-hidden="true">
-        <polyline points={trendPolyline} fill="none" stroke="var(--color-vault)" stroke-width="2.5" vector-effect="non-scaling-stroke" />
+      <svg viewBox="0 0 300 64" preserveAspectRatio="none" class="w-full h-14" aria-hidden="true">
+        <polyline points="{trendPolyline} 300,64 0,64" fill="var(--color-vault)" opacity="0.08" vector-effect="non-scaling-stroke" />
+        <polyline points={trendPolyline} fill="none" stroke="var(--color-vault)" stroke-width="2" vector-effect="non-scaling-stroke" />
       </svg>
-      {#if trendChange}<p class="text-[11px] text-text-dim mt-2">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
+      {#if trendChange}<p class="text-[11px] text-text-dim mt-2 tabular-nums">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
     {:else}
-      <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
+      <p class="text-xs text-text-dim py-5 text-center">{trendLoading ? 'Loading trend…' : 'Not enough history yet'}</p>
     {/if}
   </div>
 {/snippet}
 
 {#snippet tCalendar()}
-  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <div class="flex items-center mb-3">
-      <h2 class="text-sm font-semibold text-text">Backup calendar</h2>
-      <span class="ml-auto text-[11px] text-text-dim">Last 5 weeks</span>
-    </div>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+    {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
     {#if calendarGrid}
       <div class="flex gap-2">
         <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
@@ -951,44 +971,44 @@
 
 {#snippet tSavings()}
   {#if dedupSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-sm font-semibold text-text mb-1">Dedup &amp; compression</p>
-      <p class="text-2xl font-bold text-success mt-1">{dedupSummary.ratio.toFixed(1)}×</p>
-      <p class="text-[11px] text-text-dim mt-1.5">{formatBytes(dedupSummary.logical)} logical → {formatBytes(dedupSummary.physical)} stored</p>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+      {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
+      <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
+      <p class="text-[11px] text-text-dim mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-      <p class="text-sm font-semibold text-text mb-1">Dedup &amp; compression</p>
-      <p class="text-[11px] text-text-dim mt-2">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+      {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
+      <p class="text-[11px] text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
     </div>
   {/if}
 {/snippet}
 
 {#snippet tForecast()}
   {#if forecastSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-sm font-semibold text-text mb-1">Storage forecast</p>
-      <p class="text-xl font-bold text-text mt-1">~{forecastSummary.days} days</p>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+      {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
+      <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
       <p class="text-[11px] text-text-dim mt-1.5">until {forecastSummary.name} is full</p>
-      <p class="text-[11px] text-warning mt-0.5 font-medium">+{formatBytes(forecastSummary.perDay)}/day</p>
+      <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-      <p class="text-sm font-semibold text-text mb-1">Storage forecast</p>
-      <p class="text-[11px] text-text-dim mt-2">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+      {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
+      <p class="text-[11px] text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
     </div>
   {/if}
 {/snippet}
 
 {#snippet tLargest()}
-  <div class="bg-surface-2 border border-border rounded-xl p-5 h-full">
-    <h2 class="text-sm font-semibold text-text mb-3">Largest backups</h2>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full">
+    {@render mHead(CATALOG.largest.icon, 'Largest backups')}
     {#if largestBackups.length}
       {@const max = largestBackups[0].size}
       <div class="flex flex-col gap-2.5">
         {#each largestBackups as b (b.name)}
           <div>
-            <div class="flex justify-between text-xs mb-1"><span class="text-text truncate">{b.name}</span><span class="text-text-dim shrink-0 ml-2">{formatBytes(b.size)}</span></div>
+            <div class="flex justify-between text-xs mb-1"><span class="text-text truncate">{b.name}</span><span class="text-text-dim shrink-0 ml-2 tabular-nums">{formatBytes(b.size)}</span></div>
             <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden"><div class="h-full bg-vault" style="width: {Math.round(b.size / max * 100)}%"></div></div>
           </div>
         {/each}
@@ -1189,9 +1209,9 @@
   :global(.dash-tile-grid) {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 14px;
+    gap: 12px;
     align-content: start;
-    align-items: start; /* tiles size to their content instead of stretching */
+    align-items: stretch; /* tiles in a row share the tallest height so KPIs align */
   }
   :global(.dash-tile.is-dragging) { opacity: 0.4; }
   :global(.dash-tile.is-dragover) { outline: 2px solid var(--color-info); outline-offset: 2px; border-radius: 14px; }
@@ -1213,8 +1233,9 @@
     :global(.dash-cat-list) { grid-template-columns: minmax(0, 1fr); }
   }
 
-  /* Very small: single column. */
-  @media (max-width: 400px) {
+  /* Very small phones only: single column. Above this (e.g. 375/390px) small
+     KPI tiles stay 2-up for a denser, ops-dashboard feel. */
+  @media (max-width: 359px) {
     :global(.dash-tile-grid) { grid-template-columns: minmax(0, 1fr); }
     :global(.dash-tile-grid > .dash-tile) { grid-column: span 1 !important; }
   }
