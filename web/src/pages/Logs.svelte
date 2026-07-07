@@ -271,6 +271,7 @@
   <!-- Filters -->
   <div class="flex flex-wrap items-center gap-2 mb-4">
     <div role="group" aria-label="Filter by category" class="flex items-center gap-2 flex-wrap">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Category</span>
       {#each categories as cat (cat.value)}
         <button
           type="button"
@@ -286,6 +287,7 @@
     </div>
     <div class="w-px h-5 bg-border" aria-hidden="true"></div>
     <div role="group" aria-label="Filter by level" class="flex items-center gap-2 flex-wrap">
+      <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Level</span>
       {#each levels as lev (lev.value)}
         <button
           type="button"

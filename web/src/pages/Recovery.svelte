@@ -106,7 +106,7 @@
           <svg aria-hidden="true" viewBox="0 0 100 100" class="w-full h-full -rotate-90">
             <circle cx="50" cy="50" r="40" fill="none" stroke="var(--color-border)" stroke-width="8" />
             <circle cx="50" cy="50" r="40" fill="none"
-              stroke={readinessPct >= 80 ? 'var(--color-success)' : readinessPct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)'}
+              stroke={readinessPct === 100 ? 'var(--color-success)' : readinessPct > 50 ? 'var(--color-warning)' : 'var(--color-danger)'}
               stroke-width="8" stroke-linecap="round"
               stroke-dasharray={2 * Math.PI * 40} stroke-dashoffset={2 * Math.PI * 40 * (1 - readinessPct / 100)}
               class="transition-all duration-1000" />

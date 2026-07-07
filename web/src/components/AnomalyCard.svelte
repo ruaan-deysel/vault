@@ -5,6 +5,7 @@
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import AnomalyBadge from './AnomalyBadge.svelte'
+  import Tooltip from './Tooltip.svelte'
   import { prettyAnomalySummary } from '../lib/utils.js'
 
   const anomalies = getAnomalies()
@@ -125,6 +126,10 @@
         </div>
 
       {:else}
+        <div class="px-5 py-1.5 flex items-center justify-end gap-1 text-[11px] text-text-dim">
+          <span>Expected teaches the baseline</span>
+          <Tooltip text="Mark an anomaly as normal so future runs like it won't be flagged (feeds the baseline). Dismiss only clears it once." />
+        </div>
         {#each displayed as anomaly (anomaly.id)}
           <div class="px-5 py-3 {severityBg[anomaly.severity] ?? ''}">
             <div class="flex items-start gap-3">

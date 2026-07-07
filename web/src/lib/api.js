@@ -50,6 +50,9 @@ export const api = {
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
   testStorage: (id) => request('POST', `/storage/${id}/test`),
+  // Test an unsaved config from the add/edit modal ({ type, config } where
+  // config is the JSON-stringified blob). Returns { success, error? }.
+  testStorageConfig: (payload) => request('POST', '/storage/test', payload),
   // On-demand storage capacity probe (Task 9 in storage-capacity feature).
   // 30s ceiling on the server side; returns { capacity: {...} } on success.
   refreshCapacity: (id) => request('POST', `/storage/${id}/capacity-check`),

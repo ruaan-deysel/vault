@@ -247,6 +247,7 @@
   function openCreate() {
     editing = null
     form = defaultForm()
+    formTestResult = null
     showModal = true
   }
 
@@ -267,6 +268,7 @@
       // the card is still the primary control.
       backup_database_enabled: !!dest.backup_database_enabled,
     }
+    formTestResult = null
     showModal = true
   }
 
@@ -417,8 +419,7 @@
     }
   }
 
-  function onTypeChange(event) {
-    const nextType = event?.currentTarget?.value || form.type
+  function applyType(nextType) {
     const defaults = {
       local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
@@ -433,6 +434,52 @@
       ...form,
       type: nextType,
       config: defaults[nextType] || {},
+    }
+    formTestResult = null
+  }
+
+  // Backend types offered in the add/edit picker (issue #206 / E8).
+  const storageTypes = [
+    { value: 'local', label: 'Local Path' },
+    { value: 'sftp', label: 'SFTP' },
+    { value: 'smb', label: 'SMB / CIFS' },
+    { value: 'nfs', label: 'NFS' },
+    { value: 'webdav', label: 'WebDAV' },
+    { value: 's3', label: 'S3 / S3-Compatible' },
+  ]
+
+  // Quick-select S3 providers — prefill endpoint/region hints. Placeholders with
+  // <angle-brackets> mark values the user must fill in (account-specific hosts).
+  const s3Presets = [
+    { label: 'AWS S3', endpoint: '', region: 'us-east-1', forcePathStyle: false },
+    { label: 'Backblaze B2', endpoint: 'https://s3.us-west-002.backblazeb2.com', region: 'us-west-002', forcePathStyle: false },
+    { label: 'Cloudflare R2', endpoint: 'https://<accountid>.r2.cloudflarestorage.com', region: 'auto', forcePathStyle: false },
+    { label: 'Wasabi', endpoint: 'https://s3.wasabisys.com', region: 'us-east-1', forcePathStyle: false },
+    { label: 'MinIO', endpoint: 'http://<host>:9000', region: 'us-east-1', forcePathStyle: true },
+    { label: 'IDrive E2', endpoint: 'https://<region>.idrivee2-XX.com', region: 'us-east-1', forcePathStyle: false },
+    { label: 'MEGA S4', endpoint: 'https://s3.g.s4.mega.io', region: 'g', forcePathStyle: false },
+  ]
+  function applyS3Preset(p) {
+    form.config = { ...form.config, endpoint: p.endpoint, region: p.region, force_path_style: p.forcePathStyle }
+    formTestResult = null
+  }
+
+  // Test the current (unsaved) form config before saving.
+  let formTesting = $state(false)
+  /** @type {{ success: boolean, error?: string } | null} */
+  let formTestResult = $state(null)
+  async function testFormConnection() {
+    formTesting = true
+    formTestResult = null
+    try {
+      const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      formTestResult = result
+      showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error}`, result.success ? 'success' : 'error')
+    } catch (e) {
+      formTestResult = { success: false, error: e.message }
+      showToast(e.message, 'error')
+    } finally {
+      formTesting = false
     }
   }
 
@@ -756,16 +803,18 @@
     </div>
 
     <div>
-      <label for="stype" class="block text-sm font-medium text-text-muted mb-1.5">Type</label>
-      <select id="stype" value={form.type} onchange={onTypeChange}
-        class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
-        <option value="local">Local Path</option>
-        <option value="sftp">SFTP</option>
-        <option value="smb">SMB / CIFS</option>
-        <option value="nfs">NFS</option>
-        <option value="webdav">WebDAV</option>
-        <option value="s3">S3 / S3-Compatible</option>
-      </select>
+      <span class="block text-sm font-medium text-text-muted mb-1.5">Type</span>
+      <div role="radiogroup" aria-label="Storage type" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {#each storageTypes as t (t.value)}
+          <button type="button" role="radio" aria-checked={form.type === t.value}
+            onclick={() => applyType(t.value)}
+            class="flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm text-left transition-colors
+              {form.type === t.value ? 'border-vault bg-vault/10 text-text' : 'border-border bg-surface-3 text-text-muted hover:border-border-hover hover:text-text'}">
+            <svg aria-hidden="true" class="w-5 h-5 shrink-0 {storageColors[t.value] || 'text-text-muted'}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons[t.value]}/></svg>
+            <span class="font-medium truncate">{t.label}</span>
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Dynamic config fields per type -->
@@ -926,6 +975,17 @@
         </div>
       </details>
     {:else if form.type === 's3'}
+      <div>
+        <span class="block text-sm font-medium text-text-muted mb-1.5">Provider preset <Tooltip text="Prefills endpoint and region for common S3 providers. You can still edit any field. Placeholders in <angle-brackets> must be filled in with your account details." /></span>
+        <div class="flex flex-wrap gap-2">
+          {#each s3Presets as p (p.label)}
+            <button type="button" onclick={() => applyS3Preset(p)}
+              class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors">
+              {p.label}
+            </button>
+          {/each}
+        </div>
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label for="s3_bucket" class="block text-sm font-medium text-text-muted mb-1.5">Bucket</label>
@@ -1031,13 +1091,33 @@
       </label>
     </div>
 
-    <div class="flex justify-end gap-3 pt-4 border-t border-border">
-      <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
-        Cancel
+    <div class="flex items-center justify-between gap-3 pt-4 border-t border-border">
+      <button type="button" onclick={testFormConnection} disabled={formTesting}
+        class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+          {formTestResult?.success === true ? 'border-success text-success bg-success/10'
+           : formTestResult?.success === false ? 'border-danger text-danger bg-danger/10'
+           : 'border-vault/50 text-vault-text hover:bg-vault/10'}">
+        {#if formTesting}
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          Testing…
+        {:else if formTestResult?.success === true}
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          Connection OK
+        {:else if formTestResult?.success === false}
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          Failed — retry
+        {:else}
+          Test connection
+        {/if}
       </button>
-      <button type="submit" disabled={saving} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-        {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
-      </button>
+      <div class="flex gap-3">
+        <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
+        </button>
+      </div>
     </div>
   </form>
 </Modal>

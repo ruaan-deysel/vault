@@ -7,6 +7,7 @@
   import AnomalyBadge from '../components/AnomalyBadge.svelte'
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
+  import Tooltip from '../components/Tooltip.svelte'
 
   // --- Filter state ---
   let filterState    = $state('open')
@@ -342,6 +343,7 @@
       >
         Mark expected
       </button>
+      <Tooltip text="Mark these as normal so future runs like them won't be flagged — this teaches the baseline. Dismiss only clears them once." />
       <button onclick={clearSelected} class="text-xs text-text-muted hover:text-text transition-colors">
         Clear
       </button>

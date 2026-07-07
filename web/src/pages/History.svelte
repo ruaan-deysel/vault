@@ -280,6 +280,7 @@
 
       <!-- Status filter pills -->
       <div role="group" aria-label="Filter by status" class="flex items-center gap-2 flex-wrap">
+        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted self-center">Status</span>
         {#each [['all','All'], ['completed','Completed'], ['failed','Failed'], ['running','Running'], ['skipped','Skipped']] as [val, label] (val)}
           <button type="button" onclick={() => selectedStatus = val}
             aria-pressed={selectedStatus === val}
@@ -290,7 +291,9 @@
       </div>
 
       <!-- Run type filter -->
-      <div role="group" aria-label="Filter by type" class="flex rounded-lg border border-border overflow-hidden text-xs">
+      <div class="flex items-center gap-1.5">
+        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Kind</span>
+        <div role="group" aria-label="Filter by type" class="flex rounded-lg border border-border overflow-hidden text-xs">
         <button onclick={() => selectedRunType = 'all'}
           aria-pressed={selectedRunType === 'all'}
           class="px-3 py-1.5 transition-colors {selectedRunType === 'all' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">All</button>
@@ -300,6 +303,7 @@
         <button onclick={() => selectedRunType = 'restore'}
           aria-pressed={selectedRunType === 'restore'}
           class="px-3 py-1.5 transition-colors border-l border-border {selectedRunType === 'restore' ? 'bg-vault text-white' : 'bg-surface-2 text-text-muted hover:bg-surface-3'}">Restores</button>
+        </div>
       </div>
 
       <select bind:value={selectedJob}

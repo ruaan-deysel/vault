@@ -8,7 +8,7 @@
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
 
-  let { jobs = [], onrestore = () => {}, initialJobId = null } = $props()
+  let { jobs = [], onrestore = () => {}, initialJobId = null, initialType = null, initialName = null } = $props()
 
   let step = $state(1)
   let selectedItems = $state(new SvelteMap()) // key: "type:name", value: item object
@@ -191,6 +191,14 @@
           }
         }
       }
+      // Auto-select a specific item from a type+name deep-link (Dashboard restore
+      // buttons and the command palette). Only matches items that are actually in
+      // a backup job, so unknown/never-backed-up names just land on the picker.
+      if (initialType && initialName && selectedItems.size === 0) {
+        const key = `${initialType}:${initialName}`
+        const item = allItems.find(i => `${i.type}:${i.name}` === key)
+        if (item) selectedItems.set(key, item)
+      }
     } catch { /* ignore */ } finally {
       loading = false
     }
@@ -340,6 +348,21 @@
   }
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
+
+  // Concrete target path for the overwrite banner (issue #205 / E5).
+  // Custom destination → the chosen path. Original location → resolved per type:
+  // folder items store their path as the name; containers use the Unraid appdata
+  // default (no per-item source path is persisted). VMs restore disk images to
+  // libvirt, so there's no single path — fall back to the generic wording.
+  let restoreTargetPath = $derived.by(() => {
+    if (showDestOverride) return restoreDestination.trim() || null
+    if (selectedCount !== 1) return null
+    const item = selectedItemsArray[0]
+    if (!item) return null
+    if (item.type === 'folder') return item.name
+    if (item.type === 'container') return `/mnt/user/appdata/${item.name}`
+    return null
+  })
   // The newest restore point is the recommended one to restore from.
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
 
@@ -782,6 +805,9 @@
             <strong class="text-text">{selectedItemsArray[0].name}</strong>
           {:else}
             <strong class="text-text">{selectedCount} selected items</strong>
+          {/if}
+          {#if restoreTargetPath}
+            at <code class="text-text font-mono break-all">{restoreTargetPath}</code>
           {/if}
           with the backup version.
         </p>

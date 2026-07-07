@@ -31,6 +31,25 @@
     { id: 'reference', label: 'Reference' },
   ]
 
+  // Jump-list for the long General tab (issue #208 / E11). Everyday settings up
+  // front, power-user knobs after; clicking scrolls to the section's card.
+  const generalSections = [
+    { id: 'set-appearance', label: 'Appearance' },
+    { id: 'set-targets', label: 'Backup Targets' },
+    { id: 'set-history', label: 'History Retention' },
+    { id: 'set-about', label: 'About' },
+    { id: 'set-retry', label: 'Retry Policy' },
+    { id: 'set-dedup', label: 'Dedup' },
+    { id: 'set-anomaly', label: 'Anomaly Detection' },
+    { id: 'set-logging', label: 'Storage Logging' },
+    { id: 'set-server', label: 'Server Info' },
+    { id: 'set-database', label: 'Database' },
+    { id: 'set-diagnostics', label: 'Diagnostics' },
+  ]
+  function jumpToSetting(id) {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   // Encryption state
   let encryptionEnabled = $state(false)
   let encPassphrase = $state('')
@@ -749,8 +768,19 @@
     <div class="space-y-6">
       <!-- === GENERAL TAB === -->
       {#if activeTab === 'general'}
+      <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
+      <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex items-center gap-2 overflow-x-auto">
+        <span class="text-[11px] font-semibold uppercase tracking-wide text-text-dim shrink-0">Jump to</span>
+        {#each generalSections as sec (sec.id)}
+          <button type="button" onclick={() => jumpToSetting(sec.id)}
+            class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors whitespace-nowrap shrink-0">
+            {sec.label}
+          </button>
+        {/each}
+      </div>
+
       <!-- Appearance / Theme -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-appearance" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Appearance</h2>
         </div>
@@ -801,7 +831,7 @@
       </div>
 
       <!-- Backup Targets -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-targets" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Backup Targets</h2>
           <p class="text-xs text-text-muted mt-0.5">Select what Vault should monitor. Disabled items won't show as unprotected on Dashboard or Recovery.</p>
@@ -911,9 +941,9 @@
       </div>
 
       <!-- Retry policy -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-retry" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Retry Policy <Tooltip text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
+          <h2 class="text-base font-semibold text-text">Retry Policy<Tooltip text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
           <p class="text-xs text-text-muted mt-0.5">How failed runs are retried before being marked permanently failed.</p>
         </div>
         <div class="p-5 space-y-4">
@@ -955,7 +985,7 @@
       </div>
 
       <!-- Dedup Compaction Threshold -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-dedup" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Dedup Compaction <Tooltip text="With deduplication on, deleting backups leaves gaps inside storage files. 'Run cleanup' rewrites a file once this % of it is wasted space, reclaiming it. Recommended: 50. Lower reclaims sooner (more rewriting); 100 never compacts." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Threshold for repacking partially-dead dedup packs during cleanup.</p>
@@ -996,7 +1026,7 @@
       </div>
 
       <!-- Anomaly Detection -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-anomaly" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Anomaly Detection <Tooltip text="Vault monitors backup size, duration, and reliability for statistical anomalies. Anomalies are surfaced in the Anomalies page and optionally sent as notifications." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Automatically detect unusual patterns in backup behaviour.</p>
@@ -1110,7 +1140,7 @@
       {/if}
 
       <!-- Storage Verbose Logging (Task 12 – storage resilience) -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-logging" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Storage Logging <Tooltip text="When enabled, every file-level storage operation (upload, download, delete) is traced to the daemon log. Useful for diagnosing intermittent transfer failures; off by default to avoid log noise." /></h2>
           <p class="text-xs text-text-muted mt-0.5">Per-operation trace logging for storage adapters.</p>
@@ -1562,7 +1592,7 @@
       {/if}
 
       <!-- History Retention -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-history" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">History Retention</h2>
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
@@ -1586,7 +1616,7 @@
       </div>
 
       <!-- Server Info -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-server" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Server Information</h2>
         </div>
@@ -1772,7 +1802,7 @@
 
       <!-- Database Location -->
       {#if databaseInfo}
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-database" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Database Location</h2>
           <p class="text-xs text-text-muted mt-0.5">Vault's database tracks your jobs, schedules, and restore points. The storage mode determines where this data is written.</p>
@@ -1845,7 +1875,7 @@
       {/if}
 
       <!-- Diagnostics -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-diagnostics" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">Diagnostics</h2>
         </div>
@@ -1872,7 +1902,7 @@
       </div>
 
       <!-- About Vault – single merged card -->
-      <div class="bg-surface-2 border border-border rounded-xl overflow-hidden">
+      <div id="set-about" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
           <h2 class="text-base font-semibold text-text">About Vault</h2>
         </div>

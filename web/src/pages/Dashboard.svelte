@@ -258,6 +258,25 @@
   const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length + protectedFlash.length)
   const protectionPct = $derived(totalItems > 0 ? Math.round((totalProtected / totalItems) * 100) : 0)
 
+  // Collapse the Protection Status panel when everything is covered (issue #211
+  // / E7). Below 100% the panel is always expanded so unprotected/pending items
+  // stay visible; at 100% it collapses by default and the user's manual choice
+  // persists in localStorage.
+  const PROTECTION_EXPANDED_KEY = 'vault:dash:protectionExpanded'
+  let protectionExpandedPref = $state(readProtectionPref())
+  function readProtectionPref() {
+    try {
+      const v = localStorage.getItem(PROTECTION_EXPANDED_KEY)
+      return v === null ? null : v === 'true'
+    } catch { return null }
+  }
+  const protectionExpanded = $derived(protectionPct < 100 ? true : (protectionExpandedPref ?? false))
+  function toggleProtection() {
+    const next = !protectionExpanded
+    protectionExpandedPref = next
+    try { localStorage.setItem(PROTECTION_EXPANDED_KEY, String(next)) } catch { /* ignore */ }
+  }
+
   const soonestNextRun = $derived.by(() => {
     const times = Object.values(nextRuns).map(t => new Date(t)).filter(d => !isNaN(d.getTime()))
     if (times.length === 0) return null
@@ -450,7 +469,7 @@
         </div>
         <p class="text-xs text-text-dim mt-2">{enabledJobs.length} enabled</p>
         {#if soonestNextRun}
-          <p class="text-xs text-vault font-medium mt-1">Next: {relTimeUntil(soonestNextRun)}</p>
+          <p class="text-xs text-vault-text font-medium mt-1">Next: {relTimeUntil(soonestNextRun)}</p>
         {/if}
       </button>
 
@@ -621,19 +640,29 @@
     <!-- Protection Status -->
     {#if totalItems > 0}
       <div class="bg-surface-2 border border-border rounded-xl mb-8">
-        <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+        <div class="px-5 py-4 flex items-center justify-between {protectionExpanded ? 'border-b border-border' : ''}">
           <div class="flex items-center gap-3">
             <h2 class="text-base font-semibold text-text">Protection Status</h2>
             <span class="text-xs px-2.5 py-1 rounded-full font-medium {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct > 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
               {totalProtected}/{totalItems} protected ({protectionPct}%)
             </span>
+            {#if protectionPct === 100 && !protectionExpanded}
+              <span class="text-xs text-text-dim">all items covered</span>
+            {/if}
           </div>
           {#if unprotectedContainers.length + unprotectedVMs.length > 0}
-            <button onclick={() => navigate('/jobs')} class="text-xs text-vault hover:text-vault-dark transition-colors font-medium">
+            <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:text-vault-dark transition-colors font-medium">
               + Add to Backup
+            </button>
+          {:else if protectionPct === 100}
+            <button onclick={toggleProtection} aria-expanded={protectionExpanded}
+              class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
+              {protectionExpanded ? 'Hide items' : 'Show items'}
+              <svg aria-hidden="true" class="w-4 h-4 transition-transform {protectionExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </button>
           {/if}
         </div>
+        {#if protectionExpanded}
         <div class="p-5">
           <!-- Progress bar -->
           <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden mb-5">
@@ -767,6 +796,7 @@
             {/if}
           </div>
         </div>
+        {/if}
       </div>
     {/if}
 
