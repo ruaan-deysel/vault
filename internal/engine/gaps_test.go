@@ -23,9 +23,11 @@ func TestBackupableMount(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range tests {
-		if got := backupableMount(tc.typ); got != tc.want {
-			t.Errorf("backupableMount(%q) = %v, want %v", tc.typ, got, tc.want)
-		}
+		t.Run(tc.typ, func(t *testing.T) {
+			if got := backupableMount(tc.typ); got != tc.want {
+				t.Errorf("backupableMount(%q) = %v, want %v", tc.typ, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -102,9 +104,11 @@ func TestCompressionLevelSpec(t *testing.T) {
 		{"none", "best", "none"},
 		{"", "best", ""},
 	} {
-		if got := JoinCompression(tc.algo, tc.level); got != tc.want {
-			t.Errorf("JoinCompression(%q,%q) = %q, want %q", tc.algo, tc.level, got, tc.want)
-		}
+		t.Run(tc.algo+"/"+tc.level, func(t *testing.T) {
+			if got := JoinCompression(tc.algo, tc.level); got != tc.want {
+				t.Errorf("JoinCompression(%q,%q) = %q, want %q", tc.algo, tc.level, got, tc.want)
+			}
+		})
 	}
 
 	algo, level := splitCompression("gzip:fastest")

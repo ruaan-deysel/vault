@@ -1379,6 +1379,7 @@
           <div>
             <label for="compression" class="block text-sm font-medium text-text-muted mb-1.5">Compression</label>
             <select id="compression" bind:value={form.compression}
+              onchange={() => { if (form.compression === 'none') form.compression_level = '' }}
               class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text">
               <option value="none">None</option>
               <option value="gzip">Gzip</option>

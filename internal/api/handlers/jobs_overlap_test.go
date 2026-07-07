@@ -9,45 +9,52 @@ import (
 func TestPathsOverlap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
+		name string
 		a, b string
 		want bool
 	}{
-		{"/mnt/user/appdata", "/mnt/user/appdata", true},         // equal
-		{"/mnt/user", "/mnt/user/backups", true},                 // b under a
-		{"/mnt/user/appdata/plex", "/mnt/user/appdata", true},    // a under b
-		{"/mnt/user/appdata", "/mnt/user/media", false},          // siblings
-		{"/mnt/user/appdata", "/mnt/cache/appdata", false},       // different roots
-		{"/mnt/user/app", "/mnt/user/appdata", false},            // prefix but not a path parent
-		{"/mnt/user/appdata/", "/mnt/user/appdata/plex/..", true}, // cleaned to equal
+		{"equal", "/mnt/user/appdata", "/mnt/user/appdata", true},
+		{"b under a", "/mnt/user", "/mnt/user/backups", true},
+		{"a under b", "/mnt/user/appdata/plex", "/mnt/user/appdata", true},
+		{"siblings", "/mnt/user/appdata", "/mnt/user/media", false},
+		{"different roots", "/mnt/user/appdata", "/mnt/cache/appdata", false},
+		{"prefix but not path parent", "/mnt/user/app", "/mnt/user/appdata", false},
+		{"cleaned to equal", "/mnt/user/appdata/", "/mnt/user/appdata/plex/..", true},
 	}
 	for _, tc := range tests {
-		if got := pathsOverlap(tc.a, tc.b); got != tc.want {
-			t.Errorf("pathsOverlap(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := pathsOverlap(tc.a, tc.b); got != tc.want {
+				t.Errorf("pathsOverlap(%q,%q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
 	}
 }
 
 func TestFolderSourceOverlap(t *testing.T) {
 	t.Parallel()
+	// Flash items are folder-typed (Type "folder" with preset "flash"), so the
+	// "folder" guard covers them; a container item's path must be ignored.
 	items := []db.JobItem{
 		{ItemType: "folder", Settings: `{"path":"/mnt/user/documents"}`},
-		{ItemType: "container", Settings: `{"path":"/mnt/user/backups"}`}, // non-folder ignored
+		{ItemType: "container", Settings: `{"path":"/mnt/user/backups"}`},
 	}
-
-	// Destination inside the folder source → overlap.
-	if _, bad := folderSourceOverlap("/mnt/user/documents/backups", items); !bad {
-		t.Error("expected overlap when destination is inside the folder source")
+	tests := []struct {
+		name string
+		dest string
+		want bool
+	}{
+		{"dest inside folder source", "/mnt/user/documents/backups", true},
+		{"dest outside any source", "/mnt/user/backups", false},
+		{"remote (empty) dest never overlaps", "", false},
+		{"container path is not a folder source", "/mnt/user/backups/sub", false},
 	}
-	// Unrelated destination → no overlap.
-	if _, bad := folderSourceOverlap("/mnt/user/backups", items); bad {
-		t.Error("unexpected overlap for a destination outside the source")
-	}
-	// Empty destination (remote destination) → never overlaps.
-	if _, bad := folderSourceOverlap("", items); bad {
-		t.Error("empty destination should never overlap")
-	}
-	// A container-only item's path must not count as a folder source.
-	if _, bad := folderSourceOverlap("/mnt/user/backups/sub", items); bad {
-		t.Error("container item path should not be treated as a folder source")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, bad := folderSourceOverlap(tc.dest, items); bad != tc.want {
+				t.Errorf("folderSourceOverlap(%q) = %v, want %v", tc.dest, bad, tc.want)
+			}
+		})
 	}
 }
