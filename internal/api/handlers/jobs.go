@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -137,6 +138,70 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 	return true
 }
 
+// pathsOverlap reports whether two paths are equal or one is nested inside the
+// other (after cleaning).
+func pathsOverlap(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	return a == b || isSubPath(a, b) || isSubPath(b, a)
+}
+
+// isSubPath reports whether child is strictly inside parent.
+func isSubPath(child, parent string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// folderSourceOverlap returns a reason and true when destPath is the same as,
+// inside, or a parent of any folder/flash item's source path — the classic
+// "backing itself up" footgun where each run archives the previous run's output
+// and the source grows without bound. An empty destPath (a remote destination
+// with no on-array path) never overlaps.
+func folderSourceOverlap(destPath string, items []db.JobItem) (string, bool) {
+	if strings.TrimSpace(destPath) == "" {
+		return "", false
+	}
+	for _, it := range items {
+		if it.ItemType != "folder" {
+			continue
+		}
+		var s struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(it.Settings), &s) != nil || s.Path == "" {
+			continue
+		}
+		if pathsOverlap(s.Path, destPath) {
+			return fmt.Sprintf(
+				"backup destination %q overlaps the backup source %q — the job would back up into its own source; choose a destination outside the source tree",
+				filepath.Clean(destPath), filepath.Clean(s.Path)), true
+		}
+	}
+	return "", false
+}
+
+// localDestPath returns the on-array path of a local storage destination, or ""
+// for remote destinations (sftp/smb/nfs/s3/webdav) which have no local path
+// that could collide with a source tree.
+func (h *JobHandler) localDestPath(storageDestID int64) string {
+	if storageDestID == 0 {
+		return ""
+	}
+	dest, err := h.db.GetStorageDestination(storageDestID)
+	if err != nil || dest.Type != "local" {
+		return ""
+	}
+	var cfg struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal([]byte(dest.Config), &cfg) != nil {
+		return ""
+	}
+	return cfg.Path
+}
+
 func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		db.Job
@@ -147,6 +212,10 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateJobInput(w, &req.Job) {
+		return
+	}
+	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
+		respondError(w, http.StatusBadRequest, reason)
 		return
 	}
 	if req.MaxParallelUploads > 16 {
@@ -221,6 +290,10 @@ func (h *JobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateJobInput(w, &req.Job) {
+		return
+	}
+	if reason, bad := folderSourceOverlap(h.localDestPath(req.StorageDestID), req.Items); bad {
+		respondError(w, http.StatusBadRequest, reason)
 		return
 	}
 	if req.MaxParallelUploads > 16 {

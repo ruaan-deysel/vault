@@ -14,7 +14,7 @@ import (
 // TestListMountsFiltersBindAndFlagsAutoSkip verifies that ListMounts returns
 // only bind mounts, sorted by destination, and flags auto-skipped volumes via
 // the same shouldSkipVolume rules the backup engine applies.
-func TestListMountsFiltersBindAndFlagsAutoSkip(t *testing.T) {
+func TestListMountsIncludesBackupableMountsAndFlagsAutoSkip(t *testing.T) {
 	t.Parallel()
 	mock := &mockDockerClient{
 		inspectResp: client.ContainerInspectResult{
@@ -37,8 +37,11 @@ func TestListMountsFiltersBindAndFlagsAutoSkip(t *testing.T) {
 		t.Fatalf("ListMounts() error = %v", err)
 	}
 
+	// Named volumes are now backed up alongside bind mounts (their Source is a
+	// real host path under /var/lib/docker/volumes). Sorted by destination.
 	want := []MountInfo{
 		{Source: "/mnt/cache/appdata/sonarr", Destination: "/config", Type: "bind", AutoSkip: false, SkipReason: ""},
+		{Source: "some-named-volume", Destination: "/data", Type: "volume", AutoSkip: false, SkipReason: ""},
 		{Source: "/", Destination: "/rootfs", Type: "bind", AutoSkip: false, SkipReason: ""},
 		{Source: "/mnt/user/media/tv", Destination: "/tv", Type: "bind", AutoSkip: true, SkipReason: "shared data volume (/mnt/user/media)"},
 	}
