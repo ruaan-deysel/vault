@@ -110,61 +110,55 @@ func TestFolderHandlerBackupHonoursExclusions(t *testing.T) {
 	must(".Recycle.Bin/trash.txt", []byte("x")) // dir excluded
 
 	h := &FolderHandler{}
-	dest := t.TempDir()
-	item := BackupItem{
-		Name:        "flash",
-		Type:        "folder",
-		Compression: CompressionGzip,
-		Settings: map[string]any{
+
+	// backupRestore runs a folder backup with the base exclusions plus any
+	// extra settings, restores it, and returns the restore destination.
+	backupRestore := func(t *testing.T, extra map[string]any) string {
+		settings := map[string]any{
 			"path":          src,
 			"exclude_paths": []string{"*.log", ".Recycle.Bin"},
-		},
+		}
+		for k, v := range extra {
+			settings[k] = v
+		}
+		dest := t.TempDir()
+		item := BackupItem{Name: "flash", Type: "folder", Compression: CompressionGzip, Settings: settings}
+		if _, err := h.Backup(context.Background(), item, dest, func(string, int, string) {}); err != nil {
+			t.Fatalf("backup: %v", err)
+		}
+		restoreDest := filepath.Join(t.TempDir(), "restored")
+		if err := h.Restore(context.Background(),
+			BackupItem{Name: "flash", Type: "folder", Settings: map[string]any{"restore_destination": restoreDest}},
+			dest, func(string, int, string) {}); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+		return restoreDest
 	}
-	if _, err := h.Backup(context.Background(), item, dest, func(string, int, string) {}); err != nil {
-		t.Fatalf("backup: %v", err)
-	}
-
-	restoreDest := filepath.Join(t.TempDir(), "restored")
-	restoreItem := BackupItem{Name: "flash", Type: "folder", Settings: map[string]any{"restore_destination": restoreDest}}
-	if err := h.Restore(context.Background(), restoreItem, dest, func(string, int, string) {}); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(restoreDest, "keep.txt")); err != nil {
-		t.Errorf("expected keep.txt to be backed up: %v", err)
-	}
-	for _, excluded := range []string{"app.log", ".Recycle.Bin/trash.txt"} {
-		if _, err := os.Stat(filepath.Join(restoreDest, excluded)); err == nil {
-			t.Errorf("excluded path %q was archived", excluded)
+	assertExcluded := func(t *testing.T, restoreDest string) {
+		if _, err := os.Stat(filepath.Join(restoreDest, "keep.txt")); err != nil {
+			t.Errorf("expected keep.txt to be backed up: %v", err)
+		}
+		for _, excluded := range []string{"app.log", ".Recycle.Bin/trash.txt"} {
+			if _, err := os.Stat(filepath.Join(restoreDest, excluded)); err == nil {
+				t.Errorf("excluded path %q was archived", excluded)
+			}
 		}
 	}
 
-	// Also exercise the incremental branch (tarDirectoryFiltered): with a
-	// changed_since far in the past, everything qualifies by mtime, so
-	// exclusions must still be the only thing dropped.
-	incDest := t.TempDir()
-	incItem := item
-	incItem.Settings = map[string]any{
-		"path":          src,
-		"exclude_paths": []string{"*.log", ".Recycle.Bin"},
-		"changed_since": "2000-01-01T00:00:00Z",
+	// full exercises tarDirectory; incremental exercises tarDirectoryFiltered
+	// (a changed_since far in the past means everything qualifies by mtime, so
+	// exclusions must remain the only thing dropped).
+	tests := []struct {
+		name  string
+		extra map[string]any
+	}{
+		{name: "full", extra: nil},
+		{name: "incremental", extra: map[string]any{"changed_since": "2000-01-01T00:00:00Z"}},
 	}
-	if _, err := h.Backup(context.Background(), incItem, incDest, func(string, int, string) {}); err != nil {
-		t.Fatalf("incremental backup: %v", err)
-	}
-	incRestore := filepath.Join(t.TempDir(), "restored-inc")
-	if err := h.Restore(context.Background(),
-		BackupItem{Name: "flash", Type: "folder", Settings: map[string]any{"restore_destination": incRestore}},
-		incDest, func(string, int, string) {}); err != nil {
-		t.Fatalf("incremental restore: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(incRestore, "keep.txt")); err != nil {
-		t.Errorf("incremental: expected keep.txt to be backed up: %v", err)
-	}
-	for _, excluded := range []string{"app.log", ".Recycle.Bin/trash.txt"} {
-		if _, err := os.Stat(filepath.Join(incRestore, excluded)); err == nil {
-			t.Errorf("incremental: excluded path %q was archived", excluded)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assertExcluded(t, backupRestore(t, tc.extra))
+		})
 	}
 }
 
