@@ -643,7 +643,7 @@
         <div class="px-5 py-4 flex items-center justify-between {protectionExpanded ? 'border-b border-border' : ''}">
           <div class="flex items-center gap-3">
             <h2 class="text-base font-semibold text-text">Protection Status</h2>
-            <span class="text-xs px-2.5 py-1 rounded-full font-medium {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct > 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
+            <span class="text-xs px-2.5 py-1 rounded-full font-medium {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
               {totalProtected}/{totalItems} protected ({protectionPct}%)
             </span>
             {#if protectionPct === 100 && !protectionExpanded}
@@ -666,7 +666,7 @@
         <div class="p-5">
           <!-- Progress bar -->
           <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden mb-5">
-            <div class="h-full rounded-full transition-all duration-500 {protectionPct === 100 ? 'bg-success' : protectionPct > 50 ? 'bg-warning' : 'bg-danger'}" style="width: {protectionPct}%"></div>
+            <div class="h-full rounded-full transition-all duration-500 {protectionPct === 100 ? 'bg-success' : protectionPct >= 50 ? 'bg-warning' : 'bg-danger'}" style="width: {protectionPct}%"></div>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

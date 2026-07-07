@@ -948,7 +948,7 @@
       <!-- Retry policy -->
       <div id="set-retry" class="scroll-mt-16 bg-surface-2 border border-border rounded-xl overflow-hidden">
         <div class="px-5 py-4 border-b border-border">
-          <h2 class="text-base font-semibold text-text">Retry Policy<Tooltip text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
+          <h2 class="text-base font-semibold text-text">Retry Policy <Tooltip text="Failed runs are retried in the background with the delays below before being marked permanently failed. Individual jobs can override these defaults." /></h2>
           <p class="text-xs text-text-muted mt-0.5">How failed runs are retried before being marked permanently failed.</p>
         </div>
         <div class="p-5 space-y-4">

@@ -474,10 +474,11 @@
     try {
       const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
       formTestResult = result
-      showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error}`, result.success ? 'success' : 'error')
+      showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')
     } catch (e) {
-      formTestResult = { success: false, error: e.message }
-      showToast(e.message, 'error')
+      const msg = e?.message || 'Connection test failed'
+      formTestResult = { success: false, error: msg }
+      showToast(msg, 'error')
     } finally {
       formTesting = false
     }
