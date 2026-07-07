@@ -468,6 +468,14 @@
   let formTesting = $state(false)
   /** @type {{ success: boolean, error?: string } | null} */
   let formTestResult = $state(null)
+  // A test result only describes the config it ran against — invalidate it as
+  // soon as any config field changes so a stale "Connection OK" can't linger.
+  // Tracks form.config only (not formTesting), so completing a test — which
+  // doesn't mutate config — never re-runs this and wipes the fresh result.
+  $effect(() => {
+    JSON.stringify(form.config) // track all nested config fields
+    formTestResult = null
+  })
   async function testFormConnection() {
     formTesting = true
     formTestResult = null
@@ -1093,7 +1101,7 @@
     </div>
 
     <div class="flex items-center justify-between gap-3 pt-4 border-t border-border">
-      <button type="button" onclick={testFormConnection} disabled={formTesting}
+      <button type="button" onclick={testFormConnection} disabled={formTesting || saving}
         class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed
           {formTestResult?.success === true ? 'border-success text-success bg-success/10'
            : formTestResult?.success === false ? 'border-danger text-danger bg-danger/10'
@@ -1115,7 +1123,7 @@
         <button type="button" onclick={() => showModal = false} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
           Cancel
         </button>
-        <button type="submit" disabled={saving} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+        <button type="submit" disabled={saving || formTesting} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           {#if saving}Saving...{:else}{editing ? 'Save Changes' : 'Add Storage'}{/if}
         </button>
       </div>

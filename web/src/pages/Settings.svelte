@@ -49,7 +49,8 @@
   function jumpToSetting(id) {
     const el = document.getElementById(id)
     if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     // Move focus so keyboard / screen-reader users land in the target section.
     el.setAttribute('tabindex', '-1')
     el.focus({ preventScroll: true })

@@ -253,6 +253,12 @@
   const unprotectedVMs = $derived(trackedVMs.filter(v => !protectedItems.has(`vm:${v.name}`) && !isPending(`vm:${v.name}`)))
   const protectedFolders = $derived(trackedFolders.filter(f => protectedItems.has(`folder:${f.name}`)))
   const protectedFlash = $derived(trackedFlash.filter(f => protectedItems.has(`folder:${f.name}`)))
+  const unprotectedFolders = $derived(trackedFolders.filter(f => !protectedItems.has(`folder:${f.name}`) && !isPending(`folder:${f.name}`)))
+  const unprotectedFlash = $derived(trackedFlash.filter(f => !protectedItems.has(`folder:${f.name}`) && !isPending(`folder:${f.name}`)))
+  // Any unprotected item (not yet in a backup, of any type) → show the CTA.
+  const hasUnprotectedItems = $derived(
+    unprotectedContainers.length + unprotectedVMs.length + unprotectedFolders.length + unprotectedFlash.length > 0
+  )
 
   const totalItems = $derived(trackedContainers.length + trackedVMs.length + trackedFolders.length + trackedFlash.length)
   const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length + protectedFlash.length)
@@ -650,7 +656,7 @@
               <span class="text-xs text-text-dim">all items covered</span>
             {/if}
           </div>
-          {#if unprotectedContainers.length + unprotectedVMs.length > 0}
+          {#if hasUnprotectedItems}
             <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:text-vault-dark transition-colors font-medium">
               + Add to Backup
             </button>
