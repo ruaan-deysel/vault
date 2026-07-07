@@ -55,11 +55,11 @@ Before a change is ready for integration, follow the workflow in `AGENTS.md`:
 
 ## CHANGELOG (Required)
 
-Every code change adds an entry under `## [Unreleased]` in `CHANGELOG.md` using [Keep a Changelog](https://keepachangelog.com/) sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` (any other `### ` heading is silently dropped).
+Every code change adds an entry under `## [Unreleased]` in `CHANGELOG.md` using [Keep a Changelog](https://keepachangelog.com/) sections: `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Security` (any other `###` heading is silently dropped).
 
 - Explain **what** changed **and why** — entries stand alone with no PR context.
 - Reference issue numbers where applicable (e.g. `closes #123`).
-- Bullets start with `- ` at column 0. Inline markdown that renders: `**bold**`, `` `code` ``, `*italic*` — nothing else.
+- Bullets start with a `-` and a space at column 0. Inline markdown that renders: `**bold**`, `` `code` ``, `*italic*` — nothing else.
 
 `CHANGELOG.md` is consumed by three systems — the in-app About/View Changelog modal (parser at `internal/release/changelog.go`), the `release.yml` GitHub-release notes extractor, and operator-facing upgrade diffs — so a malformed entry breaks all three.
 
