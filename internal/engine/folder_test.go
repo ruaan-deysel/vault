@@ -90,6 +90,84 @@ func TestFolderHandlerBackupRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFolderHandlerBackupHonoursExclusions verifies the classic tar Backup
+// path (used for flash/folder backups on non-dedup destinations) applies
+// exclude_paths — previously it passed nil and ignored them (issue #204).
+func TestFolderHandlerBackupHonoursExclusions(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	must := func(rel string, data []byte) {
+		p := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("keep.txt", []byte("keep"))
+	must("app.log", []byte("noisy"))            // glob excluded
+	must(".Recycle.Bin/trash.txt", []byte("x")) // dir excluded
+
+	h := &FolderHandler{}
+	dest := t.TempDir()
+	item := BackupItem{
+		Name:        "flash",
+		Type:        "folder",
+		Compression: CompressionGzip,
+		Settings: map[string]any{
+			"path":          src,
+			"exclude_paths": []string{"*.log", ".Recycle.Bin"},
+		},
+	}
+	if _, err := h.Backup(context.Background(), item, dest, func(string, int, string) {}); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	restoreDest := filepath.Join(t.TempDir(), "restored")
+	restoreItem := BackupItem{Name: "flash", Type: "folder", Settings: map[string]any{"restore_destination": restoreDest}}
+	if err := h.Restore(context.Background(), restoreItem, dest, func(string, int, string) {}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(restoreDest, "keep.txt")); err != nil {
+		t.Errorf("expected keep.txt to be backed up: %v", err)
+	}
+	for _, excluded := range []string{"app.log", ".Recycle.Bin/trash.txt"} {
+		if _, err := os.Stat(filepath.Join(restoreDest, excluded)); err == nil {
+			t.Errorf("excluded path %q was archived", excluded)
+		}
+	}
+
+	// Also exercise the incremental branch (tarDirectoryFiltered): with a
+	// changed_since far in the past, everything qualifies by mtime, so
+	// exclusions must still be the only thing dropped.
+	incDest := t.TempDir()
+	incItem := item
+	incItem.Settings = map[string]any{
+		"path":          src,
+		"exclude_paths": []string{"*.log", ".Recycle.Bin"},
+		"changed_since": "2000-01-01T00:00:00Z",
+	}
+	if _, err := h.Backup(context.Background(), incItem, incDest, func(string, int, string) {}); err != nil {
+		t.Fatalf("incremental backup: %v", err)
+	}
+	incRestore := filepath.Join(t.TempDir(), "restored-inc")
+	if err := h.Restore(context.Background(),
+		BackupItem{Name: "flash", Type: "folder", Settings: map[string]any{"restore_destination": incRestore}},
+		incDest, func(string, int, string) {}); err != nil {
+		t.Fatalf("incremental restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(incRestore, "keep.txt")); err != nil {
+		t.Errorf("incremental: expected keep.txt to be backed up: %v", err)
+	}
+	for _, excluded := range []string{"app.log", ".Recycle.Bin/trash.txt"} {
+		if _, err := os.Stat(filepath.Join(incRestore, excluded)); err == nil {
+			t.Errorf("incremental: excluded path %q was archived", excluded)
+		}
+	}
+}
+
 func TestFolderHandlerBackupNoPath(t *testing.T) {
 	t.Parallel()
 	h := &FolderHandler{}
