@@ -597,7 +597,6 @@
     try {
       const data = await api.getJob(id)
       editing = data.job
-      autoAppliedRecommended.clear()
       form = {
         name: data.job.name || '',
         description: data.job.description || '',
@@ -635,6 +634,14 @@
         max_parallel_uploads: data.job.max_parallel_uploads || 3,
         items: data.items || [],
         selectedTypes: deriveTypesFromItems(data.items || []),
+      }
+      // Edit session: mark every already-saved folder item as already-applied so
+      // the auto-load effect never re-derives recommended exclusions over the
+      // user's saved choices (recommended_exclusions can persist verbatim in an
+      // item's settings, so a removed .Recycle.Bin must not snap back on edit).
+      autoAppliedRecommended.clear()
+      for (const it of (data.items || [])) {
+        if (it.item_type === 'folder') autoAppliedRecommended.add(it.item_name)
       }
       step = 1
       showModal = true
