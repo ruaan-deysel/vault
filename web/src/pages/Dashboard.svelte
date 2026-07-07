@@ -14,7 +14,7 @@
   import PullToRefresh from '../components/PullToRefresh.svelte'
   import { getAnomalyEnabled } from '../lib/settings.svelte.js'
   import { getAnomalies, setOpenList } from '../lib/anomalies.svelte.js'
-  import { createDashboardLayout } from '../lib/dashboardLayout.svelte.js'
+  import { createDashboardLayout, SPAN_OPTIONS } from '../lib/dashboardLayout.svelte.js'
 
   let loading = $state(true)
   let error = $state('')
@@ -433,13 +433,40 @@
     return pts.map((v, i) => `${(i / (pts.length - 1) * 300).toFixed(1)},${(64 - (v / max) * 58).toFixed(1)}`).join(' ')
   })
 
-  // Recent days as heatmap cells (backup ran that day → coloured by size).
-  const calendarCells = $derived.by(() => {
-    const pts = trendData?.points || []
-    if (!pts.length) return []
-    const max = Math.max(...pts.map(p => p.total_bytes), 1)
-    return pts.slice(-35).map(p => ({ date: p.start, ran: p.total_bytes > 0, intensity: p.total_bytes / max }))
+  // Contribution-graph heatmap: the last 5 weeks aligned Sun→Sat so each grid
+  // column is a whole week. Cells are coloured by that day's backup size.
+  const calendarGrid = $derived.by(() => {
+    if (!trendData?.points?.length) return null
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const byDay = {}
+    let max = 1
+    for (const p of trendData.points) {
+      const key = (p.start || '').slice(0, 10)
+      if (!key) continue
+      byDay[key] = (byDay[key] || 0) + (p.total_bytes || 0)
+      if (byDay[key] > max) max = byDay[key]
+    }
+    const DAY = 86400000
+    const nowD = new Date(Date.now())
+    const todayMs = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate()).getTime()
+    const endMs = todayMs + (6 - new Date(todayMs).getDay()) * DAY // Saturday of this week
+    const days = []
+    for (let i = 34; i >= 0; i--) {
+      const dMs = endMs - i * DAY
+      const d = new Date(dMs)
+      const key = ymd(d)
+      const bytes = byDay[key] || 0
+      days.push({ key, bytes, intensity: bytes / max, future: dMs > todayMs, label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) })
+    }
+    return { days, max }
   })
+
+  function calCellStyle(d) {
+    if (d.future) return 'background: var(--color-surface-3); opacity: 0.35;'
+    if (!d.bytes) return 'background: var(--color-surface-4);'
+    const pct = Math.round(35 + d.intensity * 65)
+    return `background: color-mix(in srgb, var(--color-success) ${pct}%, transparent);`
+  }
 
   const healthScore = $derived(healthSummary?.health_score ?? 0)
   const healthColor = $derived(healthScore >= 80 ? 'var(--color-success)' : healthScore >= 50 ? 'var(--color-warning)' : 'var(--color-danger)')
@@ -461,27 +488,27 @@
   // span = 12-col width. `bare` tiles render their own card (they reuse a
   // self-carding component/panel); the rest get the shared card shell.
   const CATALOG = {
-    health:       { name: 'Health score',       span: 3, glyph: '♥' },
-    protected:    { name: 'Protected items',    span: 3, glyph: '◈' },
-    nextrun:      { name: 'Next run',           span: 3, glyph: '⏱' },
-    lastbackup:   { name: 'Last backup',        span: 3, glyph: '✓' },
-    threetwoone:  { name: '3-2-1 rule',         span: 12, glyph: '3', bare: true },
-    progress:     { name: 'Backup in progress', span: 6, glyph: '◐', bare: true },
-    activity:     { name: 'Recent activity',    span: 6, glyph: '≡', bare: true },
-    jobs:         { name: 'Backup jobs',        span: 6, glyph: '▤', bare: true },
-    protection:   { name: 'Protection status',  span: 6, glyph: '▦', bare: true },
-    storageCombined:  { name: 'Storage — combined',  span: 4, glyph: '⛁' },
-    storagePerTarget: { name: 'Storage — per target', span: 6, glyph: '⛁' },
-    recovery:     { name: 'Recovery readiness', span: 4, glyph: '⛑' },
-    attention:    { name: 'Needs attention',    span: 4, glyph: '!' },
-    successrate:  { name: 'Success rate',       span: 4, glyph: '%' },
-    anomalies:    { name: 'Anomalies',          span: 4, glyph: '⚠' },
-    quickactions: { name: 'Quick actions',      span: 4, glyph: '⚡' },
-    sizeTrend:    { name: 'Backup size trend',  span: 6, glyph: '📈' },
-    calendar:     { name: 'Backup calendar',    span: 6, glyph: '▦' },
-    savings:      { name: 'Dedup & compression', span: 4, glyph: '⇊' },
-    forecast:     { name: 'Storage forecast',   span: 4, glyph: '◔' },
-    largest:      { name: 'Largest backups',    span: 6, glyph: '⬒' },
+    health:       { name: 'Health score',       span: 3, icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
+    protected:    { name: 'Protected items',    span: 3, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    nextrun:      { name: 'Next run',           span: 3, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    lastbackup:   { name: 'Last backup',        span: 3, icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    threetwoone:  { name: '3-2-1 rule',         span: 12, bare: true, icon: 'M9 17V9m3 8v-5m3 5v-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    progress:     { name: 'Backup in progress', span: 6, bare: true, icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+    activity:     { name: 'Recent activity',    span: 6, bare: true, icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
+    jobs:         { name: 'Backup jobs',        span: 6, bare: true, icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
+    protection:   { name: 'Protection status',  span: 6, bare: true, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    storageCombined:  { name: 'Storage — combined',  span: 4, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
+    storagePerTarget: { name: 'Storage — per target', span: 6, icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4' },
+    recovery:     { name: 'Recovery readiness', span: 4, icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+    attention:    { name: 'Needs attention',    span: 4, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    successrate:  { name: 'Success rate',       span: 4, icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+    anomalies:    { name: 'Anomalies',          span: 4, icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+    quickactions: { name: 'Quick actions',      span: 4, icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+    sizeTrend:    { name: 'Backup size trend',  span: 6, icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
+    calendar:     { name: 'Backup calendar',    span: 4, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
+    savings:      { name: 'Dedup & compression', span: 4, icon: 'M19 14l-7 7m0 0l-7-7m7 7V3' },
+    forecast:     { name: 'Storage forecast',   span: 4, icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+    largest:      { name: 'Largest backups',    span: 6, icon: 'M3 4h18M3 4v16M7 20V10m5 10V6m5 14v-8' },
   }
 
   const layout = createDashboardLayout(Object.keys(CATALOG))
@@ -500,7 +527,7 @@
     return true
   }
 
-  const tiles = $derived(layout.order.map((id, idx) => ({ id, idx, ...CATALOG[id] })))
+  const tiles = $derived(layout.order.map((id, idx) => ({ id, idx, ...CATALOG[id], span: layout.spans[id] ?? CATALOG[id].span })))
   const visibleTiles = $derived(layout.editMode ? tiles : tiles.filter(t => tileAvailable(t.id)))
   const catalogList = $derived(
     Object.keys(CATALOG).map(id => ({ id, ...CATALOG[id], shown: layout.order.includes(id) }))
@@ -542,7 +569,7 @@
 
 {#snippet metricCardEmpty(label)}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-    <p class="text-xs text-text-muted">{label}</p>
+    <p class="text-sm font-semibold text-text mb-1">{label}</p>
     <p class="text-xs text-text-dim mt-2">Not available yet</p>
   </div>
 {/snippet}
@@ -558,8 +585,8 @@
       <div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-text">{healthScore}</div>
     </div>
     <div class="min-w-0">
-      <p class="text-xs text-text-muted">Health score</p>
-      <p class="text-sm font-semibold text-text truncate">{healthSummaryText || 'Backup health'}</p>
+      <p class="text-sm font-semibold text-text mb-1">Health score</p>
+      <p class="text-xs text-text-muted truncate">{healthSummaryText || 'Backup health'}</p>
       {#if avgSpeed}<p class="text-[11px] text-text-dim mt-0.5">avg {avgSpeed}</p>{/if}
     </div>
   </div>
@@ -567,7 +594,7 @@
 
 {#snippet tProtected()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-    <p class="text-xs text-text-muted">Protected</p>
+    <p class="text-sm font-semibold text-text mb-1">Protected</p>
     <p class="text-2xl font-bold text-text mt-1">{totalProtected}<span class="text-sm text-text-dim font-semibold">/{totalItems}</span></p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2">
       <div class="h-full {barColor(protectionPct)} transition-all duration-500" style="width: {protectionPct}%"></div>
@@ -582,7 +609,7 @@
 
 {#snippet tNextRun()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/jobs') }}>
-    <p class="text-xs text-text-muted">Next run</p>
+    <p class="text-sm font-semibold text-text mb-1">Next run</p>
     {#if soonestNextRun}
       <p class="text-lg font-bold text-text mt-1">{relTimeUntil(soonestNextRun)}</p>
       {#if soonestJob}<p class="text-[11px] text-text-dim mt-0.5 truncate">{soonestJob.name}</p>{/if}
@@ -595,11 +622,13 @@
 
 {#snippet tLastBackup()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-xs text-text-muted">Last backup</p>
+    <p class="text-sm font-semibold text-text mb-1">Last backup</p>
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
-      <p class="text-sm font-bold mt-1 {ok ? 'text-success' : lastBackup.status === 'running' ? 'text-info' : 'text-danger'}">
-        {ok ? '✓ Success' : lastBackup.status === 'running' ? '● Running' : '✕ Failed'}
+      {@const running = lastBackup.status === 'running'}
+      <p class="text-sm font-bold mt-1 flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : 'text-danger'}">
+        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : 'bg-danger'}"></span>
+        {ok ? 'Success' : running ? 'Running' : 'Failed'}
       </p>
       <p class="text-[11px] text-text-dim mt-0.5 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
@@ -659,7 +688,7 @@
 {#snippet tJobs()}
   <div class="bg-surface-2 border border-border rounded-xl h-full">
     <div class="px-5 py-4 border-b border-border flex items-center">
-      <h2 class="text-base font-semibold text-text">Backup Jobs</h2>
+      <h2 class="text-sm font-semibold text-text">Backup Jobs</h2>
       <button onclick={() => navigate('/jobs')} class="ml-auto text-xs text-vault-text hover:text-vault-dark font-medium">View all →</button>
     </div>
     {#if jobs.length === 0}
@@ -721,7 +750,7 @@
     <div class="bg-surface-2 border border-border rounded-xl h-full">
       <div class="px-5 py-4 flex items-center justify-between {protectionExpanded ? 'border-b border-border' : ''}">
         <div class="flex items-center gap-3">
-          <h2 class="text-base font-semibold text-text">Protection Status</h2>
+          <h2 class="text-sm font-semibold text-text">Protection Status</h2>
           <span class="text-xs px-2.5 py-1 rounded-full font-medium {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
             {totalProtected}/{totalItems} · {protectionPct}%
           </span>
@@ -793,7 +822,7 @@
 {#snippet tStorageCombined()}
   {#if storageCombined}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-xs text-text-muted">Storage — combined</p>
+      <p class="text-sm font-semibold text-text mb-1">Storage — combined</p>
       <p class="text-xl font-bold text-text mt-1">{formatBytes(storageCombined.used)}</p>
       <p class="text-[11px] text-text-dim mt-0.5">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
       <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2"><div class="h-full bg-vault" style="width: {storageCombined.pct}%"></div></div>
@@ -820,7 +849,7 @@
 
 {#snippet tRecovery()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/recovery') }}>
-    <p class="text-xs text-text-muted">Recovery readiness</p>
+    <p class="text-sm font-semibold text-text mb-1">Recovery readiness</p>
     <p class="text-2xl font-bold mt-1 {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <p class="text-[11px] text-text-dim mt-1.5">{totalProtected}/{totalItems} items recoverable</p>
   </div>
@@ -828,7 +857,7 @@
 
 {#snippet tAttention()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-xs text-text-muted">Needs attention</p>
+    <p class="text-sm font-semibold text-text mb-1">Needs attention</p>
     <p class="text-2xl font-bold mt-1 {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
     <p class="text-[11px] text-text-dim mt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
   </div>
@@ -836,7 +865,7 @@
 
 {#snippet tSuccessRate()}
   <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
-    <p class="text-xs text-text-muted">Success rate · recent</p>
+    <p class="text-sm font-semibold text-text mb-1">Success rate · recent</p>
     {#if successStats}
       <p class="text-2xl font-bold text-text mt-1">{successStats.pct}%</p>
       <p class="text-[11px] text-text-dim mt-1.5">{successStats.ok} of {successStats.total} recent runs succeeded</p>
@@ -850,7 +879,7 @@
 {#snippet tAnomalies()}
   {#if getAnomalyEnabled()}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/anomalies') }}>
-      <p class="text-xs text-text-muted">Anomalies</p>
+      <p class="text-sm font-semibold text-text mb-1">Anomalies</p>
       <p class="text-2xl font-bold mt-1 {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
       <p class="text-[11px] text-text-dim mt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
     </div>
@@ -893,15 +922,27 @@
   <div class="bg-surface-2 border border-border rounded-xl p-5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     <div class="flex items-center mb-3">
       <h2 class="text-sm font-semibold text-text">Backup calendar</h2>
-      <span class="ml-auto text-[11px] text-text-dim">Last 30 days</span>
+      <span class="ml-auto text-[11px] text-text-dim">Last 5 weeks</span>
     </div>
-    {#if calendarCells.length}
-      <div class="grid gap-1" style="grid-template-columns: repeat(15, minmax(0, 1fr));">
-        {#each calendarCells as cell (cell.date)}
-          <div class="aspect-square rounded-sm {cell.ran ? '' : 'bg-surface-4'}" style={cell.ran ? `background: color-mix(in srgb, var(--color-success) ${Math.round(35 + cell.intensity * 65)}%, transparent)` : ''} title="{new Date(cell.date).toLocaleDateString()} — {cell.ran ? 'backed up' : 'no backup'}"></div>
-        {/each}
+    {#if calendarGrid}
+      <div class="flex gap-2">
+        <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
+          <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
+        </div>
+        <div class="grid gap-1" style="grid-auto-flow: column; grid-template-rows: repeat(7, 15px); grid-auto-columns: 15px;">
+          {#each calendarGrid.days as d (d.key)}
+            <div class="rounded-[3px]" style={calCellStyle(d)} title="{d.label} — {d.future ? 'upcoming' : d.bytes ? formatBytes(d.bytes) + ' backed up' : 'no backup'}"></div>
+          {/each}
+        </div>
       </div>
-      <p class="text-[11px] text-text-dim mt-2">Shaded = a backup ran that day (darker = larger)</p>
+      <div class="flex items-center gap-1.5 mt-3 text-[10px] text-text-dim">
+        <span>Less</span>
+        <span class="w-2.5 h-2.5 rounded-[3px] bg-surface-4"></span>
+        <span class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 40%, transparent);"></span>
+        <span class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 70%, transparent);"></span>
+        <span class="w-2.5 h-2.5 rounded-[3px] bg-success"></span>
+        <span>More</span>
+      </div>
     {:else}
       <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
     {/if}
@@ -911,13 +952,13 @@
 {#snippet tSavings()}
   {#if dedupSummary}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-xs text-text-muted">Dedup &amp; compression</p>
+      <p class="text-sm font-semibold text-text mb-1">Dedup &amp; compression</p>
       <p class="text-2xl font-bold text-success mt-1">{dedupSummary.ratio.toFixed(1)}×</p>
       <p class="text-[11px] text-text-dim mt-1.5">{formatBytes(dedupSummary.logical)} logical → {formatBytes(dedupSummary.physical)} stored</p>
     </div>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-      <p class="text-xs text-text-muted">Dedup &amp; compression</p>
+      <p class="text-sm font-semibold text-text mb-1">Dedup &amp; compression</p>
       <p class="text-[11px] text-text-dim mt-2">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
     </div>
   {/if}
@@ -926,14 +967,14 @@
 {#snippet tForecast()}
   {#if forecastSummary}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
-      <p class="text-xs text-text-muted">Storage forecast</p>
+      <p class="text-sm font-semibold text-text mb-1">Storage forecast</p>
       <p class="text-xl font-bold text-text mt-1">~{forecastSummary.days} days</p>
       <p class="text-[11px] text-text-dim mt-1.5">until {forecastSummary.name} is full</p>
       <p class="text-[11px] text-warning mt-0.5 font-medium">+{formatBytes(forecastSummary.perDay)}/day</p>
     </div>
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-4 h-full min-h-[108px] flex flex-col justify-center">
-      <p class="text-xs text-text-muted">Storage forecast</p>
+      <p class="text-sm font-semibold text-text mb-1">Storage forecast</p>
       <p class="text-[11px] text-text-dim mt-2">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
     </div>
   {/if}
@@ -1095,6 +1136,13 @@
                 <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
                 <span class="text-[11px] font-medium text-text-muted truncate">{t.name}</span>
                 <div class="ml-auto flex items-center gap-1 shrink-0">
+                  <button onclick={() => layout.resize(t.id, t.span, -1)} disabled={t.span <= SPAN_OPTIONS[0]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} narrower" title="Narrower">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                  </button>
+                  <button onclick={() => layout.resize(t.id, t.span, 1)} disabled={t.span >= SPAN_OPTIONS[SPAN_OPTIONS.length - 1]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} wider" title="Wider">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                  </button>
+                  <span class="w-px h-4 bg-border mx-0.5"></span>
                   <button onclick={() => layout.moveBy(t.id, -1)} disabled={t.idx === 0} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move {t.name} up" title="Move up">
                     <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
                   </button>
@@ -1121,7 +1169,9 @@
               <button onclick={() => layout.add(c.id)} disabled={c.shown}
                 class="flex items-center justify-between gap-2 w-full px-3 py-2 rounded-lg border text-left transition-colors {c.shown ? 'border-border bg-surface-3 cursor-default' : 'border-border bg-surface hover:border-vault/40'}">
                 <div class="flex items-center gap-2.5 min-w-0">
-                  <span class="w-7 h-7 rounded-lg bg-vault/10 text-vault-text flex items-center justify-center shrink-0 text-sm">{c.glyph}</span>
+                  <span class="w-7 h-7 rounded-lg bg-vault/10 text-vault-text flex items-center justify-center shrink-0">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={c.icon}/></svg>
+                  </span>
                   <span class="text-xs font-medium text-text truncate">{c.name}</span>
                 </div>
                 <span class="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full {c.shown ? 'bg-success/15 text-success' : 'bg-vault/15 text-vault-text'}">{c.shown ? 'Added' : '+ Add'}</span>
@@ -1141,6 +1191,7 @@
     grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: 14px;
     align-content: start;
+    align-items: start; /* tiles size to their content instead of stretching */
   }
   :global(.dash-tile.is-dragging) { opacity: 0.4; }
   :global(.dash-tile.is-dragover) { outline: 2px solid var(--color-info); outline-offset: 2px; border-radius: 14px; }
