@@ -40,6 +40,7 @@ func TestNormalizeCompressionLevel(t *testing.T) {
 		want        string
 	}{
 		{"none clears level", "none", "best", ""},
+		{"unknown compression clears level", "weird", "best", ""},
 		{"default collapses to empty", "zstd", "default", ""},
 		{"empty stays empty", "zstd", "", ""},
 		{"unknown collapses to empty", "zstd", "wild", ""},

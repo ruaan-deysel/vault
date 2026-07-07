@@ -140,11 +140,11 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 }
 
 // normalizeCompressionLevel constrains the level to the known set so junk values
-// never persist: it clears the level when compression is off or when the value
-// is empty/"default"/unknown (the engine's default level), and otherwise keeps
-// the recognised fastest/better/best.
+// never persist. The level only applies to gzip/zstd, so it is cleared for any
+// other algorithm (none/unknown) and for an empty/"default"/unknown level (the
+// engine's default); otherwise the recognised fastest/better/best is kept.
 func normalizeCompressionLevel(compression, level string) string {
-	if compression == "none" {
+	if compression != "gzip" && compression != "zstd" {
 		return ""
 	}
 	switch level {
@@ -172,13 +172,24 @@ func isSubPath(child, parent string) bool {
 }
 
 // resolvePath resolves symlinks best-effort so a symlinked destination inside a
-// source tree can't slip past the overlap check. Falls back to a lexical clean
-// when the path doesn't exist yet (e.g. a not-yet-created backup destination).
+// source tree can't slip past the overlap check. When the leaf doesn't exist
+// yet (e.g. a not-yet-created backup destination) it resolves the longest
+// existing ancestor — catching a symlinked parent — and rejoins the remaining
+// tail, falling back to a lexical clean only if nothing in the chain exists.
 func resolvePath(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
+	p = filepath.Clean(p)
+	cur, tail := p, ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(resolved, tail)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p // reached the root without finding an existing path
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
 	}
-	return filepath.Clean(p)
 }
 
 // folderSourceOverlap returns a reason and true when destPath is the same as,

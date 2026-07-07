@@ -126,13 +126,13 @@ func shouldSkipVolume(source string) (bool, string) {
 	return false, ""
 }
 
-// backupableMount reports whether a Docker mount type holds real on-disk data
-// worth archiving. Bind mounts and named/anonymous volumes both resolve to a
-// real host path (a volume's Source is /var/lib/docker/volumes/<name>/_data),
-// so both are backed up; tmpfs, npipe, cluster and image mounts are skipped.
-// Named-volume support closes the appdata.backup plugin's single most-reported
-// gap — containers that store their data in `docker volume`s (many compose
-// stacks) were previously excluded entirely and backed up as empty.
+// backupableMount reports whether a Docker mount TYPE holds real on-disk data
+// worth archiving: bind mounts and volumes (a volume's Source is a real host
+// path, /var/lib/docker/volumes/<name>/_data); tmpfs, npipe, cluster and image
+// mounts are skipped. This is a type-only check — callers additionally apply
+// restorableVolume to exclude anonymous volumes, which can't be reattached on
+// restore. Named-volume support closes the appdata.backup plugin's single
+// most-reported gap (compose stacks were previously backed up as empty).
 func backupableMount(mountType string) bool {
 	return mountType == "bind" || mountType == "volume"
 }
@@ -435,10 +435,10 @@ type MountInfo struct {
 }
 
 // ListMounts inspects the named container and returns its backup-eligible
-// mounts (bind mounts and named/anonymous volumes), each annotated with the
-// auto-skip verdict from shouldSkipVolume. Matches the engine's backup
-// behaviour (tmpfs, device nodes, etc. are never backed up). Results are
-// sorted by destination for stable UI ordering.
+// mounts (bind mounts and named volumes), each annotated with the auto-skip
+// verdict from shouldSkipVolume. Matches the engine's backup behaviour: tmpfs,
+// device nodes, and anonymous volumes (which can't be reattached on restore)
+// are excluded. Results are sorted by destination for stable UI ordering.
 func (h *ContainerHandler) ListMounts(ctx context.Context, name string) ([]MountInfo, error) {
 	inspectResult, err := h.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
