@@ -468,6 +468,22 @@
     return `background: color-mix(in srgb, var(--color-success) ${pct}%, transparent);`
   }
 
+  // Summary stats shown beside the heatmap so the wide tile isn't mostly empty.
+  const calendarStats = $derived.by(() => {
+    if (!calendarGrid) return null
+    const past = calendarGrid.days.filter(d => !d.future)
+    const ran = past.filter(d => d.bytes > 0).length
+    // Current streak: consecutive days with a backup, counting back from the
+    // most recent past day.
+    let streak = 0
+    for (let i = past.length - 1; i >= 0; i--) {
+      if (past[i].bytes > 0) streak++
+      else break
+    }
+    const total = past.reduce((a, d) => a + d.bytes, 0)
+    return { ran, days: past.length, streak, total }
+  })
+
   const healthScore = $derived(healthSummary?.health_score ?? 0)
   const healthColor = $derived(healthScore >= 80 ? 'var(--color-success)' : healthScore >= 50 ? 'var(--color-warning)' : 'var(--color-danger)')
   const healthSummaryText = $derived.by(() => {
@@ -533,27 +549,50 @@
     Object.keys(CATALOG).map(id => ({ id, ...CATALOG[id], shown: layout.order.includes(id) }))
   )
 
-  // Drag-and-drop reorder (desktop). Keyboard/touch use the ↑/↓ buttons.
-  let dragIdx = $state(-1)
-  let overIdx = $state(-1)
-  function onDragStart(e, idx) {
+  // Pointer-based drag reorder — works with a mouse AND a finger (HTML5 drag
+  // doesn't fire on touch). The ↑/↓ buttons remain as the keyboard path.
+  let dragIdx = $state(-1)   // order index being dragged
+  let overIdx = $state(-1)   // order index currently under the pointer
+  let dragActive = $state(false)
+  let dragStart = null
+
+  function tilePointerDown(e, idx, fromHandle = false) {
     if (!layout.editMode) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    // On touch, only the grab handle starts a drag — so touching the tile body
+    // still scrolls the page. A mouse can drag from anywhere on the tile.
+    if (e.pointerType !== 'mouse' && !fromHandle) return
     dragIdx = idx
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+    overIdx = idx
+    dragActive = false
+    dragStart = { x: e.clientX, y: e.clientY }
+    window.addEventListener('pointermove', tilePointerMove, { passive: false })
+    window.addEventListener('pointerup', tilePointerUp)
+    window.addEventListener('pointercancel', tilePointerUp)
   }
-  function onDragOver(e, idx) {
-    if (!layout.editMode || dragIdx < 0) return
-    e.preventDefault()
-    if (idx !== overIdx) overIdx = idx
+  function tilePointerMove(e) {
+    if (dragIdx < 0) return
+    if (!dragActive) {
+      if (Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < 6) return
+      dragActive = true // passed the movement threshold → it's a drag, not a tap
+    }
+    e.preventDefault() // stop the page scrolling under a touch drag
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    const tile = el && el.closest ? el.closest('.dash-tile') : null
+    if (tile && tile.dataset.idx != null) overIdx = Number(tile.dataset.idx)
   }
-  function onDrop(e, idx) {
-    if (!layout.editMode || dragIdx < 0) return
-    e.preventDefault()
-    if (dragIdx !== idx) layout.move(dragIdx, idx)
+  function tilePointerUp() {
+    if (dragActive && dragIdx >= 0 && overIdx >= 0 && dragIdx !== overIdx) {
+      layout.move(dragIdx, overIdx)
+    }
     dragIdx = -1
     overIdx = -1
+    dragActive = false
+    dragStart = null
+    window.removeEventListener('pointermove', tilePointerMove)
+    window.removeEventListener('pointerup', tilePointerUp)
+    window.removeEventListener('pointercancel', tilePointerUp)
   }
-  function onDragEnd() { dragIdx = -1; overIdx = -1 }
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -930,8 +969,8 @@
       {/if}
     </div>
     {#if trendPolyline}
-      <svg viewBox="0 0 300 64" preserveAspectRatio="none" class="w-full h-14" aria-hidden="true">
-        <polyline points="{trendPolyline} 300,64 0,64" fill="var(--color-vault)" opacity="0.08" vector-effect="non-scaling-stroke" />
+      <svg viewBox="0 0 300 64" preserveAspectRatio="none" class="w-full h-20" aria-hidden="true">
+        <polyline points="{trendPolyline} 300,64 0,64" fill="var(--color-vault)" opacity="0.10" vector-effect="non-scaling-stroke" />
         <polyline points={trendPolyline} fill="none" stroke="var(--color-vault)" stroke-width="2" vector-effect="non-scaling-stroke" />
       </svg>
       {#if trendChange}<p class="text-[11px] text-text-dim mt-2 tabular-nums">{formatBytes(trendChange.last)}/day now · was {formatBytes(trendChange.first)}</p>{/if}
@@ -945,15 +984,29 @@
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
     {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
     {#if calendarGrid}
-      <div class="flex gap-2">
-        <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
-          <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div class="flex gap-2">
+          <div class="grid gap-1 text-[9px] leading-none text-text-dim shrink-0 items-center" style="grid-template-rows: repeat(7, 15px);">
+            <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
+          </div>
+          <div class="grid gap-1" style="grid-auto-flow: column; grid-template-rows: repeat(7, 15px); grid-auto-columns: 15px;">
+            {#each calendarGrid.days as d (d.key)}
+              <div class="rounded-[3px]" style={calCellStyle(d)} title="{d.label} — {d.future ? 'upcoming' : d.bytes ? formatBytes(d.bytes) + ' backed up' : 'no backup'}"></div>
+            {/each}
+          </div>
         </div>
-        <div class="grid gap-1" style="grid-auto-flow: column; grid-template-rows: repeat(7, 15px); grid-auto-columns: 15px;">
-          {#each calendarGrid.days as d (d.key)}
-            <div class="rounded-[3px]" style={calCellStyle(d)} title="{d.label} — {d.future ? 'upcoming' : d.bytes ? formatBytes(d.bytes) + ' backed up' : 'no backup'}"></div>
-          {/each}
-        </div>
+        {#if calendarStats}
+          <div class="flex gap-5 sm:gap-6 shrink-0">
+            <div>
+              <p class="text-xl font-bold text-text tabular-nums leading-none">{calendarStats.ran}<span class="text-xs text-text-dim font-semibold">/{calendarStats.days}</span></p>
+              <p class="text-[11px] text-text-dim mt-1">days backed up</p>
+            </div>
+            <div>
+              <p class="text-xl font-bold text-text tabular-nums leading-none">{calendarStats.streak}</p>
+              <p class="text-[11px] text-text-dim mt-1">day streak</p>
+            </div>
+          </div>
+        {/if}
       </div>
       <div class="flex items-center gap-1.5 mt-3 text-[10px] text-text-dim">
         <span>Less</span>
@@ -962,6 +1015,7 @@
         <span class="w-2.5 h-2.5 rounded-[3px]" style="background: color-mix(in srgb, var(--color-success) 70%, transparent);"></span>
         <span class="w-2.5 h-2.5 rounded-[3px] bg-success"></span>
         <span>More</span>
+        <span class="ml-auto tabular-nums">{formatBytes(calendarStats?.total || 0)} in 30d</span>
       </div>
     {:else}
       <p class="text-xs text-text-dim py-6 text-center">{trendLoading ? 'Loading…' : 'No history yet'}</p>
@@ -1142,19 +1196,21 @@
         {#each visibleTiles as t (t.id)}
           <div
             role="listitem"
-            class="dash-tile relative min-w-0 {dragIdx === t.idx ? 'is-dragging' : ''} {overIdx === t.idx && dragIdx >= 0 && dragIdx !== t.idx ? 'is-dragover' : ''}"
+            class="dash-tile relative min-w-0 {dragActive && dragIdx === t.idx ? 'is-dragging' : ''} {dragActive && overIdx === t.idx && dragIdx !== t.idx ? 'is-dragover' : ''}"
             style="grid-column: span {t.span};"
             data-span={t.span}
-            draggable={layout.editMode}
-            ondragstart={(e) => onDragStart(e, t.idx)}
-            ondragover={(e) => onDragOver(e, t.idx)}
-            ondrop={(e) => onDrop(e, t.idx)}
-            ondragend={onDragEnd}
+            data-idx={t.idx}
           >
             {#if layout.editMode}
-              <div class="flex items-center gap-2 mb-1.5 px-1">
-                <svg aria-hidden="true" class="w-4 h-4 text-text-dim cursor-grab shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
-                <span class="text-[11px] font-medium text-text-muted truncate">{t.name}</span>
+              <!-- Mouse can drag anywhere on the tile; this overlay also blocks
+                   the tile's own click actions while customizing. (Touch scrolls
+                   here and drags from the handle below instead.) -->
+              <div class="absolute inset-0 z-[1] rounded-xl" style="cursor: grab;" onpointerdown={(e) => tilePointerDown(e, t.idx, false)} aria-hidden="true"></div>
+              <div class="relative z-[2] flex items-center gap-2 mb-1.5 px-1">
+                <div class="flex items-center gap-2 min-w-0 cursor-grab py-1 -my-1 touch-none" style="touch-action: none;" onpointerdown={(e) => tilePointerDown(e, t.idx, true)} aria-hidden="true" title="Drag to reorder">
+                  <svg class="w-4 h-4 text-text-dim shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="8" cy="6" r="1.4"/><circle cx="8" cy="12" r="1.4"/><circle cx="8" cy="18" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="16" cy="12" r="1.4"/><circle cx="16" cy="18" r="1.4"/></svg>
+                  <span class="text-[11px] font-medium text-text-muted truncate">{t.name}</span>
+                </div>
                 <div class="ml-auto flex items-center gap-1 shrink-0">
                   <button onclick={() => layout.resize(t.id, t.span, -1)} disabled={t.span <= SPAN_OPTIONS[0]} class="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Make {t.name} narrower" title="Narrower">
                     <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
@@ -1211,7 +1267,7 @@
     grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: 12px;
     align-content: start;
-    align-items: stretch; /* tiles in a row share the tallest height so KPIs align */
+    align-items: start; /* tiles size to their content — no stretched whitespace */
   }
   :global(.dash-tile.is-dragging) { opacity: 0.4; }
   :global(.dash-tile.is-dragover) { outline: 2px solid var(--color-info); outline-offset: 2px; border-radius: 14px; }
