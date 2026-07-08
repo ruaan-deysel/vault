@@ -242,8 +242,9 @@
     } catch (e) {
       // Surface the failure as an error state (not a silent empty list that
       // looks like "no storage configured") when we have nothing to show.
-      loadError = e.message || 'Failed to load storage destinations'
-      showToast(e.message, 'error')
+      const msg = e.message || 'Failed to load storage destinations'
+      loadError = msg
+      showToast(msg, 'error')
     } finally {
       loading = false
     }
