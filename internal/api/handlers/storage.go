@@ -267,6 +267,7 @@ func (h *StorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer storage.CloseAdapter(adapter)
 	if err := adapter.TestConnection(); err != nil {
 		respondJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 		return
