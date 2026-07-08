@@ -97,6 +97,14 @@
 
   onMount(() => {
     loadDashboard()
+    // Re-pack tiles when any tile's measured height changes (data load, theme,
+    // font) or the viewport resizes. Content height depends only on tile width
+    // (fixed by its column span), never on the row position we assign — so
+    // applying a position can't feed back into the measurement. No loop.
+    compactObs = new ResizeObserver(() => scheduleCompact())
+    for (const el of Object.values(tileEls)) compactObs.observe(el)
+    const onResize = () => scheduleCompact()
+    window.addEventListener('resize', onResize)
     // Restore progress overlay if a backup/restore is already running.
     api.getRunnerStatus().then(s => restoreFromStatus(s)).catch(() => {})
     const unsub = onWsMessage((msg) => {
@@ -131,6 +139,9 @@
         clearTimeout(dashboardReloadTimer)
         dashboardReloadTimer = null
       }
+      compactObs?.disconnect()
+      window.removeEventListener('resize', onResize)
+      if (compactRaf) window.cancelAnimationFrame(compactRaf)
     }
   })
 
@@ -500,6 +511,10 @@
 
   function barColor(pct) { return pct === 100 ? 'bg-success' : pct >= 50 ? 'bg-warning' : 'bg-danger' }
 
+  // Keyboard activation for the click-through tiles (role="button"): fire on both
+  // Enter and Space, matching native button semantics, and stop Space scrolling.
+  function cardKey(e, fn) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn() } }
+
   // ── Tile catalog + layout ────────────────────────────────────────────────
   // span = 12-col width. `bare` tiles render their own card (they reuse a
   // self-carding component/panel); the rest get the shared card shell.
@@ -593,6 +608,66 @@
     window.removeEventListener('pointerup', tilePointerUp)
     window.removeEventListener('pointercancel', tilePointerUp)
   }
+
+  // ── Vertical compaction ──────────────────────────────────────────────────
+  // Pack tiles into the 12-col grid, filling vertical gaps while keeping reading
+  // order — the gridstack/Datadog model, not masonry. Each tile keeps its
+  // natural (measured) content height, so there is neither a gap between tiles
+  // nor dead space inside them. Fine 4px row tracks with row-gap:0 and a per-tile
+  // span that folds in the 12px gap give uniform spacing.
+  // ponytail: O(cols·tiles) skyline pack; fine for ~20 tiles, revisit if it grows.
+  const GRID_COLS = 12
+  const CELL_PX = 4
+  const GAP_PX = 12
+  let tileEls = {}         // id -> wrapper element (content-height)
+  let tilePos = $state({}) // id -> { col, row, span }
+  let compactRaf = 0
+  let compactObs = null
+
+  function registerTile(el, id) {
+    tileEls[id] = el
+    compactObs?.observe(el)
+    scheduleCompact()
+    return {
+      destroy() {
+        compactObs?.unobserve(el)
+        if (tileEls[id] === el) delete tileEls[id]
+        scheduleCompact()
+      },
+    }
+  }
+
+  function scheduleCompact() {
+    if (compactRaf || typeof window === 'undefined') return
+    compactRaf = window.requestAnimationFrame(() => { compactRaf = 0; compact() })
+  }
+
+  function compact() {
+    if (typeof window === 'undefined') return
+    // Below 720px the grid stacks (CSS handles it); explicit positions are off.
+    if (window.innerWidth <= 720) { if (Object.keys(tilePos).length) tilePos = {}; return }
+    const cols = new Array(GRID_COLS).fill(0) // filled height (row units) per column
+    const pos = {}
+    for (const t of visibleTiles) {
+      const el = tileEls[t.id]
+      if (!el) continue
+      const w = Math.min(GRID_COLS, t.span)
+      const span = Math.max(1, Math.ceil((el.getBoundingClientRect().height + GAP_PX) / CELL_PX))
+      let bestX = 0, bestY = Infinity
+      for (let x = 0; x + w <= GRID_COLS; x++) {
+        let y = 0
+        for (let c = x; c < x + w; c++) if (cols[c] > y) y = cols[c]
+        if (y < bestY) { bestY = y; bestX = x }
+      }
+      for (let c = bestX; c < bestX + w; c++) cols[c] = bestY + span
+      pos[t.id] = { col: bestX + 1, row: bestY + 1, span }
+    }
+    tilePos = pos
+  }
+
+  // Re-pack when the set of tiles or their widths change; the ResizeObserver
+  // (wired in onMount) covers content-height changes within stable tiles.
+  $effect(() => { void visibleTiles; scheduleCompact() })
 </script>
 
 <Toast message={toast.message} type={toast.type} key={toast.key} />
@@ -618,14 +693,14 @@
 {/snippet}
 
 {#snippet metricCardEmpty(icon, label)}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(icon, label)}
     <p class="text-xs text-text-dim mt-auto">Not available yet</p>
   </div>
 {/snippet}
 
 {#snippet tHealth()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.health.icon, 'Health score')}
     <div class="flex items-center gap-3 mt-auto">
       <div class="relative w-12 h-12 shrink-0">
@@ -645,7 +720,7 @@
 {/snippet}
 
 {#snippet tProtected()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(CATALOG.protected.icon, 'Protected')}
     <p class="text-[26px] leading-none font-bold text-text tabular-nums">{totalProtected}<span class="text-base text-text-dim font-semibold">/{totalItems}</span></p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
@@ -660,7 +735,7 @@
 {/snippet}
 
 {#snippet tNextRun()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/jobs') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/jobs')} onkeydown={(e) => cardKey(e, () => navigate('/jobs'))}>
     {@render mHead(CATALOG.nextrun.icon, 'Next run')}
     {#if soonestNextRun}
       <p class="text-xl font-bold text-text tabular-nums leading-none">{relTimeUntil(soonestNextRun)}</p>
@@ -673,7 +748,7 @@
 {/snippet}
 
 {#snippet tLastBackup()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.lastbackup.icon, 'Last backup')}
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
@@ -707,7 +782,7 @@
     {@const overallPct = progress.overallTotal > 0 ? Math.min(100, Math.round((((progress.overallDone + progress.overallFailed) + (activeItemPct / 100)) / progress.overallTotal) * 100)) : activeItemPct}
     {@const elapsedStr = progress.elapsedSec >= 3600 ? `${Math.floor(progress.elapsedSec / 3600)}h ${Math.floor((progress.elapsedSec % 3600) / 60)}m` : progress.elapsedSec >= 60 ? `${Math.floor(progress.elapsedSec / 60)}m ${progress.elapsedSec % 60}s` : `${progress.elapsedSec}s`}
     {@const activeRunLabel = progress.activeRun.run_type === 'restore' ? 'Restore in progress' : 'Backup in progress'}
-    <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5 h-full" role="status" aria-live="polite">
+    <div class="bg-surface-2 border border-vault/30 rounded-xl p-3.5" role="status" aria-live="polite">
       <div class="flex items-center gap-2 mb-2.5">
         <div class="w-2.5 h-2.5 rounded-full bg-vault animate-pulse shrink-0"></div>
         <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{activeRunLabel}</span>
@@ -725,7 +800,7 @@
       {#if progress.phaseMessage}<p class="text-[11px] text-warning animate-pulse mt-1">{progress.phaseMessage}</p>{/if}
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.progress.icon, 'Backup in progress')}
       <div class="flex items-center gap-2 mt-auto text-text-dim">
         <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
@@ -740,7 +815,7 @@
 {/snippet}
 
 {#snippet tJobs()}
-  <div class="bg-surface-2 border border-border rounded-xl h-full">
+  <div class="bg-surface-2 border border-border rounded-xl">
     <div class="px-4 py-3 border-b border-border flex items-center gap-2">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.jobs.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Backup jobs</span>
@@ -802,7 +877,7 @@
 
 {#snippet tProtection()}
   {#if totalItems > 0}
-    <div class="bg-surface-2 border border-border rounded-xl h-full">
+    <div class="bg-surface-2 border border-border rounded-xl">
       <div class="px-4 py-3 flex items-center justify-between gap-2 {protectionExpanded ? 'border-b border-border' : ''}">
         <div class="flex items-center gap-2 min-w-0">
           <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.protection.icon}/></svg></span>
@@ -877,7 +952,7 @@
 
 {#snippet tStorageCombined()}
   {#if storageCombined}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.storageCombined.icon, 'Storage used')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{formatBytes(storageCombined.used)}</p>
       <p class="text-[11px] text-text-dim mt-1 tabular-nums">of {formatBytes(storageCombined.total)} · {storageCombined.count} target{storageCombined.count === 1 ? '' : 's'}</p>
@@ -887,7 +962,7 @@
 {/snippet}
 
 {#snippet tStoragePerTarget()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
     {@render mHead(CATALOG.storagePerTarget.icon, 'Storage per target')}
     {#if storageCaps.length}
       <div class="flex flex-col gap-2.5">
@@ -904,7 +979,7 @@
 {/snippet}
 
 {#snippet tRecovery()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/recovery') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/recovery'))}>
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
     <p class="text-[26px] leading-none font-bold tabular-nums {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {barColor(protectionPct)}" style="width: {protectionPct}%"></div></div>
@@ -913,7 +988,7 @@
 {/snippet}
 
 {#snippet tAttention()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.attention.icon, 'Needs attention')}
     <p class="text-[26px] leading-none font-bold tabular-nums {attentionCount === 0 ? 'text-success' : 'text-danger'}">{attentionCount}</p>
     <p class="text-[11px] text-text-dim mt-auto pt-1.5">{attentionCount === 0 ? 'No failures · all items protected' : `${recentFailures} recent failure${recentFailures === 1 ? '' : 's'} · ${unprotectedCount} unprotected`}</p>
@@ -921,7 +996,7 @@
 {/snippet}
 
 {#snippet tSuccessRate()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.successrate.icon, 'Success rate')}
     {#if successStats}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">{successStats.pct}%</p>
@@ -936,7 +1011,7 @@
 
 {#snippet tAnomalies()}
   {#if getAnomalyEnabled()}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigate('/anomalies') }}>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/anomalies')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/anomalies'))}>
       {@render mHead(CATALOG.anomalies.icon, 'Anomalies')}
       <p class="text-[26px] leading-none font-bold tabular-nums {anomalies.openList.length === 0 ? 'text-success' : 'text-warning'}">{anomalies.openList.length}</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5">{anomalies.openList.length === 0 ? 'No unusual runs detected' : 'open — review on Anomalies'}</p>
@@ -945,7 +1020,7 @@
 {/snippet}
 
 {#snippet tQuickActions()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(CATALOG.quickactions.icon, 'Quick actions')}
     <div class="flex flex-col gap-1.5 mt-auto">
       <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
@@ -960,7 +1035,7 @@
 {/snippet}
 
 {#snippet tSizeTrend()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     <div class="flex items-center gap-2 mb-2.5">
       <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.sizeTrend.icon}/></svg></span>
       <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted truncate">Backup size trend</span>
@@ -981,7 +1056,7 @@
 {/snippet}
 
 {#snippet tCalendar()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/history') }}>
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/history')} onkeydown={(e) => cardKey(e, () => navigate('/history'))}>
     {@render mHead(CATALOG.calendar.icon, 'Backup calendar')}
     {#if calendarGrid}
       <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -1025,13 +1100,13 @@
 
 {#snippet tSavings()}
   {#if dedupSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
       <p class="text-[26px] leading-none font-bold text-success tabular-nums">{dedupSummary.ratio.toFixed(1)}×</p>
       <p class="text-[11px] text-text-dim mt-auto pt-1.5 tabular-nums">{formatBytes(dedupSummary.logical)} → {formatBytes(dedupSummary.physical)} stored</p>
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.savings.icon, 'Dedup & compression')}
       <p class="text-[11px] text-text-dim mt-auto">{dedupLoading ? 'Loading…' : 'No deduplicated destination yet'}</p>
     </div>
@@ -1040,14 +1115,14 @@
 
 {#snippet tForecast()}
   {#if forecastSummary}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => { if (e.key === 'Enter') navigate('/storage') }}>
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/storage')} onkeydown={(e) => cardKey(e, () => navigate('/storage'))}>
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
       <p class="text-[26px] leading-none font-bold text-text tabular-nums">~{forecastSummary.days}<span class="text-base text-text-dim font-semibold"> days</span></p>
       <p class="text-[11px] text-text-dim mt-1.5">until {forecastSummary.name} is full</p>
       <p class="text-[11px] text-warning mt-auto pt-1 font-medium tabular-nums">+{formatBytes(forecastSummary.perDay)}/day</p>
     </div>
   {:else}
-    <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full min-h-[104px] flex flex-col">
+    <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
       {@render mHead(CATALOG.forecast.icon, 'Storage forecast')}
       <p class="text-[11px] text-text-dim mt-auto">{forecastLoading ? 'Loading…' : 'Not filling / not enough samples'}</p>
     </div>
@@ -1055,7 +1130,7 @@
 {/snippet}
 
 {#snippet tLargest()}
-  <div class="bg-surface-2 border border-border rounded-xl p-3.5 h-full">
+  <div class="bg-surface-2 border border-border rounded-xl p-3.5">
     {@render mHead(CATALOG.largest.icon, 'Largest backups')}
     {#if largestBackups.length}
       {@const max = largestBackups[0].size}
@@ -1197,9 +1272,10 @@
           <div
             role="listitem"
             class="dash-tile relative min-w-0 {dragActive && dragIdx === t.idx ? 'is-dragging' : ''} {dragActive && overIdx === t.idx && dragIdx !== t.idx ? 'is-dragover' : ''}"
-            style="grid-column: span {t.span};"
+            style="--w:{t.span}; --col:{tilePos[t.id]?.col ?? 'auto'}; --row:{tilePos[t.id]?.row ?? 'auto'}; --span:{tilePos[t.id]?.span ?? 1};"
             data-span={t.span}
             data-idx={t.idx}
+            use:registerTile={t.id}
           >
             {#if layout.editMode}
               <!-- Mouse can drag anywhere on the tile; this overlay also blocks
@@ -1265,9 +1341,17 @@
   :global(.dash-tile-grid) {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 12px;
+    grid-auto-rows: 4px;  /* fine row unit — tiles span a measured number of them */
+    column-gap: 12px;
+    row-gap: 0;           /* vertical 12px gap is folded into each tile's row span */
     align-content: start;
-    align-items: start; /* tiles size to their content — no stretched whitespace */
+    align-items: start;   /* tiles stay content-height so measurement never loops */
+  }
+  /* Position comes from the compaction pass (--col/--row/--span); before it runs
+     (and on the server) tiles auto-flow at their column width. */
+  :global(.dash-tile) {
+    grid-column: var(--col, auto) / span var(--w, 1);
+    grid-row: var(--row, auto) / span var(--span, 1);
   }
   :global(.dash-tile.is-dragging) { opacity: 0.4; }
   :global(.dash-tile.is-dragover) { outline: 2px solid var(--color-info); outline-offset: 2px; border-radius: 14px; }
@@ -1280,10 +1364,12 @@
     :global(.dash-cat-list) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
-  /* Phone: 2-up small tiles, panels full width. */
+  /* Phone: drop compaction, stack in normal flow — 2-up small tiles, panels
+     full width. Explicit positions are cleared by compact() below 720px; these
+     rules override the var-driven grid placement regardless. */
   @media (max-width: 720px) {
-    :global(.dash-tile-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    :global(.dash-tile-grid > .dash-tile) { grid-column: span 2 !important; }
+    :global(.dash-tile-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; column-gap: 10px; row-gap: 10px; }
+    :global(.dash-tile-grid > .dash-tile) { grid-column: span 2 !important; grid-row: auto !important; }
     :global(.dash-tile-grid > .dash-tile[data-span="3"]),
     :global(.dash-tile-grid > .dash-tile[data-span="4"]) { grid-column: span 1 !important; }
     :global(.dash-cat-list) { grid-template-columns: minmax(0, 1fr); }
@@ -1293,6 +1379,6 @@
      KPI tiles stay 2-up for a denser, ops-dashboard feel. */
   @media (max-width: 359px) {
     :global(.dash-tile-grid) { grid-template-columns: minmax(0, 1fr); }
-    :global(.dash-tile-grid > .dash-tile) { grid-column: span 1 !important; }
+    :global(.dash-tile-grid > .dash-tile) { grid-column: span 1 !important; grid-row: auto !important; }
   }
 </style>
