@@ -19,19 +19,20 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res
+  let text
   try {
     res = await fetch(url, { ...options, signal: controller.signal })
+    if (res.status === 204) return null
+    // Read the body under the same abort timer — a slow body read must time out
+    // too. Read as text first so empty / non-JSON bodies (e.g. a 502 from an
+    // upstream proxy) surface a clean HTTP status rather than a JSON parse error.
+    text = await res.text()
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Request timed out', { cause: err })
     throw err
   } finally {
     clearTimeout(timer)
   }
-  if (res.status === 204) return null
-  // Read as text first so we don't throw on empty / non-JSON bodies
-  // (e.g. 502 from an upstream proxy). Errors should surface a clean
-  // HTTP status message rather than a JSON parse error.
-  const text = await res.text()
   let data = null
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
