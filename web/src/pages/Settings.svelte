@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
@@ -20,6 +20,10 @@
   let settings = $state({})
   let saving = $state(false)
   let toast = $state({ message: '', type: 'info', key: 0 })
+
+  // Replica instances are read-only: keep general/notification config visible
+  // but non-editable so operators can still read the current values.
+  const readOnly = isReplicaMode()
 
   // Tab navigation
   /** @type {string} */
@@ -247,6 +251,7 @@
   })
 
   async function toggleNotifications() {
+    if (readOnly) return
     const isEnabled = settings.notifications_enabled !== 'false'
     const newVal = isEnabled ? 'false' : 'true'
     saving = true
@@ -261,6 +266,7 @@
   }
 
   async function toggleBackupTarget(key) {
+    if (readOnly) return
     const isEnabled = settings[key] !== 'false'
     const newVal = isEnabled ? 'false' : 'true'
     saving = true
@@ -276,6 +282,7 @@
   }
 
   async function toggleBackupRule() {
+    if (readOnly) return
     const newVal = settings.backup_rule_enabled === 'false' ? 'true' : 'false'
     saving = true
     try {
@@ -289,6 +296,7 @@
   }
 
   async function saveDiscordSettings() {
+    if (readOnly) return
     discordSaving = true
     try {
       settings = await api.updateSettings({
@@ -308,6 +316,7 @@
   }
 
   async function testDiscord() {
+    if (readOnly) return
     if (!discordWebhookUrl) {
       showToast('Enter a webhook URL first', 'error')
       return
@@ -324,6 +333,7 @@
   }
 
   async function saveStagingOverride() {
+    if (readOnly) return
     stagingSaving = true
     try {
       stagingInfo = await api.setStagingOverride(stagingOverrideInput)
@@ -337,6 +347,7 @@
   }
 
   async function resetStagingOverride() {
+    if (readOnly) return
     stagingOverrideInput = ''
     stagingSaving = true
     try {
@@ -376,6 +387,7 @@
   }
 
   async function saveHistoryRetention() {
+    if (readOnly) return
     historyRetentionSaving = true
     try {
       settings = await api.updateSettings({ history_retention_days: historyRetention })
@@ -467,6 +479,7 @@
   }
 
   async function saveCompactionThreshold() {
+    if (readOnly) return
     compactionSaving = true
     try {
       const str = String(compactionThreshold).trim()
@@ -497,6 +510,7 @@
   }
 
   async function saveRetryPolicy() {
+    if (readOnly) return
     retrySaving = true
     try {
       const payload = {}
@@ -701,6 +715,7 @@
   let storageVerboseSaving = $state(false)
 
   async function saveAnomalySettings() {
+    if (readOnly) return
     anomalySaving = true
     try {
       settings = await api.updateSettings({
@@ -733,6 +748,7 @@
   }
 
   async function saveStorageVerboseLogging() {
+    if (readOnly) return
     storageVerboseSaving = true
     try {
       settings = await api.updateSettings({
@@ -759,6 +775,13 @@
   {#if loading}
     <Spinner text="Loading settings..." />
   {:else}
+    {#if isReplicaMode()}
+      <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        <span>Read-only replica — secret and destructive actions are disabled on this instance.</span>
+      </div>
+    {/if}
+
     <!-- Tab Navigation -->
     <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
       {#each tabs as tab (tab.id)}
@@ -777,7 +800,7 @@
       <!-- Jump-to bar (#208 / E11) — sticky so long-tab settings stay reachable -->
       <div class="sticky top-0 z-10 -mx-1 px-1 py-2 bg-surface/95 backdrop-blur border-b border-border flex flex-wrap items-center gap-2">
         <span class="text-[11px] font-semibold uppercase tracking-wide text-text-muted shrink-0">Jump to</span>
-        {#each generalSections as sec (sec.id)}
+        {#each generalSections.filter(s => s.id !== 'set-database' || databaseInfo) as sec (sec.id)}
           <button type="button" onclick={() => jumpToSetting(sec.id)}
             class="px-2.5 py-1 text-xs font-medium rounded-full border border-border bg-surface-3 text-text-muted hover:border-vault/40 hover:text-text transition-colors whitespace-nowrap shrink-0">
             {sec.label}
@@ -850,7 +873,7 @@
             </div>
             <button
               onclick={() => toggleBackupTarget('container_backup_enabled')}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={containerBackupOn}
@@ -868,7 +891,7 @@
             </div>
             <button
               onclick={() => toggleBackupTarget('vm_backup_enabled')}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={vmBackupOn}
@@ -886,7 +909,7 @@
             </div>
             <button
               onclick={() => toggleBackupTarget('folder_backup_enabled')}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={folderBackupOn}
@@ -904,7 +927,7 @@
             </div>
             <button
               onclick={() => toggleBackupTarget('flash_backup_enabled')}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={flashBackupOn}
@@ -932,7 +955,7 @@
             </div>
             <button
               onclick={() => toggleBackupRule()}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={backupRuleOn}
@@ -965,6 +988,7 @@
                 min="0"
                 max="10"
                 bind:value={retryMax}
+                disabled={readOnly}
                 placeholder="2"
                 class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
@@ -974,9 +998,12 @@
                 <span class="block text-sm font-medium text-text-muted">Delays between retries</span>
                 <Tooltip text='How long to wait before each retry. The Nth retry waits for the Nth delay before running. Defaults to 15 min, 1 h, 4 h.' />
               </div>
-              <RetryDelaysEditor bind:value={retryDelays} />
+              <div class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
+                <RetryDelaysEditor bind:value={retryDelays} />
+              </div>
             </div>
           </div>
+          {#if !readOnly}
           <div class="flex justify-end">
             <button
               onclick={saveRetryPolicy}
@@ -987,6 +1014,7 @@
               Save Retry Policy
             </button>
           </div>
+          {/if}
         </div>
       </div>
 
@@ -1013,10 +1041,12 @@
                 max="100"
                 step="1"
                 bind:value={compactionThreshold}
+                disabled={readOnly}
                 placeholder="50"
                 class="w-24 px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
               <span class="text-sm text-text-muted">%</span>
+              {#if !readOnly}
               <button
                 type="button"
                 onclick={saveCompactionThreshold}
@@ -1026,6 +1056,7 @@
                 {#if compactionSaving}<InlineSpinner />{/if}
                 {compactionSaving ? 'Saving…' : 'Save'}
               </button>
+              {/if}
             </div>
           </div>
         </div>
@@ -1046,6 +1077,7 @@
             </div>
             <button
               onclick={() => anomalyEnabled = !anomalyEnabled}
+              disabled={readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={anomalyEnabled}
@@ -1065,6 +1097,7 @@
             <select
               id="anomaly-sensitivity"
               bind:value={anomalySensitivityDefault}
+              disabled={readOnly}
               class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="strict">Strict – flag small deviations</option>
@@ -1081,6 +1114,7 @@
             <select
               id="anomaly-notify-severity"
               bind:value={anomalyNotifyMinSeverity}
+              disabled={readOnly}
               class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="info">Info – notify on all anomalies</option>
@@ -1089,6 +1123,7 @@
             </select>
           </div>
           <!-- Save button -->
+          {#if !readOnly}
           <div class="px-5 py-3 flex justify-end">
             <button
               onclick={saveAnomalySettings}
@@ -1101,6 +1136,7 @@
               Save Anomaly Settings
             </button>
           </div>
+          {/if}
         </div>
       </div>
 
@@ -1159,6 +1195,7 @@
             </div>
             <button
               onclick={() => storageVerboseLogging = !storageVerboseLogging}
+              disabled={readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={storageVerboseLogging}
@@ -1169,6 +1206,7 @@
               </div>
             </button>
           </div>
+          {#if !readOnly}
           <div class="px-5 py-3 flex justify-end">
             <button
               onclick={saveStorageVerboseLogging}
@@ -1181,6 +1219,7 @@
               Save
             </button>
           </div>
+          {/if}
         </div>
       </div>
 
@@ -1201,7 +1240,7 @@
             </div>
             <button
               onclick={toggleNotifications}
-              disabled={saving}
+              disabled={saving || readOnly}
               class="relative inline-flex items-center shrink-0 cursor-pointer"
               role="switch"
               aria-checked={notificationsOn}
@@ -1236,12 +1275,13 @@
                 id="discord-url"
                 type="url"
                 bind:value={discordWebhookUrl}
+                disabled={readOnly}
                 placeholder="https://discord.com/api/webhooks/..."
                 class="flex-1 text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
               <button
                 onclick={testDiscord}
-                disabled={discordTesting || !discordWebhookUrl}
+                disabled={discordTesting || !discordWebhookUrl || readOnly}
                 class="px-3 py-2 text-sm font-medium text-text-muted bg-surface-3 border border-border rounded-lg hover:bg-surface-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
               >
                 {#if discordTesting}
@@ -1258,6 +1298,7 @@
             <select
               id="discord-notify"
               bind:value={discordNotifyOn}
+              disabled={readOnly}
               class="text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
             >
               <option value="always">All backups (success & failure)</option>
@@ -1272,6 +1313,7 @@
                 id="discord-bot-username"
                 type="text"
                 bind:value={discordBotUsername}
+                disabled={readOnly}
                 placeholder="Vault"
                 class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
@@ -1282,6 +1324,7 @@
                 id="discord-bot-avatar"
                 type="url"
                 bind:value={discordBotAvatarUrl}
+                disabled={readOnly}
                 placeholder="https://example.com/avatar.png"
                 class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
@@ -1295,6 +1338,7 @@
                 type="text"
                 inputmode="numeric"
                 bind:value={discordMentionRoleId}
+                disabled={readOnly}
                 placeholder="123456789012345678"
                 class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               />
@@ -1304,6 +1348,7 @@
               <select
                 id="discord-mention-on"
                 bind:value={discordMentionOn}
+                disabled={readOnly}
                 class="w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault"
               >
                 <option value="never">Never</option>
@@ -1312,6 +1357,7 @@
               </select>
             </div>
           </div>
+          {#if !readOnly}
           <div class="px-5 py-3 flex justify-end">
             <button
               onclick={saveDiscordSettings}
@@ -1324,6 +1370,7 @@
               Save Discord Settings
             </button>
           </div>
+          {/if}
         </div>
       </div>
 
@@ -1374,6 +1421,7 @@
             </div>
 
             <!-- Change passphrase -->
+            {#if !isReplicaMode()}
             <div class="px-5 py-4">
               {#if !changingPassphrase}
                 <div class="flex items-center justify-between gap-4">
@@ -1419,6 +1467,7 @@
                 {encSaving ? 'Removing…' : 'Disable encryption'}
               </button>
             </div>
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
@@ -1426,6 +1475,7 @@
                 <span class="text-sm font-medium text-text">No encryption passphrase set</span>
               </div>
               <p class="text-xs text-text-muted mb-4">Set a global passphrase to enable age encryption for backup jobs. Jobs must individually opt-in to encryption. Existing encrypted backups always require the original passphrase to restore.</p>
+              {#if !isReplicaMode()}
               <div class="space-y-3 max-w-sm">
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
@@ -1448,6 +1498,7 @@
                   {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
               </div>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1493,6 +1544,7 @@
             </div>
 
             <!-- Rotate key -->
+            {#if !isReplicaMode()}
             <div class="px-5 py-4 flex items-center justify-between gap-4">
               <div>
                 <p class="text-sm font-medium text-text">Rotate API key</p>
@@ -1521,6 +1573,7 @@
                 </button>
               {/if}
             </div>
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
@@ -1528,10 +1581,12 @@
                 <span class="text-sm font-medium text-text">No API key configured</span>
               </div>
               <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
+              {#if !isReplicaMode()}
               <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                 {#if apiKeyGenerating}<InlineSpinner />{/if}
                 {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1577,15 +1632,17 @@
             <span class="text-xs text-text-muted block mb-1.5">Custom Location</span>
             <p class="text-xs text-text-dim mb-2">Override the automatic location. Use this if you want backups to be assembled on a specific drive. NVMe-backed ZFS pools are automatically prioritized when detected.</p>
             <div class="flex gap-2 items-end">
-              <div class="flex-1">
+              <div class="flex-1" class:pointer-events-none={readOnly} class:opacity-60={readOnly}>
                 <PathBrowser bind:value={stagingOverrideInput} onselect={saveStagingOverride} includeZfs={true} />
               </div>
+              {#if !readOnly}
               <button onclick={saveStagingOverride} disabled={stagingSaving || !stagingOverrideInput} class="px-3 py-2 bg-vault text-white text-sm rounded-lg hover:bg-vault-dark disabled:opacity-50 transition-colors shrink-0 flex items-center gap-2">
                 {#if stagingSaving}<InlineSpinner />{/if}
                 Apply
               </button>
+              {/if}
             </div>
-            {#if stagingInfo.override}
+            {#if stagingInfo.override && !readOnly}
               <button onclick={resetStagingOverride} disabled={stagingSaving} class="mt-2 text-xs text-vault hover:underline">
                 Reset to automatic
               </button>
@@ -1604,7 +1661,7 @@
           <p class="text-xs text-text-muted mt-0.5">How long to keep backup/restore run history. Recoverable backups are not affected - they follow each job's own retention.</p>
         </div>
         <div class="p-5 flex items-center gap-2">
-          <select bind:value={historyRetention}
+          <select bind:value={historyRetention} disabled={readOnly}
             class="px-2.5 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-vault focus:border-vault cursor-pointer">
             <option value="30">30 days</option>
             <option value="90">90 days</option>
@@ -1613,11 +1670,13 @@
             <option value="730">2 years</option>
             <option value="0">Keep everything</option>
           </select>
+          {#if !readOnly}
           <button type="button" onclick={saveHistoryRetention} disabled={historyRetentionSaving}
             class="px-4 py-2 text-sm font-semibold text-white bg-vault rounded-lg hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
             {#if historyRetentionSaving}<InlineSpinner />{/if}
             Save
           </button>
+          {/if}
         </div>
       </div>
 
@@ -1852,7 +1911,7 @@
           </div>
           {/if}
         </div>
-        {#if databaseInfo.mode === 'hybrid'}
+        {#if databaseInfo.mode === 'hybrid' && !isReplicaMode()}
         <div class="px-5 py-4 border-t border-border">
           <span class="text-xs text-text-muted block mb-1.5">Custom save location <Tooltip text="Overrides where the persistent database snapshot is saved." /></span>
           <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache. ZFS zpools are also available as high-performance locations.</p>

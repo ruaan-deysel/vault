@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { formatBytes, formatDate, formatDateCompact, parseConfig, relTime } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
@@ -13,6 +13,7 @@
   import CapacityTrend from '../components/CapacityTrend.svelte'
 
   let loading = $state(true)
+  let loadError = $state('')
   let destinations = $state([])
   let showModal = $state(false)
   let editing = $state(null)
@@ -226,6 +227,7 @@
     loading = true
     try {
       destinations = (await api.listStorage()) || []
+      loadError = ''
       // Load dependent job counts for each storage
       const counts = new SvelteMap()
       await Promise.all(destinations.map(async (d) => {
@@ -238,6 +240,9 @@
       refreshDedupStats()
       refreshTrajectories()
     } catch (e) {
+      // Surface the failure as an error state (not a silent empty list that
+      // looks like "no storage configured") when we have nothing to show.
+      loadError = e.message || 'Failed to load storage destinations'
       showToast(e.message, 'error')
     } finally {
       loading = false
@@ -479,11 +484,18 @@
   async function testFormConnection() {
     formTesting = true
     formTestResult = null
+    // Snapshot the config under test so a result that lands after the user has
+    // since edited the form is dropped, rather than showing a stale result for
+    // the old config (the invalidation $effect can't undo an in-flight test).
+    const testedKey = JSON.stringify({ type: form.type, config: form.config })
+    const isStale = () => JSON.stringify({ type: form.type, config: form.config }) !== testedKey
     try {
       const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      if (isStale()) return
       formTestResult = result
       showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')
     } catch (e) {
+      if (isStale()) return
       const msg = e?.message || 'Connection test failed'
       formTestResult = { success: false, error: msg }
       showToast(msg, 'error')
@@ -519,7 +531,7 @@
       <h1 class="text-2xl font-bold text-text">Storage Destinations</h1>
       <p class="text-sm text-text-muted mt-1">Configure where your backups are stored</p>
     </div>
-    {#if destinations.length > 0}
+    {#if destinations.length > 0 && !isReplicaMode()}
       <button onclick={openCreate} class="btn btn-primary flex items-center gap-2">
         <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Add Storage
@@ -527,10 +539,22 @@
     {/if}
   </div>
 
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
+
   {#if loading}
     <Spinner text="Loading storage..." />
+  {:else if loadError && destinations.length === 0}
+    <div class="bg-danger/10 border border-danger/30 text-danger rounded-xl p-4 flex items-center gap-3">
+      <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span class="text-sm">{loadError}</span>
+    </div>
   {:else if destinations.length === 0}
-    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={() => openCreate()}>
+    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel={isReplicaMode() ? null : "Add Storage"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
       {/snippet}
@@ -561,6 +585,7 @@
                 <span class="text-xs text-text-dim uppercase">{dest.type}</span>
               </div>
             </div>
+            {#if !isReplicaMode()}
             <div class="flex items-center gap-1">
               <button onclick={() => openImport(dest.id, dest.name)} class="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-text-muted hover:text-vault hover:bg-vault/10 rounded-lg transition-colors" title="Import Backups" aria-label="Import backups">
                 <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
@@ -573,6 +598,7 @@
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
+            {/if}
           </div>
 
           <!-- Config summary -->
@@ -679,6 +705,7 @@
                Lets the user opt-in this destination to receive the daily
                encrypted DB snapshot. Hidden during dbBackupBusy flicker
                to keep the row from flashing. -->
+          {#if !isReplicaMode()}
           <div class="flex items-center justify-between gap-3 py-2 border-t border-border">
             <div class="min-w-0">
               <p class="text-xs font-medium text-text">Include in DB backup</p>
@@ -698,6 +725,7 @@
               </div>
             </button>
           </div>
+          {/if}
 
           {#if dest.dedup_enabled}
             {@const s = dedupStats.get(dest.id)}
@@ -733,6 +761,7 @@
                     {/if}
                   </span>
                 </div>
+                {#if !isReplicaMode()}
                 <div class="pt-1">
                   <button
                     type="button"
@@ -743,6 +772,7 @@
                     {cleanupBusy.has(dest.id) ? 'Cleaning…' : 'Run cleanup'}
                   </button>
                 </div>
+                {/if}
               {:else}
                 <div class="text-text-dim italic">Dedup repo not initialised yet – first backup populates it.</div>
               {/if}
@@ -770,6 +800,7 @@
               >
                 Breaker open
               </span>
+              {#if !isReplicaMode()}
               <button
                 type="button"
                 onclick={() => resetBreaker(dest.id)}
@@ -778,6 +809,7 @@
               >
                 {breakerBusy.has(dest.id) ? 'Resetting…' : 'Reset breaker'}
               </button>
+              {/if}
             {/if}
             <button
               onclick={() => testConnection(dest.id)}
