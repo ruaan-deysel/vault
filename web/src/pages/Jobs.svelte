@@ -805,7 +805,14 @@
     if (step === 1 && form.items.length === 0) return 'Select at least one item to back up'
     if (step === 2 && form.storage_dest_id === 0) return 'Select a storage destination'
     if (step === 3 && vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
-    if (step === 4 && !form.name.trim()) return 'Enter a job name to continue'
+    // Review step: the final save needs every requirement, so name the first
+    // unmet one (a jumped stepper can reach here with an earlier step blank).
+    if (step === 4) {
+      if (form.selectedTypes.length === 0) return 'Select at least one backup type'
+      if (form.items.length === 0) return 'Select at least one item to back up'
+      if (form.storage_dest_id === 0) return 'Select a storage destination'
+      if (!form.name.trim()) return 'Enter a job name to continue'
+    }
     return ''
   })
 
@@ -2159,7 +2166,7 @@
         </div>
       </div>
       {:else}
-      {#if stepHint && !canNext}
+      {#if stepHint && (step < totalSteps ? !canNext : !canSaveExpress)}
         <p class="text-xs text-warning flex items-center gap-1.5">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
           {stepHint}

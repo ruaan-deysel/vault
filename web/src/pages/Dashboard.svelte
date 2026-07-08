@@ -222,10 +222,18 @@
     if (runningAll || enabledJobs.length === 0) return
     runningAll = true
     try {
+      let failed = 0
       for (const j of enabledJobs) {
-        await api.runJob(j.id).catch(() => {})
+        await api.runJob(j.id).catch(() => { failed++ })
       }
-      showToast(`Started ${enabledJobs.length} enabled job${enabledJobs.length === 1 ? '' : 's'}`, 'success')
+      const started = enabledJobs.length - failed
+      if (failed === 0) {
+        showToast(`Started ${started} enabled job${started === 1 ? '' : 's'}`, 'success')
+      } else if (started === 0) {
+        showToast(`Could not start ${failed} job${failed === 1 ? '' : 's'}`, 'error')
+      } else {
+        showToast(`Started ${started} of ${enabledJobs.length} jobs · ${failed} failed`, 'warning')
+      }
     } finally {
       runningAll = false
     }
@@ -946,7 +954,7 @@
       {/if}
     </div>
   {:else}
-    {@render metricCardEmpty('Protection status')}
+    {@render metricCardEmpty(CATALOG.protection.icon, 'Protection status')}
   {/if}
 {/snippet}
 
