@@ -554,7 +554,7 @@
       <span class="text-sm">{loadError}</span>
     </div>
   {:else if destinations.length === 0}
-    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel="Add Storage" onaction={isReplicaMode() ? null : () => openCreate()}>
+    <EmptyState title="No storage destinations" subtitle="Required before creating jobs" description="Add a storage destination to start backing up your data." actionLabel={isReplicaMode() ? null : "Add Storage"} onaction={isReplicaMode() ? null : () => openCreate()}>
       {#snippet iconSlot()}
         <svg aria-hidden="true" class="w-12 h-12 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={storageIcons.local}/></svg>
       {/snippet}

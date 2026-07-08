@@ -10,11 +10,14 @@ export function isReplicaMode() { return _isReplica }
 export function setReplicaMode(val) { _isReplica = val }
 
 const REQUEST_TIMEOUT_MS = 15000
+// Connection tests reach an arbitrary, possibly slow remote, so they get a
+// longer ceiling than normal CRUD calls (which stay at REQUEST_TIMEOUT_MS).
+const TEST_TIMEOUT_MS = 60000
 
-async function request(method, path, body = null) {
+async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const { url, options } = buildApiRequest(method, path, { body })
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res
   try {
     res = await fetch(url, { ...options, signal: controller.signal })
@@ -62,10 +65,10 @@ export const api = {
     const qs = params.toString()
     return request('DELETE', `/storage/${id}${qs ? '?' + qs : ''}`)
   },
-  testStorage: (id) => request('POST', `/storage/${id}/test`),
+  testStorage: (id) => request('POST', `/storage/${id}/test`, null, { timeoutMs: TEST_TIMEOUT_MS }),
   // Test an unsaved config from the add/edit modal ({ type, config } where
   // config is the JSON-stringified blob). Returns { success, error? }.
-  testStorageConfig: (payload) => request('POST', '/storage/test', payload),
+  testStorageConfig: (payload) => request('POST', '/storage/test', payload, { timeoutMs: TEST_TIMEOUT_MS }),
   // On-demand storage capacity probe (Task 9 in storage-capacity feature).
   // 30s ceiling on the server side; returns { capacity: {...} } on success.
   refreshCapacity: (id) => request('POST', `/storage/${id}/capacity-check`),
@@ -230,8 +233,8 @@ export const api = {
   createReplicationSource: (data) => request('POST', '/replication', data),
   updateReplicationSource: (id, data) => request('PUT', `/replication/${id}`, data),
   deleteReplicationSource: (id) => request('DELETE', `/replication/${id}`),
-  testReplicationSource: (id) => request('POST', `/replication/${id}/test`),
-  testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }),
+  testReplicationSource: (id) => request('POST', `/replication/${id}/test`, null, { timeoutMs: TEST_TIMEOUT_MS }),
+  testReplicationURL: (url, apiKey = '') => request('POST', '/replication/test-url', { url, api_key: apiKey }, { timeoutMs: TEST_TIMEOUT_MS }),
   syncReplicationSource: (id) => request('POST', `/replication/${id}/sync`),
   listReplicatedJobs: (id) => request('GET', `/replication/${id}/jobs`),
 }

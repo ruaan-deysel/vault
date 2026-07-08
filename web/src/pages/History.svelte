@@ -29,6 +29,9 @@
 
   let loading = $state(true)
   let error = $state('')
+  // Non-blocking notice when SOME job histories failed but others loaded, so
+  // the partial list still renders (a full outage uses the blocking `error`).
+  let historyWarning = $state('')
   let jobs = $state([])
   let allRuns = $state([])
   let selectedJob = $state(0)
@@ -98,8 +101,12 @@
       // surface it as an error instead of the falsely-empty timeline.
       if (allRuns.length === 0 && historyErrors > 0 && historyErrors === jobs.length) {
         error = 'Failed to load run history'
+        historyWarning = ''
       } else {
         error = ''
+        historyWarning = historyErrors > 0
+          ? `Couldn't load history for ${historyErrors} job${historyErrors === 1 ? '' : 's'} — the list below may be incomplete.`
+          : ''
         autoExpandRecentFailures()
       }
     } catch (e) {
@@ -264,6 +271,12 @@
       <span class="text-sm">{error}</span>
     </div>
   {:else}
+    {#if historyWarning}
+      <div class="bg-warning/10 border border-warning/30 text-warning rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2 text-sm">
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span>{historyWarning}</span>
+      </div>
+    {/if}
     <!-- Stats bar -->
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6 stagger">
       <div class="bg-surface-2 border border-border rounded-xl p-3 text-center">
