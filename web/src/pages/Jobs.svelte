@@ -1329,13 +1329,22 @@
     </div>
   {/snippet}
 
-  <form onsubmit={(e) => { e.preventDefault(); if (expressMode) saveJob(); else if (step < totalSteps) step++; else saveJob() }}>
+  <form onsubmit={(e) => {
+    e.preventDefault()
+    if (expressMode) {
+      if (canSaveExpress) saveJob()
+    } else if (step < totalSteps) {
+      step++
+    } else {
+      saveJob()
+    }
+  }}>
     {#if expressMode}
       <!-- Express one-page form (#207 / E10). Reuses the same components and
            `form` bindings as the wizard; Advanced settings keep their defaults
-           and stay available via the step-by-step view. ponytail: a few field
-           markups are duplicated from the wizard rather than snippet-extracted,
-           to avoid restructuring the whole working step chain. -->
+           and stay available via the step-by-step view. A few field markups are
+           duplicated from the wizard instead of being snippet-extracted to avoid
+           restructuring the step chain. -->
       <div class="space-y-6">
         <div>
           <span class="block text-sm font-medium text-text-muted mb-1.5">Backup Types</span>
