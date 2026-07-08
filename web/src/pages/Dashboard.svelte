@@ -345,7 +345,7 @@
   })
 
   // Most recent completed/failed backup (not restore) for the Last-backup tile.
-  const lastBackup = $derived(recentRuns.find(r => (r.run_type || 'backup') === 'backup') || null)
+  const lastBackup = $derived(recentRuns.find(r => (r.run_type || 'backup') === 'backup' && r.status !== 'running') || null)
 
   // Recent backup success rate from the runs we already loaded (not a full 30d
   // window — that would need a history endpoint this page doesn't fetch).

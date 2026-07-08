@@ -71,16 +71,22 @@
       vms = v?.items || []
       folders = f?.items || []
       loaded = true
-      // Cheap restore-point index: the single most-recent point per job (one
-      // API call per job, run once and cached). getRestorePoints returns points
-      // newest-first, so [0] is the latest.
-      const points = await Promise.all(
-        jobs.map(job =>
-          api.getRestorePoints(job.id)
-            .then(rps => (rps && rps[0]) ? { jobId: job.id, jobName: job.name, date: rps[0].created_at } : null)
-            .catch(() => null)
+      // Restore-point index: the single most-recent point per job (run once and
+      // cached). getRestorePoints returns points newest-first, so [0] is the
+      // latest. Capped at a small concurrency so opening the palette on an
+      // install with many jobs can't burst one request per job at once.
+      const points = []
+      const CONCURRENCY = 4
+      for (let i = 0; i < jobs.length; i += CONCURRENCY) {
+        const chunk = await Promise.all(
+          jobs.slice(i, i + CONCURRENCY).map(job =>
+            api.getRestorePoints(job.id)
+              .then(rps => (rps && rps[0]) ? { jobId: job.id, jobName: job.name, date: rps[0].created_at } : null)
+              .catch(() => null)
+          )
         )
-      )
+        points.push(...chunk)
+      }
       latestPoints = points.filter(Boolean)
     } catch (err) { console.error('CommandPalette: loadData failed', err) }
   }
