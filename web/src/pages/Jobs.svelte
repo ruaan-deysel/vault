@@ -811,6 +811,7 @@
       if (form.selectedTypes.length === 0) return 'Select at least one backup type'
       if (form.items.length === 0) return 'Select at least one item to back up'
       if (form.storage_dest_id === 0) return 'Select a storage destination'
+      if (vmRestoreVerifyErrors.length > 0) return vmRestoreVerifyErrors[0]
       if (!form.name.trim()) return 'Enter a job name to continue'
     }
     return ''
