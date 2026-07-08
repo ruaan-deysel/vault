@@ -303,6 +303,9 @@
   // Collapse uses exact membership, not the rounded percentage: 199/200 rounds
   // to 100% but still has an unprotected item that must stay visible.
   const fullyProtected = $derived(totalItems > 0 && totalProtected === totalItems)
+  // Bar goes green only when every item is truly protected — otherwise 199/200
+  // (rounds to 100%) would show a full green bar next to "1 unprotected".
+  const protectionBar = $derived(fullyProtected ? 'bg-success' : protectionPct >= 50 ? 'bg-warning' : 'bg-danger')
 
   // Collapse the Protection Status panel when everything is covered (issue #211
   // / E7). Below 100% the panel is always expanded so unprotected/pending items
@@ -520,7 +523,6 @@
     return 'Attention needed – recent backups have not completed'
   })
 
-  function barColor(pct) { return pct === 100 ? 'bg-success' : pct >= 50 ? 'bg-warning' : 'bg-danger' }
 
   // Keyboard activation for the click-through tiles (role="button"): fire on both
   // Enter and Space, matching native button semantics, and stop Space scrolling.
@@ -735,7 +737,7 @@
     {@render mHead(CATALOG.protected.icon, 'Protected')}
     <p class="text-[26px] leading-none font-bold text-text tabular-nums">{totalProtected}<span class="text-base text-text-dim font-semibold">/{totalItems}</span></p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5">
-      <div class="h-full {barColor(protectionPct)} transition-all duration-500" style="width: {protectionPct}%"></div>
+      <div class="h-full {protectionBar} transition-all duration-500" style="width: {protectionPct}%"></div>
     </div>
     {#if hasUnprotectedItems}
       <button onclick={() => navigate('/jobs')} class="text-[11px] text-vault-text hover:text-vault-dark font-medium mt-1.5 text-left">{unprotectedCount} unprotected →</button>
@@ -909,7 +911,7 @@
       {#if protectionExpanded}
         <div class="p-5">
           <div class="w-full h-2 bg-surface-4 rounded-full overflow-hidden mb-5">
-            <div class="h-full rounded-full transition-all duration-500 {barColor(protectionPct)}" style="width: {protectionPct}%"></div>
+            <div class="h-full rounded-full transition-all duration-500 {protectionBar}" style="width: {protectionPct}%"></div>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
             {#if trackedContainers.length > 0}
@@ -993,7 +995,7 @@
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/recovery'))}>
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
     <p class="text-[26px] leading-none font-bold tabular-nums {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
-    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {barColor(protectionPct)}" style="width: {protectionPct}%"></div></div>
+    <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
     <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
   </div>
 {/snippet}

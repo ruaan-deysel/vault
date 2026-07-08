@@ -479,11 +479,18 @@
   async function testFormConnection() {
     formTesting = true
     formTestResult = null
+    // Snapshot the config under test so a result that lands after the user has
+    // since edited the form is dropped, rather than showing a stale result for
+    // the old config (the invalidation $effect can't undo an in-flight test).
+    const testedKey = JSON.stringify({ type: form.type, config: form.config })
+    const isStale = () => JSON.stringify({ type: form.type, config: form.config }) !== testedKey
     try {
       const result = await api.testStorageConfig({ type: form.type, config: JSON.stringify(form.config) })
+      if (isStale()) return
       formTestResult = result
       showToast(result.success ? 'Connection successful!' : `Connection failed: ${result.error || 'unknown error'}`, result.success ? 'success' : 'error')
     } catch (e) {
+      if (isStale()) return
       const msg = e?.message || 'Connection test failed'
       formTestResult = { success: false, error: msg }
       showToast(msg, 'error')

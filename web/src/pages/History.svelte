@@ -428,7 +428,7 @@
                       {#if Array.isArray(items)}
                         <p class="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Per-Item Results</p>
                         <div class="space-y-1.5">
-                          {#each items as item (item.name)}
+                          {#each items as item, i (i)}
                             <div class="flex items-center gap-2 text-sm">
                               {#if item.status === 'ok'}
                                 <svg aria-hidden="true" class="w-4 h-4 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>

@@ -745,6 +745,9 @@
           settings: i.settings,
           sort_order: i.sort_order,
         })),
+        // Mirror openEdit: derive the type selection from the copied items, else
+        // step 1 is invalid and the duplicated job can't advance/save (#dupbug).
+        selectedTypes: deriveTypesFromItems(data.items || []),
       }
       editing = null
       step = 2
@@ -761,6 +764,9 @@
   }
 
   async function saveJobName(job) {
+    // Enter and blur can both fire this; the first clears editingNameId so the
+    // second is a no-op (otherwise the rename PATCH fires twice on stale state).
+    if (editingNameId !== job.id) return
     const trimmed = editName.trim()
     editingNameId = null
     if (!trimmed || trimmed === job.name) return

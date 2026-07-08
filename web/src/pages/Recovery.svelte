@@ -172,7 +172,7 @@
           {#if expandedSteps.has(step.step) && step.items?.length > 0}
             <div class="px-5 pb-4 border-t border-border pt-3">
               <div class="space-y-2">
-                {#each step.items as item (item.name)}
+                {#each step.items as item, i (i)}
                   <div class="flex items-center justify-between px-3 py-2 bg-surface-3 rounded-lg">
                     <div class="flex items-center gap-2 min-w-0">
                       <div class="w-2 h-2 rounded-full shrink-0 {item.has_restore_point ? 'bg-success' : 'bg-warning'}"></div>
