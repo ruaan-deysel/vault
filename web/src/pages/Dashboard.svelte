@@ -300,6 +300,9 @@
   const totalItems = $derived(trackedContainers.length + trackedVMs.length + trackedFolders.length + trackedFlash.length)
   const totalProtected = $derived(protectedContainers.length + protectedVMs.length + protectedFolders.length + protectedFlash.length)
   const protectionPct = $derived(totalItems > 0 ? Math.round((totalProtected / totalItems) * 100) : 0)
+  // Collapse uses exact membership, not the rounded percentage: 199/200 rounds
+  // to 100% but still has an unprotected item that must stay visible.
+  const fullyProtected = $derived(totalItems > 0 && totalProtected === totalItems)
 
   // Collapse the Protection Status panel when everything is covered (issue #211
   // / E7). Below 100% the panel is always expanded so unprotected/pending items
@@ -313,7 +316,7 @@
       return v === null ? null : v === 'true'
     } catch { return null }
   }
-  const protectionExpanded = $derived(protectionPct < 100 ? true : (protectionExpandedPref ?? false))
+  const protectionExpanded = $derived(!fullyProtected ? true : (protectionExpandedPref ?? false))
   function toggleProtection() {
     const next = !protectionExpanded
     protectionExpandedPref = next
@@ -896,7 +899,7 @@
         </div>
         {#if hasUnprotectedItems}
           <button onclick={() => navigate('/jobs')} class="text-xs text-vault-text hover:text-vault-dark transition-colors font-medium">+ Add to Backup</button>
-        {:else if protectionPct === 100}
+        {:else if fullyProtected}
           <button onclick={toggleProtection} aria-expanded={protectionExpanded} class="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors">
             {protectionExpanded ? 'Hide items' : 'Show items'}
             <svg aria-hidden="true" class="w-4 h-4 transition-transform {protectionExpanded ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>

@@ -1335,8 +1335,8 @@
     if (expressMode) {
       if (canSaveExpress) saveJob()
     } else if (step < totalSteps) {
-      step++
-    } else {
+      if (canNext) step++
+    } else if (canSaveExpress) {
       saveJob()
     }
   }}>
