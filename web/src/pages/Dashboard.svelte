@@ -898,7 +898,7 @@
         <div class="flex items-center gap-2 min-w-0">
           <span class="w-6 h-6 rounded-md bg-vault/10 text-vault-text flex items-center justify-center shrink-0"><svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d={CATALOG.protection.icon}/></svg></span>
           <span class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Protection</span>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {protectionPct === 100 ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0 {fullyProtected ? 'bg-success/15 text-success' : protectionPct >= 50 ? 'bg-warning/15 text-warning' : 'bg-danger/15 text-danger'}">
             {totalProtected}/{totalItems} · {protectionPct}%
           </span>
         </div>
@@ -997,7 +997,7 @@
 {#snippet tRecovery()}
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" onclick={() => navigate('/recovery')} role="button" tabindex="0" onkeydown={(e) => cardKey(e, () => navigate('/recovery'))}>
     {@render mHead(CATALOG.recovery.icon, 'Recovery readiness')}
-    <p class="text-[26px] leading-none font-bold tabular-nums {protectionPct === 100 ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
+    <p class="text-[26px] leading-none font-bold tabular-nums {fullyProtected ? 'text-success' : protectionPct >= 50 ? 'text-warning' : 'text-danger'}">{protectionPct}%</p>
     <div class="h-1.5 bg-surface-4 rounded-full overflow-hidden mt-2.5"><div class="h-full {protectionBar}" style="width: {protectionPct}%"></div></div>
     <p class="text-[11px] text-text-dim mt-1.5 tabular-nums">{totalProtected}/{totalItems} items recoverable</p>
   </div>

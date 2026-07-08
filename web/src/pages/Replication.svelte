@@ -54,6 +54,32 @@
     form.config = JSON.stringify(cfg)
   }
 
+  // Secret keys inside the config blob that must never be wiped by an edit
+  // that left them blank or showed a redaction marker.
+  const SECRET_KEYS = ['api_key']
+  const REDACTED_RE = /^(?:•+|\*+|<?redacted>?)$/i
+
+  function isBlankOrRedacted(v) {
+    return v == null || v === '' || REDACTED_RE.test(String(v).trim())
+  }
+
+  // On edit-save, keep any secret the user didn't retype. If the field is
+  // blank or a redaction marker, restore the value we originally loaded (the
+  // GET response still carries the real key today). If the original is also
+  // masked (server-side redaction), omit the key so the backend can preserve
+  // the stored one rather than overwriting it with the marker.
+  function preserveSecrets(newConfigStr, originalConfigStr) {
+    let cfg, orig
+    try { cfg = JSON.parse(newConfigStr || '{}') } catch { cfg = {} }
+    try { orig = JSON.parse(originalConfigStr || '{}') } catch { orig = {} }
+    for (const key of SECRET_KEYS) {
+      if (!isBlankOrRedacted(cfg[key])) continue
+      if (!isBlankOrRedacted(orig[key])) cfg[key] = orig[key]
+      else delete cfg[key]
+    }
+    return JSON.stringify(cfg)
+  }
+
   function showToast(message, type = 'info') {
     toast = { message, type, key: toast.key + 1 }
   }
@@ -142,6 +168,7 @@
     try {
       const payload = { ...form }
       if (editing) {
+        payload.config = preserveSecrets(form.config, editing.config)
         await api.updateReplicationSource(editing.id, payload)
         showToast('Target updated', 'success')
       } else {
@@ -417,9 +444,13 @@
         <div>
           <label for="repl-apikey" class="block text-sm font-medium text-text mb-1">
             Remote Vault API Key
-            <span class="text-danger ml-1" aria-hidden="true">*</span>
+            {#if editing}
+              <span class="text-text-dim font-normal ml-1">— leave blank to keep current</span>
+            {:else}
+              <span class="text-danger ml-1" aria-hidden="true">*</span>
+            {/if}
           </label>
-          <input id="repl-apikey" type="password" autocomplete="off" required value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder="Enter the remote server's API key"
+          <input id="repl-apikey" type="password" autocomplete="off" required={!editing} value={cloudConfig.api_key || ''} oninput={(e) => updateCloudConfig('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : "Enter the remote server's API key"}
             class="w-full px-3 py-2 bg-surface-3 border border-border rounded-lg text-text text-sm placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault" />
           <div class="mt-2 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-start gap-2">
             <svg aria-hidden="true" class="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
