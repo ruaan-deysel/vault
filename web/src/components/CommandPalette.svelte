@@ -1,5 +1,5 @@
 <script>
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { navigate } from '../lib/router.svelte.js'
   import { formatDate } from '../lib/utils.js'
   import Toast from './Toast.svelte'
@@ -162,7 +162,17 @@
     return cmds
   })
 
-  let allCommands = $derived([...navCommands, ...dynamicCommands])
+  let allCommands = $derived.by(() => {
+    const cmds = [...navCommands, ...dynamicCommands]
+    if (!isReplicaMode()) return cmds
+    // Replica mode: hide daemon-only routes (Jobs/Restore nav + item &
+    // restore-point deep-links, which all go to /restore) and write actions
+    // (Run Job). Read-only entries (Test Storage, other pages) stay.
+    return cmds.filter(c =>
+      c.id !== 'nav-jobs' && c.id !== 'nav-restore' &&
+      c.category !== 'Items' && c.category !== 'Restore Points' && c.category !== 'Jobs'
+    )
+  })
 
   let filteredCommands = $derived.by(() => {
     if (!query.trim()) return allCommands

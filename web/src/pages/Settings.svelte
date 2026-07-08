@@ -54,8 +54,22 @@
     const el = document.getElementById(id)
     if (!el) return
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-    // Move focus so keyboard / screen-reader users land in the target section.
+    // Scroll ONLY the <main> scroll container. scrollIntoView() also scrolls the
+    // document — a programmatically-scrollable overflow:hidden box on tall pages
+    // — shoving the whole app up so the sticky Jump-to bar leaves the viewport
+    // and empty space shows below (the Diagnostics-jump bug). Offset by the
+    // sticky bar's height so the target isn't hidden under it.
+    const main = el.closest('main')
+    if (main) {
+      const bar = main.querySelector('.sticky')
+      const offset = bar ? bar.offsetHeight : 0
+      const top = main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - offset
+      main.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' })
+    } else {
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    }
+    // Move focus so keyboard / screen-reader users land in the target section
+    // (preventScroll so focusing can't re-scroll the document).
     el.setAttribute('tabindex', '-1')
     el.focus({ preventScroll: true })
   }

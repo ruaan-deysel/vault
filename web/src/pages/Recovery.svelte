@@ -112,7 +112,7 @@
               class="transition-all duration-1000" />
           </svg>
           <div class="absolute inset-0 flex items-center justify-center">
-            <span class="text-lg font-bold text-text">{readinessPct}%</span>
+            <span class="text-lg font-bold text-text">{totalItems === 0 ? '—' : `${readinessPct}%`}</span>
           </div>
         </div>
         <div>
