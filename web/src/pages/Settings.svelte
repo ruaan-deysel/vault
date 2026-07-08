@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/utils.js'
   import { copyText } from '../lib/clipboard.js'
   import { getStyle, setStyle, getMode, setMode } from '../lib/theme.svelte.js'
@@ -759,6 +759,13 @@
   {#if loading}
     <Spinner text="Loading settings..." />
   {:else}
+    {#if isReplicaMode()}
+      <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        <span>Read-only replica — secret and destructive actions are disabled on this instance.</span>
+      </div>
+    {/if}
+
     <!-- Tab Navigation -->
     <div class="flex gap-1 border-b border-border mb-6 overflow-x-auto">
       {#each tabs as tab (tab.id)}
@@ -1374,6 +1381,7 @@
             </div>
 
             <!-- Change passphrase -->
+            {#if !isReplicaMode()}
             <div class="px-5 py-4">
               {#if !changingPassphrase}
                 <div class="flex items-center justify-between gap-4">
@@ -1419,6 +1427,7 @@
                 {encSaving ? 'Removing…' : 'Disable encryption'}
               </button>
             </div>
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
@@ -1426,6 +1435,7 @@
                 <span class="text-sm font-medium text-text">No encryption passphrase set</span>
               </div>
               <p class="text-xs text-text-muted mb-4">Set a global passphrase to enable age encryption for backup jobs. Jobs must individually opt-in to encryption. Existing encrypted backups always require the original passphrase to restore.</p>
+              {#if !isReplicaMode()}
               <div class="space-y-3 max-w-sm">
                 <div>
                   <label for="enc-pass" class="block text-xs font-medium text-text-muted mb-1">Passphrase</label>
@@ -1448,6 +1458,7 @@
                   {encSaving ? 'Saving…' : 'Set Passphrase'}
                 </button>
               </div>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1493,6 +1504,7 @@
             </div>
 
             <!-- Rotate key -->
+            {#if !isReplicaMode()}
             <div class="px-5 py-4 flex items-center justify-between gap-4">
               <div>
                 <p class="text-sm font-medium text-text">Rotate API key</p>
@@ -1521,6 +1533,7 @@
                 </button>
               {/if}
             </div>
+            {/if}
           {:else}
             <div class="px-5 py-4">
               <div class="flex items-center gap-2 mb-3">
@@ -1528,10 +1541,12 @@
                 <span class="text-sm font-medium text-text">No API key configured</span>
               </div>
               <p class="text-xs text-text-muted mb-4">Generate an API key to protect the Vault API when it is exposed beyond localhost. API keys are required for third-party integrations (e.g. Home Assistant) and replication between Vault instances on different servers.</p>
+              {#if !isReplicaMode()}
               <button onclick={generateApiKey} disabled={apiKeyGenerating} class="px-4 py-2 text-sm font-semibold rounded-lg bg-vault text-white hover:bg-vault-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                 {#if apiKeyGenerating}<InlineSpinner />{/if}
                 {apiKeyGenerating ? 'Generating…' : 'Generate API Key'}
               </button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1852,7 +1867,7 @@
           </div>
           {/if}
         </div>
-        {#if databaseInfo.mode === 'hybrid'}
+        {#if databaseInfo.mode === 'hybrid' && !isReplicaMode()}
         <div class="px-5 py-4 border-t border-border">
           <span class="text-xs text-text-muted block mb-1.5">Custom save location <Tooltip text="Overrides where the persistent database snapshot is saved." /></span>
           <p class="text-xs text-text-dim mb-2">Choose where the persistent database copy is stored. Defaults to SSD cache. ZFS zpools are also available as high-performance locations.</p>

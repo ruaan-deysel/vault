@@ -355,19 +355,26 @@
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
 
-  // Concrete target path for the overwrite banner (issue #205 / E5).
-  // Custom destination → the chosen path. Original location → resolved per type:
-  // folder items store their path as the name; containers use the Unraid appdata
-  // default (no per-item source path is persisted). VMs restore disk images to
-  // libvirt, so there's no single path — fall back to the generic wording.
+  // Overwrite-banner target (issue #205 / E5). Only ever show a concrete path
+  // when it's actually known — otherwise say "original location" honestly.
+  //   { path }     → show this exact path
+  //   { original } → say the restore goes to its original location
+  //   null         → show no location clause (multi-item / indeterminate)
+  // folder/flash items store their filesystem path as the item name. Containers
+  // and VMs have no single persisted source path (appdata can live off
+  // /mnt/user; container/VM restores may touch several mounts), so we do NOT
+  // fabricate a /mnt/user/appdata path for them.
   let restoreTargetPath = $derived.by(() => {
-    if (showDestOverride) return restoreDestination.trim() || null
+    if (showDestOverride) {
+      const dest = restoreDestination.trim()
+      // Blank custom destination → backend falls back to original location.
+      return dest ? { path: dest } : { original: true }
+    }
     if (selectedCount !== 1) return null
     const item = selectedItemsArray[0]
     if (!item) return null
-    if (item.type === 'folder') return item.name
-    if (item.type === 'container') return `/mnt/user/appdata/${item.name}`
-    return null
+    if (item.type === 'folder' || item.type === 'flash') return { path: item.name }
+    return { original: true }
   })
   // The newest restore point is the recommended one to restore from.
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
@@ -812,8 +819,10 @@
           {:else}
             <strong class="text-text">{selectedCount} selected items</strong>
           {/if}
-          {#if restoreTargetPath}
-            at <code class="text-text font-mono break-all">{restoreTargetPath}</code>
+          {#if restoreTargetPath?.path}
+            at <code class="text-text font-mono break-all">{restoreTargetPath.path}</code>
+          {:else if restoreTargetPath?.original}
+            at its original location
           {/if}
           with the backup version.
         </p>

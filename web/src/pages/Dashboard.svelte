@@ -766,9 +766,10 @@
     {#if lastBackup}
       {@const ok = lastBackup.status === 'completed' || lastBackup.status === 'success'}
       {@const running = lastBackup.status === 'running'}
-      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : 'text-danger'}">
-        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : 'bg-danger'}"></span>
-        {ok ? 'Success' : running ? 'Running' : 'Failed'}
+      {@const partial = lastBackup.status === 'partial'}
+      <p class="text-base font-bold flex items-center gap-1.5 {ok ? 'text-success' : running ? 'text-info' : partial ? 'text-warning' : 'text-danger'}">
+        <span class="w-2 h-2 rounded-full shrink-0 {ok ? 'bg-success' : running ? 'bg-info' : partial ? 'bg-warning' : 'bg-danger'}"></span>
+        {ok ? 'Success' : running ? 'Running' : partial ? 'Partial' : 'Failed'}
       </p>
       <p class="text-[11px] text-text-dim mt-1 truncate">{lastBackup.jobName} · {relTime(lastBackup.started_at)}</p>
       {#if lastBackup.size_bytes || lastBackup.duration_seconds}
@@ -782,7 +783,7 @@
 
 {#snippet tThreeTwoOne()}
   {#if jobs.length > 0 && backupRuleOn}
-    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={setBackupRuleGoal} />
+    <ComplianceBadge {storage} {jobs} {replicationSources} ondismiss={isReplicaMode() ? undefined : dismissBackupRule} goalSetting={settings.backup_rule_goal || ''} onGoalChange={isReplicaMode() ? undefined : setBackupRuleGoal} />
   {:else}
     <div class="bg-surface-2 border border-border rounded-xl p-4 text-sm text-text-dim">3-2-1 rule unavailable — add a job to compute it.</div>
   {/if}
@@ -876,10 +877,12 @@
     <span class="text-sm text-text truncate">{name}</span>
     {#if type === 'flash'}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium shrink-0">USB boot drive</span>{/if}
     {#if isProtected}
-      <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {name}">
-        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-      </button>
-      <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      {#if !isReplicaMode()}
+        <button onclick={() => navigate(`/restore?type=${restoreType}&name=${encodeURIComponent(name)}`)} class="ml-auto opacity-40 hover:opacity-100 p-1 text-vault hover:bg-vault/10 rounded transition-all" title="Restore {name}">
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      {/if}
+      <svg aria-hidden="true" class="w-3.5 h-3.5 text-success shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
     {:else if pending}
       {@render pendingBadge()}
     {:else}
@@ -1035,15 +1038,19 @@
 {#snippet tQuickActions()}
   <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col">
     {@render mHead(CATALOG.quickactions.icon, 'Quick actions')}
-    <div class="flex flex-col gap-1.5 mt-auto">
-      <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
-        {runningAll ? 'Starting…' : 'Run all backups'}
-      </button>
-      <div class="flex gap-1.5">
-        <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
-        <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore</button>
+    {#if !isReplicaMode()}
+      <div class="flex flex-col gap-1.5 mt-auto">
+        <button onclick={runAll} disabled={runningAll || enabledJobs.length === 0} class="text-xs font-medium px-3 py-2 rounded-lg bg-vault text-white hover:bg-vault-dark disabled:opacity-50 transition-colors text-left">
+          {runningAll ? 'Starting…' : 'Run all backups'}
+        </button>
+        <div class="flex gap-1.5">
+          <button onclick={() => navigate('/jobs')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">New job</button>
+          <button onclick={() => navigate('/restore')} class="flex-1 text-xs font-medium px-3 py-2 rounded-lg bg-vault/10 text-vault hover:bg-vault/20 transition-colors">Restore</button>
+        </div>
       </div>
-    </div>
+    {:else}
+      <p class="text-xs text-text-dim mt-auto">Read-only replica</p>
+    {/if}
   </div>
 {/snippet}
 
@@ -1216,6 +1223,13 @@
       </div>
     {/if}
   </div>
+
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
 
   {#if loading}
     <Skeleton variant="stats" />

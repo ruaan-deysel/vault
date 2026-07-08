@@ -9,9 +9,21 @@ export function isReplicaMode() { return _isReplica }
 /** Set replica mode (called once during app init). */
 export function setReplicaMode(val) { _isReplica = val }
 
+const REQUEST_TIMEOUT_MS = 15000
+
 async function request(method, path, body = null) {
   const { url, options } = buildApiRequest(method, path, { body })
-  const res = await fetch(url, options)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  let res
+  try {
+    res = await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Request timed out', { cause: err })
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
   if (res.status === 204) return null
   // Read as text first so we don't throw on empty / non-JSON bodies
   // (e.g. 502 from an upstream proxy). Errors should surface a clean
@@ -21,6 +33,7 @@ async function request(method, path, body = null) {
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
+  if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`)
   return data
 }

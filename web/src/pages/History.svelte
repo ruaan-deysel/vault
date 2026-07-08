@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { SvelteSet, SvelteMap } from 'svelte/reactivity'
-  import { api } from '../lib/api.js'
+  import { api, isReplicaMode } from '../lib/api.js'
   import { relTime, formatBytes, formatSpeed, formatDurationFromDates, statusBadge, getFailureReason, formatDate } from '../lib/utils.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import Skeleton from '../components/Skeleton.svelte'
@@ -84,15 +84,24 @@
             .catch(() => ({ ...j, items: [] }))
         )
       )
+      let historyErrors = 0
       const promises = jobs.map(async (job) => {
         try {
           const runs = await api.getJobHistory(job.id, 200)
           return (runs || []).map(r => ({ ...r, jobName: job.name }))
-        } catch { return [] }
+        } catch { historyErrors++; return [] }
       })
       const results = await Promise.all(promises)
       allRuns = results.flat().sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-      autoExpandRecentFailures()
+      // Don't let a total run-history outage masquerade as a clean, empty
+      // history: if every job's fetch failed and we ended up with nothing,
+      // surface it as an error instead of the falsely-empty timeline.
+      if (allRuns.length === 0 && historyErrors > 0 && historyErrors === jobs.length) {
+        error = 'Failed to load run history'
+      } else {
+        error = ''
+        autoExpandRecentFailures()
+      }
     } catch (e) {
       error = e.message || 'Failed to load history'
     } finally {
@@ -182,6 +191,10 @@
         return { d: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', cls: 'text-success' }
       case 'failed': case 'error':
         return { d: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z', cls: 'text-danger' }
+      case 'partial': case 'pending':
+        // Partial/pending are neither clean success nor outright failure —
+        // amber warning triangle to match the amber status badge.
+        return { d: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', cls: 'text-warning' }
       case 'running':
         return { d: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', cls: 'text-info' }
       case 'skipped':
@@ -225,14 +238,23 @@
       <h1 class="text-2xl font-bold text-text">Backup & Restore History</h1>
       <p class="text-sm text-text-muted mt-1">View past backup and restore runs and their results</p>
     </div>
-    <div class="flex items-center gap-2">
-      <button onclick={() => confirmPurge = true} disabled={allRuns.length === 0}
-        class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all history">
-        <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-        Purge
-      </button>
-    </div>
+    {#if !isReplicaMode()}
+      <div class="flex items-center gap-2">
+        <button onclick={() => confirmPurge = true} disabled={allRuns.length === 0}
+          class="px-3 py-2 bg-surface-3 border border-border rounded-lg text-sm text-text-muted hover:text-danger hover:bg-danger/10 transition-colors flex items-center gap-1.5 disabled:opacity-40" title="Purge all history">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          Purge
+        </button>
+      </div>
+    {/if}
   </div>
+
+  {#if isReplicaMode()}
+    <div class="flex items-center gap-2.5 bg-surface-3 border border-border rounded-xl px-4 py-2.5 mb-4 text-sm text-text-muted">
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <span>Read-only replica — write actions are disabled on this instance.</span>
+    </div>
+  {/if}
 
   {#if loading}
     <Skeleton variant="table" count={5} />
