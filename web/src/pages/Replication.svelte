@@ -63,19 +63,20 @@
     return v == null || v === '' || REDACTED_RE.test(String(v).trim())
   }
 
-  // On edit-save, keep any secret the user didn't retype. If the field is
-  // blank or a redaction marker, restore the value we originally loaded (the
-  // GET response still carries the real key today). If the original is also
-  // masked (server-side redaction), omit the key so the backend can preserve
-  // the stored one rather than overwriting it with the marker.
+  // On edit-save, keep any secret the user didn't retype. If the field is blank
+  // or a redaction marker, restore the value we originally loaded (the GET
+  // response still carries the real key today). If the original is ALSO masked
+  // (i.e. server-side redaction was added and we never held the real value),
+  // fail fast: the backend overwrites the whole config blob, so omitting the key
+  // would wipe the stored secret — make the user re-enter it instead.
   function preserveSecrets(newConfigStr, originalConfigStr) {
     let cfg, orig
     try { cfg = JSON.parse(newConfigStr || '{}') } catch { cfg = {} }
     try { orig = JSON.parse(originalConfigStr || '{}') } catch { orig = {} }
     for (const key of SECRET_KEYS) {
       if (!isBlankOrRedacted(cfg[key])) continue
-      if (!isBlankOrRedacted(orig[key])) cfg[key] = orig[key]
-      else delete cfg[key]
+      if (!isBlankOrRedacted(orig[key])) { cfg[key] = orig[key]; continue }
+      throw new Error(`Please re-enter the ${key.replace(/_/g, ' ')} — it can't be preserved automatically.`)
     }
     return JSON.stringify(cfg)
   }
