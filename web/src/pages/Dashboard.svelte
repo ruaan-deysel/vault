@@ -486,11 +486,16 @@
   const replicationSummary = $derived.by(() => {
     const srcs = replicationSources || []
     if (!srcs.length) return null
-    const synced = srcs.filter(s => s.last_sync_status === 'success').length
-    const failed = srcs.filter(s => s.last_sync_status === 'error' || s.last_sync_status === 'failed').length
+    // Health is judged over enabled sources only — a disabled target is off by
+    // choice and must not block an "all synced" state. Mirror the Replication
+    // page's status buckets (success / error|failed / partial).
+    const enabled = srcs.filter(s => s.enabled)
+    const synced = enabled.filter(s => s.last_sync_status === 'success').length
+    const failed = enabled.filter(s => s.last_sync_status === 'error' || s.last_sync_status === 'failed').length
+    const partial = enabled.filter(s => s.last_sync_status === 'partial').length
     const times = srcs.map(s => s.last_sync_at).filter(Boolean).map(t => new Date(t).getTime()).filter(n => !isNaN(n))
     const lastSync = times.length ? new Date(Math.max(...times)).toISOString() : null
-    return { total: srcs.length, synced, failed, lastSync }
+    return { total: srcs.length, enabled: enabled.length, synced, failed, partial, lastSync }
   })
 
   // Trigger the lazy loaders whenever a tile that needs their data is present.
@@ -1244,11 +1249,12 @@
 
 {#snippet tReplicationStatus()}
   {#if replicationSummary}
-    {@const ok = replicationSummary.failed === 0 && replicationSummary.synced === replicationSummary.total}
+    {@const ok = replicationSummary.failed === 0 && replicationSummary.partial === 0 && replicationSummary.synced >= replicationSummary.enabled}
+    {@const caption = replicationSummary.failed > 0 ? `${replicationSummary.failed} failed` : replicationSummary.partial > 0 ? `${replicationSummary.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/replication')} onkeydown={(e) => cardKey(e, () => navigate('/replication'))}>
       {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
       <p class="text-[26px] leading-none font-bold tabular-nums {replicationSummary.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{replicationSummary.synced}<span class="text-base text-text-dim font-semibold">/{replicationSummary.total}</span></p>
-      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{replicationSummary.failed > 0 ? `${replicationSummary.failed} failed` : ok ? 'All offsite copies synced' : 'sync in progress'}{#if replicationSummary.lastSync} · last {relTime(replicationSummary.lastSync)}{/if}</p>
+      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if replicationSummary.lastSync} · last {relTime(replicationSummary.lastSync)}{/if}</p>
     </div>
   {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
 {/snippet}
