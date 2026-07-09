@@ -493,7 +493,9 @@
     const synced = enabled.filter(s => s.last_sync_status === 'success').length
     const failed = enabled.filter(s => s.last_sync_status === 'error' || s.last_sync_status === 'failed').length
     const partial = enabled.filter(s => s.last_sync_status === 'partial').length
-    const times = srcs.map(s => s.last_sync_at).filter(Boolean).map(t => new Date(t).getTime()).filter(n => !isNaN(n))
+    // Scope "last synced" to enabled sources too, so a disabled source's stale
+    // timestamp can't outrank the newest active replication.
+    const times = enabled.map(s => s.last_sync_at).filter(Boolean).map(t => new Date(t).getTime()).filter(n => !isNaN(n))
     const lastSync = times.length ? new Date(Math.max(...times)).toISOString() : null
     return { total: srcs.length, enabled: enabled.length, synced, failed, partial, lastSync }
   })
