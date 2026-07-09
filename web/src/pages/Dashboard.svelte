@@ -1249,12 +1249,21 @@
 
 {#snippet tReplicationStatus()}
   {#if replicationSummary}
-    {@const ok = replicationSummary.failed === 0 && replicationSummary.partial === 0 && replicationSummary.synced >= replicationSummary.enabled}
-    {@const caption = replicationSummary.failed > 0 ? `${replicationSummary.failed} failed` : replicationSummary.partial > 0 ? `${replicationSummary.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
+    {@const rs = replicationSummary}
+    {@const noneActive = rs.enabled === 0}
+    {@const ok = !noneActive && rs.failed === 0 && rs.partial === 0 && rs.synced === rs.enabled}
+    {@const caption = rs.failed > 0 ? `${rs.failed} failed` : rs.partial > 0 ? `${rs.partial} partial` : ok ? 'All offsite copies synced' : 'sync pending'}
     <div class="bg-surface-2 border border-border rounded-xl p-3.5 min-h-[104px] flex flex-col cursor-pointer hover:border-vault/40 transition-colors" role="button" tabindex="0" onclick={() => navigate('/replication')} onkeydown={(e) => cardKey(e, () => navigate('/replication'))}>
       {@render mHead(CATALOG.replicationStatus.icon, 'Replication status')}
-      <p class="text-[26px] leading-none font-bold tabular-nums {replicationSummary.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{replicationSummary.synced}<span class="text-base text-text-dim font-semibold">/{replicationSummary.total}</span></p>
-      <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if replicationSummary.lastSync} · last {relTime(replicationSummary.lastSync)}{/if}</p>
+      {#if noneActive}
+        <p class="text-base font-bold text-text-dim mt-auto">All sources disabled</p>
+        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{rs.total} configured</p>
+      {:else}
+        <!-- numerator and denominator both scoped to enabled sources, so the
+             count and the caption never disagree (e.g. "2/2 · All synced"). -->
+        <p class="text-[26px] leading-none font-bold tabular-nums {rs.failed > 0 ? 'text-danger' : ok ? 'text-success' : 'text-warning'}">{rs.synced}<span class="text-base text-text-dim font-semibold">/{rs.enabled}</span></p>
+        <p class="text-[11px] text-text-muted mt-1.5 tabular-nums">{caption}{#if rs.lastSync} · last {relTime(rs.lastSync)}{/if}</p>
+      {/if}
     </div>
   {:else}{@render metricCardEmpty(CATALOG.replicationStatus.icon, 'Replication status')}{/if}
 {/snippet}
