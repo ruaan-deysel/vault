@@ -39,18 +39,18 @@ Pick which items to include in this job. Vault discovers items automatically fro
 | **Folders**          | Any arbitrary path on your server (e.g. `/mnt/user/appdata`, `/boot/config`)                         |
 | **Plugins**          | Installed Unraid plugins                                                                             |
 
-**Notes on containers:**
+#### Notes on containers
 
 - Vault backs up the container image, its XML template, and all host paths mapped into the container.
 - Special files (Unix sockets, device nodes, named pipes) are skipped automatically — they cannot be archived and their presence does not fail the backup.
 - Tailscale-enabled containers are fully supported.
 - Bind-mounts that point at the host root (`/` → `/rootfs`, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.
 
-**Excluding container sub-paths:**
+#### Excluding container sub-paths
 
 You can list paths to exclude from a container backup (e.g. `/config/Library/Application Support/Plex Media Server/Cache` or `/config/Sonarr/MediaCover`). The job wizard exposes a free-text list per container, and Vault ships a `GET /api/v1/presets/exclusions` catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory `notes`/`warnings` (e.g. the Immich database caveat below), which the wizard shows inline.
 
-**Backing up Immich:**
+#### Backing up Immich
 
 Immich detection works for both the official `ghcr.io/immich-app/immich-server` image (media root mounted at `/data`) and the imagegenius fork `ghcr.io/imagegenius/immich` (`/photos`). The recommended exclusions cover both layouts:
 
@@ -67,13 +67,13 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 2. **Back up the Postgres container as its own Vault job.** Add the Immich Postgres container to a separate job; Vault stops it before archiving, giving a consistent copy of its data directory.
 3. **Dump via a pre-backup script.** Vault runs a job's **Pre-backup script** before stopping any containers, with `VAULT_JOB_NAME`, `VAULT_STATUS`, `VAULT_JOB_ID`, and `VAULT_RUN_ID` exported into its environment. A script can `docker exec` a `pg_dump` into the media root before the backup runs.
 
-**Notes on ZFS datasets:**
+#### Notes on ZFS datasets
 
 - Vault uses `zfs send` (full) and `zfs send -i` (incremental) under the hood and manages the snapshot lifecycle itself.
 - Restoration goes through `zfs receive`, preserving properties and child datasets.
 - The host `zfs` binary must be on `PATH` — true on any Unraid system with a ZFS pool.
 
-**Notes on folders:**
+#### Notes on folders
 
 - You can back up `/mnt/user/appdata` to get all container appdata in one shot without selecting individual containers.
 - Folder backups only wake the destination disk when writing — the source array is read sequentially.
@@ -109,7 +109,7 @@ The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automa
 
 #### Retention
 
-Retention controls how many restore points are kept before the oldest is deleted. Vault supports two modes; you can use either or both at once.
+Retention controls how many restore points are kept before the oldest is deleted. (A _restore point_ is one completed backup you can restore from.) Vault supports two modes; you can use either or both at once.
 
 **Mode 1 — Simple count**
 
@@ -230,6 +230,8 @@ The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and o
 
 ## Deduplication
 
+Deduplication stores each unique piece of data only once, so repeated data across runs and sources doesn't cost extra space — see [How Backup Works](../how-backup-works.md#deduplication) for the concept. The rest of this section covers the operational details.
+
 When you enable _Dedup_ on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at `<dest>/_vault/packs/` and `<dest>/_vault/index/`. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.
 
 Operational notes:
@@ -241,3 +243,11 @@ Operational notes:
 - Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.
 
 Imported backups (Storage → _Scan_ + _Import_) carry per-item dedup manifest IDs in their `manifest.json`, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.
+
+---
+
+## Next steps
+
+- Point your job at the right target: [Storage Destinations](storage-destinations.md)
+- Let Vault warn you when backups drift from normal: [Anomaly Detection](anomaly-detection.md)
+- Make sure you can recover if the server dies: [Disaster Recovery](disaster-recovery.md)

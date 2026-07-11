@@ -16,6 +16,13 @@ Vault is a backup and restore daemon for [Unraid](https://unraid.net/) servers. 
 
 See [How Backup Works](how-backup-works.md) for the concepts behind these features.
 
+## Finding your way
+
+- **New to Vault?** [Getting Started](getting-started.md) walks you from install to your first backup in about ten minutes.
+- **Setting things up?** The [Guides](guides/backup-jobs.md) are step-by-step recipes for jobs, storage, anomaly detection, and disaster recovery.
+- **Curious how it works?** [How Backup Works](how-backup-works.md) explains full/incremental chains, retention, encryption, and deduplication in plain language.
+- **Automating?** See the [REST API](api.md) and [MCP server](mcp.md).
+
 ## Integrations
 
 - **Home Assistant** — monitor jobs and trigger backups from your dashboard with the ready-to-use custom integration [`ha-vault`](https://github.com/ruaan-deysel/ha-vault).

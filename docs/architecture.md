@@ -1,5 +1,7 @@
 # Architecture
 
+This page is for developers and contributors — it describes Vault's internal design. If you just want to use Vault, start with [Getting Started](getting-started.md).
+
 Vault is a single Go binary that runs as a daemon on Unraid servers. It provides backup and restore for Docker containers, libvirt VMs, ZFS datasets, folders, and plugins.
 
 ## Layered Design

@@ -143,17 +143,11 @@ Each restore point also shows chain health annotations so you can see if a full 
 | Use the REST API                                  | [API Reference](api.md)                                        |
 | Use the MCP server                                | [MCP](mcp.md)                                                  |
 
-For a ready-to-use Home Assistant custom integration, see
-[ha-vault](https://github.com/ruaan-deysel/ha-vault).
-
-> **Disaster recovery:** Enable **Include in DB backup** on at least one storage
-> destination so your settings travel with your data (hand-copying `vault.db`
-> around is **not** a viable recovery path), and keep your backup password
-> somewhere safe off the server. To rebuild a lost dedup index from intact
-> storage, run `vault dedup repair --dest <id>`; if you restored `vault.key` to
-> a different location, pass `--key /path/to/vault.key`. For bringing Vault back
-> after a lost or rebuilt server, see the
-> [Disaster Recovery guide](guides/disaster-recovery.md).
+> **Prepare for disaster now:** Enable **Include in DB backup** on at least one
+> storage destination so your Vault settings travel with your data, and keep
+> your backup password somewhere safe off the server. If you ever lose the
+> server, the [Disaster Recovery guide](guides/disaster-recovery.md) walks you
+> through bringing everything back.
 
 ---
 
