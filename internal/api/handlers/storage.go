@@ -25,11 +25,20 @@ import (
 type StorageHandler struct {
 	db             *db.DB
 	runner         *runner.Runner
+	serverKey      []byte
+	schedReload    ScheduleReloader
 	onConfigChange ConfigChangeHook
 }
 
-func NewStorageHandler(database *db.DB, r *runner.Runner) *StorageHandler {
-	return &StorageHandler{db: database, runner: r}
+// NewStorageHandler creates a storage destinations handler. serverKey is
+// used to re-seal the encryption passphrase after a database restore.
+func NewStorageHandler(database *db.DB, r *runner.Runner, serverKey []byte) *StorageHandler {
+	return &StorageHandler{db: database, runner: r, serverKey: serverKey}
+}
+
+// SetScheduleReloadHook installs the scheduler reload used after a DB restore.
+func (h *StorageHandler) SetScheduleReloadHook(reload ScheduleReloader) {
+	h.schedReload = reload
 }
 
 // SetConfigChangeHook registers a function called after storage mutations
@@ -712,8 +721,37 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	_ = os.Remove(currentPath + "-wal")
 	_ = os.Remove(currentPath + "-shm")
 
+	// Reopen in-process so the daemon keeps working without a restart.
+	if err := h.db.Reopen(); err != nil {
+		log.Printf("RestoreDB: reopen after restore failed: %v", err)
+		respondError(w, http.StatusInternalServerError,
+			"database restored, but the daemon could not reload it — restart Vault from the plugin page to finish")
+		return
+	}
+
+	// The restored DB's sealed passphrase used the old server's vault.key.
+	// Re-seal with the current key so scheduled DB backups stay encrypted.
+	resealed := false
+	if req.Passphrase != "" && len(h.serverKey) > 0 {
+		if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" &&
+			crypto.VerifyPassphrase(req.Passphrase, hash) == nil {
+			if sealed, err := crypto.Seal(h.serverKey, req.Passphrase); err == nil {
+				if err := h.db.SetSetting("encryption_passphrase_sealed", sealed); err == nil {
+					resealed = true
+				}
+			}
+		}
+	}
+
+	if h.schedReload != nil {
+		if err := h.schedReload(); err != nil {
+			log.Printf("RestoreDB: scheduler reload after restore failed: %v", err)
+		}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{
-		"message": "Database restored successfully. Please restart the Vault daemon.",
+		"message":  "Database restored successfully.",
+		"resealed": resealed,
 	})
 }
 

@@ -49,7 +49,7 @@ func newFileBackedStorageHandler(t *testing.T) (*StorageHandler, int64, string) 
 	go hub.Run()
 	r := runner.New(d, hub, serverKey)
 
-	return NewStorageHandler(d, r), destID, storageDir
+	return NewStorageHandler(d, r, serverKey), destID, storageDir
 }
 
 func TestRestoreDB_InvalidID(t *testing.T) {
@@ -249,6 +249,59 @@ func TestRestoreDBEncrypted(t *testing.T) {
 	got, _ := restored.GetSetting("restore_marker", "")
 	if got != "from-backup" {
 		t.Fatalf("restore_marker = %q, want from-backup", got)
+	}
+}
+
+func TestRestoreDBReopensAndReseals(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	reloads := 0
+	h.SetScheduleReloadHook(func() error { reloads++; return nil })
+
+	const pass = "correct horse battery"
+	hash, err := crypto.HashPassphrase(pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapPath := writeEncryptedDBFixture(t, storageDir, pass, func(fd *db.DB) {
+		// The backup contains the hash plus a seal made with the OLD
+		// server's key — unusable on this "new" server.
+		if err := fd.SetSetting("encryption_passphrase_hash", hash); err != nil {
+			t.Fatal(err)
+		}
+		if err := fd.SetSetting("encryption_passphrase_sealed", "stale-old-server-seal"); err != nil {
+			t.Fatal(err)
+		}
+		if err := fd.SetSetting("restore_marker", "from-backup"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	body := fmt.Sprintf(`{"storage_path": %q, "passphrase": %q}`, snapPath, pass)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db", strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"resealed":true`) {
+		t.Fatalf("body = %s, want resealed:true", w.Body.String())
+	}
+
+	// Reopen happened in-process: the SAME handle sees restored data.
+	got, err := h.db.GetSetting("restore_marker", "")
+	if err != nil || got != "from-backup" {
+		t.Fatalf("marker via original handle = %q (err %v), want from-backup", got, err)
+	}
+
+	// Re-seal used the current server key (0xcd repeated — see helper).
+	sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", "")
+	serverKey := bytes.Repeat([]byte{0xcd}, 32)
+	unsealed, err := crypto.Unseal(serverKey, sealed)
+	if err != nil || unsealed != pass {
+		t.Fatalf("unsealed = %q (err %v), want %q", unsealed, err, pass)
+	}
+
+	if reloads != 1 {
+		t.Fatalf("scheduler reloads = %d, want 1", reloads)
 	}
 }
 

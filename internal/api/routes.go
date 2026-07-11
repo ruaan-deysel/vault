@@ -86,8 +86,14 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Get("/latest", releaseH.Latest)
 		})
 
-		storageH := handlers.NewStorageHandler(s.db, s.runner)
+		storageH := handlers.NewStorageHandler(s.db, s.runner, s.config.ServerKey)
 		s.storageHandler = storageH
+		storageH.SetScheduleReloadHook(func() error {
+			if s.schedReload != nil {
+				return s.schedReload()
+			}
+			return nil
+		})
 		r.Route("/storage", func(r chi.Router) {
 			// Storage CRUD is allowed in replica mode — replicas need
 			// storage destinations configured for replication targets.
