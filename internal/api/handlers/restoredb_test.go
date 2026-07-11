@@ -3,14 +3,17 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
@@ -179,3 +182,120 @@ func TestRestoreDB_SuccessSwapsDB(t *testing.T) {
 // keep io.Copy referenced (used inside RestoreDB) so the test file is
 // future-proof if direct imports shift.
 var _ = io.Copy
+
+// writeEncryptedDBFixture builds a valid vault DB, optionally customizes it
+// via prep, encrypts it with the passphrase, and writes it to
+// <storageDir>/_vault/vault.db.latest.age. Returns the storage-relative path.
+func writeEncryptedDBFixture(t *testing.T, storageDir, passphrase string, prep func(*db.DB)) string {
+	t.Helper()
+	srcPath := filepath.Join(t.TempDir(), "fixture.db")
+	fd, err := db.Open(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prep != nil {
+		prep(fd)
+	}
+	if err := fd.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	enc, err := crypto.EncryptReader(passphrase, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+	if err := os.MkdirAll(filepath.Join(storageDir, "_vault"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst, err := os.Create(filepath.Join(storageDir, "_vault", "vault.db.latest.age"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(dst, enc); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return "_vault/vault.db.latest.age"
+}
+
+func TestRestoreDBEncrypted(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	snapPath := writeEncryptedDBFixture(t, storageDir, "correct horse battery", func(fd *db.DB) {
+		if err := fd.SetSetting("restore_marker", "from-backup"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	body := fmt.Sprintf(`{"storage_path": %q, "passphrase": "correct horse battery"}`, snapPath)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db", strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	// The handler closed h.db before swapping; open the swapped file directly.
+	restored, err := db.Open(h.db.Path())
+	if err != nil {
+		t.Fatalf("opening restored DB: %v", err)
+	}
+	defer restored.Close()
+	got, _ := restored.GetSetting("restore_marker", "")
+	if got != "from-backup" {
+		t.Fatalf("restore_marker = %q, want from-backup", got)
+	}
+}
+
+func TestRestoreDBWrongPassphrase(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	snapPath := writeEncryptedDBFixture(t, storageDir, "right-passphrase", nil)
+
+	body := fmt.Sprintf(`{"storage_path": %q, "passphrase": "wrong-passphrase"}`, snapPath)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db", strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "incorrect passphrase") {
+		t.Fatalf("body = %s, want mention of incorrect passphrase", w.Body.String())
+	}
+	if err := h.db.Ping(); err != nil {
+		t.Fatalf("working DB unusable after failed restore: %v", err)
+	}
+}
+
+func TestRestoreDBEncryptedNeedsPassphrase(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	snapPath := writeEncryptedDBFixture(t, storageDir, "any", nil)
+
+	body := fmt.Sprintf(`{"storage_path": %q}`, snapPath)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db", strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRestoreDBVerifyOnly(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	snapPath := writeEncryptedDBFixture(t, storageDir, "verify-me", nil)
+
+	body := fmt.Sprintf(`{"storage_path": %q, "passphrase": "verify-me", "verify_only": true}`, snapPath)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db", strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"valid":true`) {
+		t.Fatalf("body = %s, want valid:true", w.Body.String())
+	}
+	if err := h.db.Ping(); err != nil {
+		t.Fatalf("working DB closed by verify_only: %v", err)
+	}
+}

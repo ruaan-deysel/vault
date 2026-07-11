@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/storage"
@@ -519,6 +520,8 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		StoragePath string `json:"storage_path"`
+		Passphrase  string `json:"passphrase"`
+		VerifyOnly  bool   `json:"verify_only"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
@@ -540,13 +543,57 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbPath := strings.TrimPrefix(cleanedStoragePath, "/") + "/vault.db"
+	dbPath := strings.TrimPrefix(cleanedStoragePath, "/")
+	if !strings.HasSuffix(dbPath, ".db") && !strings.HasSuffix(dbPath, ".age") {
+		// Legacy form: storage_path is a directory containing a plaintext vault.db.
+		dbPath += "/vault.db"
+	}
+	encrypted := strings.HasSuffix(dbPath, ".age")
+
+	if encrypted && req.Passphrase == "" {
+		respondError(w, http.StatusBadRequest, "this backup is encrypted — enter your backup password")
+		return
+	}
+	// When the current DB already has a passphrase hash (restoring over a
+	// live config), check the password before downloading. On a fresh
+	// install there is no hash — the decryption attempt below is the check.
+	if req.Passphrase != "" {
+		if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
+			if crypto.VerifyPassphrase(req.Passphrase, hash) != nil {
+				respondError(w, http.StatusBadRequest, "incorrect passphrase — this is the encryption password from Settings → Encryption")
+				return
+			}
+		}
+	}
+
 	rc, err := adapter.Read(dbPath)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "vault.db not found at "+dbPath)
+		respondError(w, http.StatusNotFound, "no Vault backup found at "+dbPath+" — look for a folder named _vault on your backup storage")
 		return
 	}
 	defer rc.Close()
+
+	var src io.Reader = rc
+	if encrypted {
+		dec, derr := crypto.DecryptReader(req.Passphrase, rc)
+		if derr != nil {
+			if crypto.IsWrongPassphrase(derr) {
+				respondError(w, http.StatusBadRequest, "incorrect passphrase — check for typos; this is the encryption password you chose in Settings → Encryption on your old server")
+				return
+			}
+			respondInternalError(w, derr)
+			return
+		}
+		defer dec.Close()
+		src = dec
+	}
+
+	if req.VerifyOnly {
+		// The age header was parsed (and the passphrase checked) when the
+		// decrypt reader was constructed — nothing more to do.
+		respondJSON(w, http.StatusOK, map[string]any{"valid": true})
+		return
+	}
 
 	// Write to a temporary file first.
 	tmpFile, err := os.CreateTemp("", "vault-restore-*.db")
@@ -556,7 +603,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpPath := tmpFile.Name()
 
-	if _, err := io.Copy(tmpFile, rc); err != nil {
+	if _, err := io.Copy(tmpFile, src); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
 		respondInternalError(w, err)
