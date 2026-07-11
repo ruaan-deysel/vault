@@ -236,6 +236,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
 		r.Get("/recovery/plan", recoveryH.GetPlan)
+		r.Get("/recovery/path-audit", recoveryH.PathAudit)
+		r.Post("/recovery/path-remap", recoveryH.PathRemap)
 
 		// MCP is only available in daemon mode.
 		if !s.config.ReadOnly {
