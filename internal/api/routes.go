@@ -249,6 +249,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
 		s.recoveryHandler = recoveryH
+		// Share the restore lifecycle lock: a path remap must never commit
+		// while restore-db is swapping the database file out from under it.
+		recoveryH.SetMaintenanceLock(storageH.MaintenanceLock())
 		r.Get("/recovery/plan", recoveryH.GetPlan)
 		r.Get("/recovery/path-audit", recoveryH.PathAudit)
 		if s.config.ReadOnly {

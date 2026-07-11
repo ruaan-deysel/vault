@@ -109,17 +109,19 @@ the restore points that came with the database.
 If you cannot reach the web console, you can restore the database over the
 API from any machine that can reach the daemon:
 
-```
-export VAULT_BACKUP_PASSWORD='your backup password'   # or read it from a file
+```sh
+read -rs VAULT_BACKUP_PASSWORD   # prompts without echoing or recording history
 curl -X POST http://SERVER:24085/api/v1/storage/ID/restore-db \
   -H 'Content-Type: application/json' \
   -d @- <<EOF
 {"storage_path": "_vault/vault.db.latest.age", "passphrase": "$VAULT_BACKUP_PASSWORD"}
 EOF
+unset VAULT_BACKUP_PASSWORD
 ```
 
-Passing the passphrase via an environment variable (or a JSON file with
-`-d @restore.json`) keeps it out of your shell history and the process list.
+`read -rs` prompts for the password without echoing it and keeps it out of
+your shell history and the process list (a JSON file with `-d @restore.json`
+works too).
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
 

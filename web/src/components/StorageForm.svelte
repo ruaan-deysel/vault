@@ -23,7 +23,9 @@
 
   function initForm(dest) {
     if (!dest) return defaultForm()
-    const cfg = parseConfig(dest.config)
+    // Deep-clone: parseConfig returns object inputs as-is, and form bindings
+    // must never mutate the caller's destination (cancel would leak edits).
+    const cfg = JSON.parse(JSON.stringify(parseConfig(dest.config)))
     // Migrate legacy "path" → "base_path" for SFTP/SMB configs.
     if ((dest.type === 'sftp' || dest.type === 'smb') && cfg.base_path === undefined) {
       cfg.base_path = cfg.path ?? ''
@@ -80,6 +82,8 @@
   }
 
   function applyType(nextType) {
+    // Re-clicking the selected type must not wipe entered credentials.
+    if (nextType === form.type) return
     const defaults = {
       local: { path: '' },
       sftp: { host: '', port: 22, user: '', password: '', base_path: '', bandwidth_limit_mbps: 0 },
@@ -494,7 +498,7 @@
       {/if}
     </button>
     <div class="flex gap-3">
-      <button type="button" onclick={() => oncancel()} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors">
+      <button type="button" onclick={() => oncancel()} disabled={saving} class="px-4 py-2 text-sm font-medium text-text-muted hover:text-text bg-surface-3 hover:bg-surface-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
         Cancel
       </button>
       <button type="submit" disabled={saving || formTesting} class="px-4 py-2 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed">

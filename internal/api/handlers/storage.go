@@ -32,9 +32,17 @@ type StorageHandler struct {
 	onConfigChange ConfigChangeHook
 
 	// restoreMu serializes RestoreDB: the close→swap→reopen sequence must
-	// never run concurrently. A field (not package-level) so tests with
-	// separate handlers don't contend.
+	// never run concurrently. A field (not package-level) so this package's
+	// parallel tests with separate handlers don't contend. Production shares
+	// this instance with RecoveryHandler.PathRemap via MaintenanceLock so a
+	// remap can never commit mid-swap and be lost.
 	restoreMu sync.Mutex
+}
+
+// MaintenanceLock exposes the restore lifecycle lock so other handlers
+// (PathRemap) can coordinate with in-flight database restores.
+func (h *StorageHandler) MaintenanceLock() *sync.Mutex {
+	return &h.restoreMu
 }
 
 // NewStorageHandler creates a storage destinations handler. serverKey is
@@ -589,7 +597,14 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 
 	rc, err := adapter.Read(dbPath)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "no Vault backup found at "+dbPath+" — look for a folder named _vault on your backup storage")
+		// Only a genuine not-found reads as "no backup" — a transport or
+		// auth failure must not send a DR user hunting for a missing file.
+		if storage.IsNotExist(err) {
+			respondError(w, http.StatusNotFound, "no Vault backup found at "+dbPath+" — look for a folder named _vault on your backup storage")
+			return
+		}
+		log.Printf("RestoreDB: reading %s from destination %d: %v", dbPath, id, err) // #nosec G706 //nolint:gosec // id is int64 from URL param, err is from an admin-configured adapter
+		respondError(w, http.StatusBadGateway, "could not read your backup storage — check the connection and try again")
 		return
 	}
 	defer rc.Close()

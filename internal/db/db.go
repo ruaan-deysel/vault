@@ -129,8 +129,8 @@ func Open(path string) (*DB, error) {
 // hub) shares this *DB pointer, so after Reopen they all see the new
 // database. Used after RestoreDB swaps the file on disk, so the daemon
 // keeps running without a restart.
-// ponytail: concurrent queries during the Close→Reopen window can still see
-// transient "database is closed" errors — an availability blip during
+// Known limitation: concurrent queries during the Close→Reopen window can
+// see transient "database is closed" errors — an availability blip during
 // deliberate maintenance, not corruption and not a data race (the swap is
 // atomic). Fallback if this misbehaves in practice: a restart endpoint.
 func (d *DB) Reopen() error {

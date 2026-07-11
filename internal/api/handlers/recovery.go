@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
@@ -17,11 +20,22 @@ type RecoveryHandler struct {
 	db             *db.DB
 	version        string
 	onConfigChange ConfigChangeHook
+
+	// maintMu guards PathRemap's writes against racing a database restore
+	// (a remap committing mid-swap would be silently lost). Defaults to an
+	// own lock; production shares StorageHandler's via SetMaintenanceLock.
+	maintMu *sync.Mutex
 }
 
 // NewRecoveryHandler creates a RecoveryHandler.
 func NewRecoveryHandler(database *db.DB, version string) *RecoveryHandler {
-	return &RecoveryHandler{db: database, version: version}
+	return &RecoveryHandler{db: database, version: version, maintMu: &sync.Mutex{}}
+}
+
+// SetMaintenanceLock shares StorageHandler's restore lifecycle lock so
+// PathRemap never writes while a database restore swaps the file.
+func (h *RecoveryHandler) SetMaintenanceLock(mu *sync.Mutex) {
+	h.maintMu = mu
 }
 
 // SetConfigChangeHook registers a function called after path remaps mutate
@@ -229,6 +243,12 @@ type pathAuditEntry struct {
 }
 
 func dirExists(p string) bool {
+	// Only absolute, traversal-free paths are ever stat'ed. Mount points and
+	// share paths are always absolute, so this rejects nothing legitimate —
+	// and it is the sanitization barrier for remap's user-provided new_path.
+	if !filepath.IsAbs(p) || strings.Contains(p, "..") {
+		return false
+	}
 	info, err := os.Stat(p)
 	return err == nil && info.IsDir()
 }
@@ -317,6 +337,13 @@ func (h *RecoveryHandler) PathRemap(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// A remap committing while RestoreDB swaps the database file would be
+	// silently lost — share the maintenance lock instead of racing it.
+	if !h.maintMu.TryLock() {
+		respondError(w, http.StatusConflict, "a database restore is in progress — try again when it finishes")
+		return
+	}
+	defer h.maintMu.Unlock()
 	type remapResult struct {
 		Kind    string `json:"kind"`
 		ID      int64  `json:"id"`

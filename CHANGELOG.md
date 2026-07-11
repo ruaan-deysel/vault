@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Path check after recovery**: `GET /api/v1/recovery/path-audit` flags folder and local-storage paths from the restored config that don't exist on this server, and `POST /api/v1/recovery/path-remap` updates them in place — the exact "my array and shares are different now" pain from #220.
 - **Disaster Recovery guide** in the docs — including why hand-copying `vault.db` to the flash drive doesn't work and what to do instead.
 
+### Fixed
+
+- **Vault's own database now reliably runs in WAL mode with a 30-second lock timeout.** The SQLite driver was silently ignoring the connection options that were meant to set these, so freshly created databases ran in rollback-journal mode with no busy timeout — slower under concurrent access and more prone to "database is locked" errors. All connection settings are now applied in a form the driver understands, and Vault logs a warning if WAL is unavailable on the filesystem.
+
 ### Changed
 
 - **License changed from MIT to AGPL-3.0.** Vault is now distributed under the GNU Affero General Public License v3.0 to keep derivative and network-served modifications open source.
