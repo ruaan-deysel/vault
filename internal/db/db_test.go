@@ -223,3 +223,43 @@ func columnExists(t *testing.T, d *DB, table, column string) bool {
 	}
 	return false
 }
+
+func TestConnectionPragmas(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var busy int
+	if err := d.QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil {
+		t.Fatal(err)
+	}
+	if busy != 30000 {
+		t.Errorf("busy_timeout = %d, want 30000", busy)
+	}
+
+	var mode string
+	if err := d.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal_mode = %q, want wal (fresh DBs must not run in rollback mode)", mode)
+	}
+
+	var fk int
+	if err := d.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
+		t.Fatal(err)
+	}
+	if fk != 1 {
+		t.Errorf("foreign_keys = %d, want 1", fk)
+	}
+
+	var jsl int
+	if err := d.QueryRow("PRAGMA journal_size_limit").Scan(&jsl); err != nil {
+		t.Fatal(err)
+	}
+	if jsl != 67108864 {
+		t.Errorf("journal_size_limit = %d, want 67108864", jsl)
+	}
+}

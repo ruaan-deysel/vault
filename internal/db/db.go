@@ -71,7 +71,16 @@ func (d *DB) Path() string {
 }
 
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=30000&_txlock=immediate")
+	// modernc.org/sqlite only understands the _pragma=name(value) DSN form
+	// (plus _txlock/_time_format). The old _journal_mode=/_busy_timeout=
+	// params were silently ignored, leaving fresh databases in rollback
+	// journal mode with no busy timeout. DSN pragmas apply to every
+	// connection database/sql opens, unlike a one-off Exec.
+	sqlDB, err := sql.Open("sqlite", path+"?_txlock=immediate"+
+		"&_pragma=busy_timeout(30000)"+
+		"&_pragma=journal_mode(WAL)"+
+		"&_pragma=foreign_keys(ON)"+
+		"&_pragma=journal_size_limit(67108864)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -85,18 +94,8 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	// Bound the WAL file size between checkpoints so a write burst does
-	// not leave a permanently-large WAL on disk. 64 MiB is comfortable
-	// for Vault's write rate.
-	if _, err := sqlDB.Exec(`PRAGMA journal_size_limit = 67108864`); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("setting journal_size_limit: %w", err)
-	}
+	// foreign_keys and journal_size_limit (64 MiB WAL cap) are set via DSN
+	// pragmas above so they survive connection recreation by database/sql.
 
 	if _, err := sqlDB.Exec(schema); err != nil {
 		_ = sqlDB.Close()
