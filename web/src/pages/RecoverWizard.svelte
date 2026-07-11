@@ -32,6 +32,13 @@
   let toast = $state({ message: '', type: 'info', key: 0 })
   const showToast = (message, type = 'info') => (toast = { message, type, key: toast.key + 1 })
 
+  // What this Vault holds BEFORE the wizard touches anything (step 1 creates
+  // a destination) — the restore confirmation must not claim the settings are
+  // "(empty)" when the wizard was opened on an already-configured Vault.
+  let current = $state({ jobs: 0, storage: 0 })
+  Promise.all([api.listJobs().catch(() => []), api.listStorage().catch(() => [])])
+    .then(([jobs, storage]) => (current = { jobs: jobs.length, storage: storage.length }))
+
   const latestEncrypted = $derived(backups.length > 0 && backups[0].encrypted)
   const brokenEntries = $derived(audit ? audit.entries.filter((e) => !e.exists) : [])
   const remapError = (e) =>
@@ -255,7 +262,13 @@
       {#if confirmRestore}
         <div class="bg-warning/10 border border-warning/30 rounded-lg p-4 mt-4">
           <p class="text-sm text-text mb-3">
-            This replaces this Vault's current (empty) settings with the backup
+            {#if current.jobs > 0 || current.storage > 0}
+              This replaces this Vault's current settings —
+              <strong>including its {current.jobs} job(s) and {current.storage} storage destination(s)</strong> —
+            {:else}
+              This replaces this Vault's current (empty) settings
+            {/if}
+            with the backup
             {selected.is_latest ? 'from your most recent backup' : `from ${new Date(selected.timestamp).toLocaleString()}`}.
             Your backed-up files on storage are not touched.
           </p>
