@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -257,6 +258,7 @@ func (h *RecoveryHandler) PathAudit(w http.ResponseWriter, _ *http.Request) {
 	for _, j := range jobs {
 		items, ierr := h.db.GetJobItems(j.ID)
 		if ierr != nil {
+			log.Printf("path-audit: skipping job %d: %v", j.ID, ierr)
 			continue
 		}
 		for _, it := range items {
@@ -332,6 +334,9 @@ func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) 
 	if err != nil {
 		return false, "storage destination not found"
 	}
+	if dest.Type != "local" {
+		return false, "only local destinations can be remapped"
+	}
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(dest.Config), &cfg); err != nil {
 		return false, "could not read destination config"
@@ -357,9 +362,12 @@ func (h *RecoveryHandler) remapJobItem(jobID, itemID int64, newPath string) (boo
 		if it.ID != itemID {
 			continue
 		}
+		if it.ItemType != "folder" {
+			return false, "only folder items can be remapped"
+		}
 		var s map[string]any
 		if err := json.Unmarshal([]byte(it.Settings), &s); err != nil {
-			s = map[string]any{}
+			return false, "could not read item settings"
 		}
 		s["path"] = newPath
 		raw, err := json.Marshal(s)

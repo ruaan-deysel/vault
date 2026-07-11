@@ -499,4 +499,87 @@ func TestPathRemap(t *testing.T) {
 	}
 }
 
+func TestPathRemapGuards(t *testing.T) {
+	d := newTestDB(t)
+	h := NewRecoveryHandler(d, "v1.0.0")
+
+	sftpID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "guard-sftp", Type: "sftp", Config: `{"path":"/remote"}`,
+	})
+	if err != nil {
+		t.Fatalf("create sftp dest: %v", err)
+	}
+	localID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "guard-local", Type: "local", Config: `{"path":"/mnt/gone"}`,
+	})
+	if err != nil {
+		t.Fatalf("create local dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{
+		Name: "guard-job", Enabled: true, StorageDestID: localID,
+		BackupTypeChain: "full", Schedule: "@daily",
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	containerItemID, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "container", ItemName: "plex", ItemID: "plex",
+	})
+	if err != nil {
+		t.Fatalf("add container item: %v", err)
+	}
+	corruptItemID, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "folder", ItemName: "corrupt", ItemID: "corrupt",
+		Settings: `{not json`,
+	})
+	if err != nil {
+		t.Fatalf("add corrupt item: %v", err)
+	}
+
+	newDir := t.TempDir()
+	body := []byte(`{"updates":[
+		{"kind":"storage","id":` + itoa(sftpID) + `,"new_path":"` + newDir + `"},
+		{"kind":"job_item","id":` + itoa(containerItemID) + `,"job_id":` + itoa(jobID) + `,"new_path":"` + newDir + `"},
+		{"kind":"job_item","id":` + itoa(corruptItemID) + `,"job_id":` + itoa(jobID) + `,"new_path":"` + newDir + `"}
+	]}`)
+
+	w := httptest.NewRecorder()
+	h.PathRemap(w, newReq(http.MethodPost, "/api/v1/recovery/path-remap", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Results []struct {
+			Kind    string `json:"kind"`
+			ID      int64  `json:"id"`
+			Applied bool   `json:"applied"`
+			Error   string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Results) != 3 {
+		t.Fatalf("results = %d, want 3: %+v", len(resp.Results), resp.Results)
+	}
+	if resp.Results[0].Applied || resp.Results[0].Error != "only local destinations can be remapped" {
+		t.Errorf("non-local storage remap: %+v", resp.Results[0])
+	}
+	if resp.Results[1].Applied || resp.Results[1].Error != "only folder items can be remapped" {
+		t.Errorf("non-folder item remap: %+v", resp.Results[1])
+	}
+	if resp.Results[2].Applied || resp.Results[2].Error != "could not read item settings" {
+		t.Errorf("corrupt-settings item remap: %+v", resp.Results[2])
+	}
+
+	// Nothing was mutated.
+	dest, err := d.GetStorageDestination(sftpID)
+	if err != nil {
+		t.Fatalf("get sftp dest: %v", err)
+	}
+	if dest.Config != `{"path":"/remote"}` {
+		t.Errorf("sftp config mutated: %s", dest.Config)
+	}
+}
+
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }

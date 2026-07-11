@@ -563,17 +563,9 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "this backup is encrypted — enter your backup password")
 		return
 	}
-	// When the current DB already has a passphrase hash (restoring over a
-	// live config), check the password before downloading. On a fresh
-	// install there is no hash — the decryption attempt below is the check.
-	if req.Passphrase != "" {
-		if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" {
-			if crypto.VerifyPassphrase(req.Passphrase, hash) != nil {
-				respondError(w, http.StatusBadRequest, "incorrect passphrase — this is the encryption password from Settings → Encryption")
-				return
-			}
-		}
-	}
+	// No pre-check against the CURRENT db's passphrase hash here: the age
+	// header parse in DecryptReader below is the authoritative check, and a
+	// pre-check would hard-lock restores after a passphrase rotation.
 
 	rc, err := adapter.Read(dbPath)
 	if err != nil {
