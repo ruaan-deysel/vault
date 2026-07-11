@@ -149,7 +149,9 @@ For a ready-to-use Home Assistant custom integration, see
 > **Disaster recovery:** Back up **both** `vault.db` and `vault.key` (siblings in
 > `/boot/config/plugins/vault/`). To rebuild a lost dedup index from intact storage,
 > run `vault dedup repair --dest <id>`. If you restored `vault.key` to a different
-> location, pass `--key /path/to/vault.key`.
+> location, pass `--key /path/to/vault.key`. For bringing Vault back after a lost
+> or rebuilt server — including why hand-copying `vault.db` to the flash drive
+> doesn't work — see the [Disaster Recovery guide](guides/disaster-recovery.md).
 
 ---
 

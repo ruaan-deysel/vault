@@ -47,6 +47,7 @@ nav:
       - Backup Jobs: guides/backup-jobs.md
       - Storage Destinations: guides/storage-destinations.md
       - Anomaly Detection: guides/anomaly-detection.md
+      - Disaster Recovery: guides/disaster-recovery.md
   - Settings Reference:
       - App / Daemon Settings: reference/app-settings.md
       - Job Configuration: reference/job-config.md
