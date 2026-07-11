@@ -1,19 +1,69 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 )
 
 var ErrNotFound = errors.New("not found")
 
+// DB wraps *sql.DB behind an atomic pointer so Reopen can swap the handle
+// in place without a data race against concurrent queries. All query
+// methods forward to the current handle.
 type DB struct {
-	*sql.DB
-	path string
+	handle atomic.Pointer[sql.DB]
+	path   string
 }
+
+// sql returns the current underlying handle.
+func (d *DB) sql() *sql.DB { return d.handle.Load() }
+
+// Thin forwarders for the *sql.DB methods the codebase calls. They keep
+// every existing call site compiling unchanged now that the handle is no
+// longer an embedded field.
+
+func (d *DB) Exec(query string, args ...any) (sql.Result, error) {
+	return d.sql().Exec(query, args...)
+}
+
+func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return d.sql().ExecContext(ctx, query, args...)
+}
+
+func (d *DB) Query(query string, args ...any) (*sql.Rows, error) {
+	return d.sql().Query(query, args...)
+}
+
+func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return d.sql().QueryContext(ctx, query, args...)
+}
+
+func (d *DB) QueryRow(query string, args ...any) *sql.Row {
+	return d.sql().QueryRow(query, args...)
+}
+
+func (d *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return d.sql().QueryRowContext(ctx, query, args...)
+}
+
+func (d *DB) Begin() (*sql.Tx, error) { return d.sql().Begin() }
+
+func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	return d.sql().BeginTx(ctx, opts)
+}
+
+func (d *DB) Ping() error { return d.sql().Ping() }
+
+func (d *DB) PingContext(ctx context.Context) error { return d.sql().PingContext(ctx) }
+
+func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) { return d.sql().Conn(ctx) }
+
+func (d *DB) Close() error { return d.sql().Close() }
 
 // Path returns the filesystem path of the database.
 func (d *DB) Path() string {
@@ -58,7 +108,8 @@ func Open(path string) (*DB, error) {
 		_, _ = sqlDB.Exec(m) //nolint:errcheck // duplicate column errors expected
 	}
 
-	d := &DB{DB: sqlDB, path: path}
+	d := &DB{path: path}
+	d.handle.Store(sqlDB)
 	if err := d.insertDefaultSettings(); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("seed default settings: %w", err)
@@ -66,20 +117,25 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
-// Reopen re-opens the database at the same path and swaps the embedded
-// handle in place. Every component (server, scheduler, runner, hub) shares
-// this *DB pointer, so after Reopen they all see the new database. Used
-// after RestoreDB swaps the file on disk, so the daemon keeps running
-// without a restart.
-// ponytail: the Close→Reopen window can surface "database is closed" errors
-// to concurrent queries — an availability blip during deliberate maintenance,
-// not corruption. Fallback if this misbehaves in practice: a restart endpoint.
+// Reopen re-opens the database at the same path and atomically swaps the
+// underlying handle in place. Every component (server, scheduler, runner,
+// hub) shares this *DB pointer, so after Reopen they all see the new
+// database. Used after RestoreDB swaps the file on disk, so the daemon
+// keeps running without a restart.
+// ponytail: concurrent queries during the Close→Reopen window can still see
+// transient "database is closed" errors — an availability blip during
+// deliberate maintenance, not corruption and not a data race (the swap is
+// atomic). Fallback if this misbehaves in practice: a restart endpoint.
 func (d *DB) Reopen() error {
 	nd, err := Open(d.path)
 	if err != nil {
 		return fmt.Errorf("reopening database: %w", err)
 	}
-	d.DB = nd.DB
+	// Close the old handle; sql.DB.Close is idempotent, so this is safe
+	// even when the caller (restore flow) already closed it.
+	if old := d.handle.Swap(nd.handle.Load()); old != nil {
+		_ = old.Close()
+	}
 	return nil
 }
 

@@ -78,22 +78,46 @@ func TestDedupSchemaMigration(t *testing.T) {
 	}
 }
 
-// TestReopen verifies that Reopen() swaps the embedded *sql.DB handle in
-// place after Close(), so the same *DB pointer works again and sees data
-// written before the close. This mirrors the restore-db handler flow: close,
-// swap the file on disk, reopen — all without restarting the daemon.
+// TestReopen mirrors the real restore-db flow: close the handle, swap a
+// DIFFERENT valid database file over the same path (removing stale WAL/SHM
+// sidecars), then Reopen and verify the same *DB pointer sees the NEW
+// file's data — all without restarting the daemon.
 func TestReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "vault.db")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.db")
 	d, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetSetting("reopen_marker", "1"); err != nil {
+	if err := d.SetSetting("reopen_marker", "old"); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
+
+	// Build a second, different database and swap it over the same path,
+	// as the restore handler does after downloading a snapshot.
+	otherPath := filepath.Join(dir, "restored.db")
+	other, err := Open(otherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.SetSetting("reopen_marker", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
+		if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(otherPath, path); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := d.Reopen(); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
@@ -101,12 +125,40 @@ func TestReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query after reopen: %v", err)
 	}
-	if got != "1" {
-		t.Fatalf("marker = %q, want 1", got)
+	if got != "new" {
+		t.Fatalf("marker = %q, want %q (swapped-in file's data)", got, "new")
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestReopenConcurrentAccess is a race-detector regression test: queries on
+// the shared *DB must not race with Reopen's handle swap. Readers may see
+// transient "database is closed" errors mid-swap — that is the documented
+// availability blip and is deliberately ignored; the test only guards
+// against memory-model violations (meaningful under -race).
+func TestReopenConcurrentAccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			_, _ = d.GetSetting("reopen_marker", "")
+		}
+	}()
+	for i := 0; i < 10; i++ {
+		if err := d.Reopen(); err != nil {
+			t.Fatalf("Reopen #%d: %v", i, err)
+		}
+	}
+	<-done
 }
 
 // TestReopenError verifies that Reopen() returns an error when the
