@@ -146,18 +146,32 @@ func TestReopenConcurrentAccess(t *testing.T) {
 	}
 	defer d.Close()
 
+	// The reader loops until stopped rather than a fixed count: each Reopen
+	// takes long enough (schema migrations) that a bounded reader would
+	// finish before the first swap and never exercise the race window.
+	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 50; i++ {
-			_, _ = d.GetSetting("reopen_marker", "")
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = d.GetSetting("reopen_marker", "")
+			}
 		}
 	}()
 	for i := 0; i < 10; i++ {
+		// Close first, as the real restore flow does. Skipping the Close
+		// leaves the reader's connection holding a read lock on the file,
+		// and Reopen's schema writes then fail with SQLITE_BUSY.
+		_ = d.Close()
 		if err := d.Reopen(); err != nil {
 			t.Fatalf("Reopen #%d: %v", i, err)
 		}
 	}
+	close(stop)
 	<-done
 }
 
