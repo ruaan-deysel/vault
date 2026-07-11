@@ -552,6 +552,7 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, err)
 		return
 	}
+	defer storage.CloseAdapter(adapter)
 
 	dbPath := strings.TrimPrefix(cleanedStoragePath, "/")
 	if !strings.HasSuffix(dbPath, ".db") && !strings.HasSuffix(dbPath, ".age") {

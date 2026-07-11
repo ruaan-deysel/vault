@@ -88,6 +88,7 @@
     const route = getRoute()
     if (route === '/anomalies' && !getAnomalyEnabled()) navigate('/')
     else if (route === '/replication' && !replicaMode && !getReplicationEnabled()) navigate('/')
+    else if (route === '/recover' && replicaMode) navigate('/')
   })
 
   let ready = $state(false)

@@ -42,8 +42,9 @@ run) to start it. The wizard has five steps.
 ### Step 1 — Connect storage
 
 Add the storage destination that holds your backups — the same host, share,
-or bucket you were writing to before — and click **Test Connection**. Once
-the connection succeeds, the wizard looks for a `_vault` folder on that
+or bucket you were writing to before — and click **Connect**. You can
+optionally click **Test connection** first to check the details before
+saving. Once you connect, the wizard looks for a `_vault` folder on that
 destination and lists the database backups it finds there, newest first.
 
 <!-- screenshot: step-2 -->
@@ -81,8 +82,8 @@ if you'd rather fix paths later from the Jobs or Storage pages.
 
 ### Step 5 — Done
 
-A summary of what was restored (jobs, storage destinations, restore point
-count) closes out the wizard, with a pointer to the normal **Restore** page
+A summary of what was restored (jobs and storage destinations) closes out
+the wizard, with a pointer to the normal **Restore** page
 to bring your actual data — container appdata, VM disks, folders — back from
 the restore points that came with the database.
 
@@ -115,6 +116,9 @@ curl -X POST http://SERVER:24085/api/v1/storage/ID/restore-db \
 ```
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
+
+If an API key is configured and you are calling from a non-loopback address,
+include it with `-H 'X-API-Key: YOUR-KEY'`.
 
 ---
 
