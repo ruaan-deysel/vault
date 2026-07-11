@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -745,6 +746,75 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		"message":  "Database restored successfully.",
 		"resealed": resealed,
 	})
+}
+
+type dbBackupEntry struct {
+	Path      string    `json:"path"`
+	Name      string    `json:"name"`
+	Timestamp time.Time `json:"timestamp"`
+	Size      int64     `json:"size"`
+	Encrypted bool      `json:"encrypted"`
+	IsLatest  bool      `json:"is_latest"`
+}
+
+// ListDBBackups lists vault.db snapshots in _vault/ on a destination,
+// newest first with the latest pointer on top. Absent _vault/ is an empty
+// list, not an error — a destination that never held a DB backup is normal.
+//
+//	GET /api/v1/storage/{id}/db-backups
+func (h *StorageHandler) ListDBBackups(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	dest, err := h.db.GetStorageDestination(id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "storage destination not found")
+		return
+	}
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	defer storage.CloseAdapter(adapter)
+
+	files, err := adapter.List("_vault")
+	if err != nil {
+		respondJSON(w, http.StatusOK, []dbBackupEntry{})
+		return
+	}
+
+	entries := []dbBackupEntry{}
+	for _, f := range files {
+		name := path.Base(f.Path)
+		if f.IsDir || !strings.HasPrefix(name, "vault.db.") {
+			continue
+		}
+		e := dbBackupEntry{
+			Path:      "_vault/" + name,
+			Name:      name,
+			Timestamp: f.ModTime,
+			Size:      f.Size,
+			Encrypted: strings.HasSuffix(name, ".age"),
+			IsLatest:  strings.HasPrefix(name, "vault.db.latest"),
+		}
+		if !e.IsLatest {
+			stamp := strings.TrimPrefix(name, "vault.db.")
+			stamp = strings.TrimSuffix(strings.TrimSuffix(stamp, ".age"), ".db")
+			if ts, perr := time.Parse("2006-01-02T15-04-05", stamp); perr == nil {
+				e.Timestamp = ts
+			}
+		}
+		entries = append(entries, e)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsLatest != entries[j].IsLatest {
+			return entries[i].IsLatest
+		}
+		return entries[i].Timestamp.After(entries[j].Timestamp)
+	})
+	respondJSON(w, http.StatusOK, entries)
 }
 
 // DependentJobs returns the list of jobs that reference a storage destination

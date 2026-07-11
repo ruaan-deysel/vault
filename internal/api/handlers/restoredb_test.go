@@ -335,6 +335,63 @@ func TestRestoreDBEncryptedNeedsPassphrase(t *testing.T) {
 	}
 }
 
+func TestListDBBackups(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	vdir := filepath.Join(storageDir, "_vault")
+	if err := os.MkdirAll(filepath.Join(vdir, "somedir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"vault.db.latest.age",
+		"vault.db.2026-07-10T04-00-00.age",
+		"vault.db.2026-07-11T04-00-00.age",
+		"unrelated.txt",
+	} {
+		if err := os.WriteFile(filepath.Join(vdir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	h.ListDBBackups(w, reqWithID(http.MethodGet, "/storage/{id}/db-backups", strconv.FormatInt(destID, 10), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var entries []struct {
+		Path      string `json:"path"`
+		Name      string `json:"name"`
+		Encrypted bool   `json:"encrypted"`
+		IsLatest  bool   `json:"is_latest"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3: %+v", len(entries), entries)
+	}
+	if !entries[0].IsLatest || entries[0].Name != "vault.db.latest.age" {
+		t.Fatalf("first entry should be latest, got %+v", entries[0])
+	}
+	if entries[1].Name != "vault.db.2026-07-11T04-00-00.age" {
+		t.Fatalf("timestamped order wrong: %+v", entries)
+	}
+	if !entries[0].Encrypted {
+		t.Fatal("encrypted flag missing on .age entry")
+	}
+}
+
+func TestListDBBackupsEmpty(t *testing.T) {
+	h, destID, _ := newFileBackedStorageHandler(t)
+	w := httptest.NewRecorder()
+	h.ListDBBackups(w, reqWithID(http.MethodGet, "/storage/{id}/db-backups", strconv.FormatInt(destID, 10), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "[]" {
+		t.Fatalf("body = %q, want []", got)
+	}
+}
+
 func TestRestoreDBVerifyOnly(t *testing.T) {
 	h, destID, storageDir := newFileBackedStorageHandler(t)
 	snapPath := writeEncryptedDBFixture(t, storageDir, "verify-me", nil)

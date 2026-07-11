@@ -114,6 +114,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/scan", storageH.Scan)
 			r.Post("/{id}/import", storageH.Import)
 			r.Post("/{id}/restore-db", storageH.RestoreDB)
+			r.Get("/{id}/db-backups", storageH.ListDBBackups)
 			r.Get("/{id}/jobs", storageH.DependentJobs)
 			r.Get("/{id}/list", storageH.ListFiles)
 			r.Get("/{id}/files", storageH.DownloadFile)
