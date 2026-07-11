@@ -41,8 +41,11 @@
     dest = newDest
     try {
       backups = await api.listDBBackups(dest.id)
-    } catch {
-      backups = []
+    } catch (e) {
+      // Transport/server failure is not "no backups found" — don't show the
+      // _vault guidance for a timeout or 500; let the user retry.
+      showToast(e.message || 'Could not list backups on this storage.', 'error')
+      return
     }
     if (backups.length === 0) {
       noBackups = true
@@ -122,8 +125,11 @@
 
   function goBack() {
     if (step === 2) step = 1
-    else if (step === 3) step = latestEncrypted ? 2 : 1
-    else if (step === 4) step = 3
+    // passphrase is non-empty iff the password step was actually passed —
+    // accurate even when a hand-picked encrypted snapshot routed through it.
+    else if (step === 3) step = passphrase ? 2 : 1
+    // No Back from step 4: the restore already ran (point of no return), and
+    // re-restoring would silently discard just-applied path remaps.
   }
 
   function fmtWhen(ts) {
@@ -144,7 +150,7 @@
   <!-- Step indicator -->
   <div class="flex items-center gap-2 mb-6">
     {#each STEPS as s (s.n)}
-      <div class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}">
+      <div class="flex items-center gap-2 {s.n <= step ? '' : 'opacity-40'}" aria-current={s.n === step ? 'step' : undefined}>
         <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors {s.n <= step ? 'bg-vault text-white' : 'bg-surface-3 text-text-muted'}">
           {#if s.n < step}
             <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
@@ -270,14 +276,12 @@
           We couldn't check your paths automatically. If a backup fails later, review the paths in
           Jobs and Storage.
         </p>
-        <div class="flex items-center justify-between pt-4 border-t border-border">
-          <button type="button" class="btn btn-ghost" onclick={goBack}>Back</button>
+        <div class="flex items-center justify-end pt-4 border-t border-border">
           <button type="button" class="btn btn-primary" onclick={() => (step = 5)}>Continue</button>
         </div>
       {:else if brokenEntries.length === 0}
         <p class="text-sm text-success mb-4">✓ All your configured paths exist on this server. Nothing to fix.</p>
-        <div class="flex items-center justify-between pt-4 border-t border-border">
-          <button type="button" class="btn btn-ghost" onclick={goBack}>Back</button>
+        <div class="flex items-center justify-end pt-4 border-t border-border">
           <button type="button" class="btn btn-primary" onclick={() => (step = 5)}>Continue</button>
         </div>
       {:else}
@@ -307,14 +311,11 @@
             </div>
           {/each}
         </div>
-        <div class="flex items-center justify-between mt-5 pt-4 border-t border-border">
-          <button type="button" class="btn btn-ghost" onclick={goBack}>Back</button>
-          <div class="flex items-center gap-3">
-            <button type="button" class="btn btn-secondary" disabled={remapping} onclick={() => (step = 5)}>Skip for now</button>
-            <button type="button" class="btn btn-primary" disabled={remapping} onclick={applyRemap}>
-              {#if remapping}<InlineSpinner /> Updating…{:else}Update paths{/if}
-            </button>
-          </div>
+        <div class="flex items-center justify-end gap-3 mt-5 pt-4 border-t border-border">
+          <button type="button" class="btn btn-secondary" disabled={remapping} onclick={() => (step = 5)}>Skip for now</button>
+          <button type="button" class="btn btn-primary" disabled={remapping} onclick={applyRemap}>
+            {#if remapping}<InlineSpinner /> Updating…{:else}Update paths{/if}
+          </button>
         </div>
       {/if}
     </div>
