@@ -848,7 +848,7 @@ func (h *StorageHandler) ListDBBackups(w http.ResponseWriter, r *http.Request) {
 			respondJSON(w, http.StatusOK, []dbBackupEntry{})
 			return
 		}
-		log.Printf("ListDBBackups: listing _vault on destination %d: %v", id, err)
+		log.Printf("ListDBBackups: listing _vault on destination %d: %v", id, err) // #nosec G706 //nolint:gosec // id is int64 from URL param, err is from an admin-configured adapter
 		respondError(w, http.StatusBadGateway, "could not read your backup storage — check the connection and try again")
 		return
 	}
