@@ -42,9 +42,11 @@
 
   // `initial` is deliberately read once at mount: the host remounts this
   // component each time the modal opens, so the form never needs to track
-  // later changes to the prop.
+  // later changes to the prop. Consumers that can change `initial` while the
+  // component stays mounted must remount it instead (wrap in {#key}).
   // svelte-ignore state_referenced_locally
-  let form = $state(initForm(initial))
+  const init = initial
+  let form = $state(initForm(init))
   let saving = $state(false)
 
   async function saveStorage() {
@@ -64,8 +66,8 @@
         backup_database_enabled: !!form.backup_database_enabled,
       }
       let result
-      if (initial) {
-        result = await api.updateStorage(initial.id, payload)
+      if (init) {
+        result = await api.updateStorage(init.id, payload)
       } else {
         result = await api.createStorage(payload)
       }
@@ -455,7 +457,7 @@
       <input
         type="checkbox"
         bind:checked={form.dedup_enabled}
-        disabled={initial !== null}
+        disabled={init !== null}
         class="accent-vault mt-1"
       />
       <span class="flex-1">
@@ -463,7 +465,7 @@
         <span class="block text-xs text-text-muted mt-0.5">
           Stores only changed data blocks across snapshots and jobs targeting this destination. Recommended for backups containing similar data (Immich, Nextcloud, container volumes). <strong>Cannot be changed after creating the destination.</strong>
         </span>
-        {#if initial !== null}
+        {#if init !== null}
           <span class="block text-xs text-warning mt-1 italic">
             Dedup mode is locked at creation time. Create a new destination to switch.
           </span>
