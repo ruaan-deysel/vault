@@ -8,26 +8,7 @@ Go to **Jobs** → **Create Job**. The wizard has four steps.
 
 ---
 
-### Step 1 — Name & Type
-
-| Field           | Description                                                                     |
-| --------------- | ------------------------------------------------------------------------------- |
-| **Name**        | A unique name for this job. Shown on the Dashboard, History, and Restore pages. |
-| **Backup Type** | The backup strategy: Full, Incremental, or Differential (see below).            |
-
-#### Backup Types
-
-| Type             | What it backs up                          | Restore speed                        | Storage use                   |
-| ---------------- | ----------------------------------------- | ------------------------------------ | ----------------------------- |
-| **Full**         | Everything, every run                     | Fastest — single archive             | Highest — full copy each time |
-| **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
-| **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
-
-For most home server use cases, a weekly **Full** backup with daily **Incremental** runs gives a good balance between storage cost and restore speed.
-
----
-
-### Step 2 — Select Items
+### Step 1 — What
 
 Pick which items to include in this job. Vault discovers items automatically from your server:
 
@@ -80,13 +61,9 @@ Thumbnails and re-encoded video are re-created by Immich on demand after a resto
 
 ---
 
-### Step 3 — Storage Destination
+### Step 2 — Where & when
 
-Select which storage destination this job will write to. If you have not added one yet, save the wizard and go to **Storage** first — see [Storage Destinations](storage-destinations.md).
-
----
-
-### Step 4 — Schedule & Retention
+Select which storage destination this job will write to. If you have not added one yet, save the wizard and go to **Storage** first — see [Storage Destinations](storage-destinations.md). This step also sets the schedule.
 
 #### Schedule
 
@@ -105,11 +82,27 @@ Instead of a fixed day number, you can choose _First day of month_ or _Last day 
 **Time format:**
 The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automatically.
 
-> **Unscheduled / manual-only jobs:** Currently all jobs require a schedule. To run a backup ad hoc, use the **Run Now** button. A dedicated "no schedule" option is planned.
+> **Manual-only jobs:** Leave the schedule empty to create a job that never runs on its own — you run it on demand with the **Run Now** button.
+
+---
+
+### Step 3 — How
+
+Choose the backup strategy and, under _Advanced options_, tune compression, retention, verification, and scripts.
+
+#### Backup Types
+
+| Type             | What it backs up                          | Restore speed                        | Storage use                   |
+| ---------------- | ----------------------------------------- | ------------------------------------ | ----------------------------- |
+| **Full**         | Everything, every run                     | Fastest — single archive             | Highest — full copy each time |
+| **Incremental**  | Changes since the last backup of any type | Slowest — may need to chain archives | Lowest                        |
+| **Differential** | Changes since the last _full_ backup      | Medium — needs full + one diff       | Medium                        |
+
+For most home server use cases, a weekly **Full** backup with daily **Incremental** runs gives a good balance between storage cost and restore speed.
 
 #### Retention
 
-Retention controls how many restore points are kept before the oldest is deleted. (A _restore point_ is one completed backup you can restore from.) Vault supports two modes; you can use either or both at once.
+Retention controls how many restore points are kept before the oldest is deleted. (A _restore point_ is one completed backup you can restore from.) Vault supports two modes. If any Long-Term Retention value is set, LTR is used and the simple settings are ignored.
 
 **Mode 1 — Simple count**
 
@@ -131,13 +124,23 @@ Good for "always keep my last 7 backups" type policies.
 
 Long-Term Retention (LTR) lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a _retention preview_ — exactly which restore points the policy would prune on the next run — before you save.
 
-If you leave the LTR counters at 0 and set only _Keep last N_, classic simple-count retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple _Keep last N_ count.
+If you leave all LTR counters at 0, classic simple retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple settings (_Keep last N_ and _keep-for-N-days_).
 
 Set retention based on storage budget and how far back you want to be able to restore:
 
 - 7 daily backups → simple count = 7
 - A weekly full + 6 daily incrementals → simple count = 7, two jobs (one weekly full, one daily incremental)
 - Year of history without storage bloat → LTR with `keep_daily=7`, `keep_weekly=4`, `keep_monthly=12`, `keep_yearly=3`
+
+---
+
+### Step 4 — Name & review
+
+| Field    | Description                                                                     |
+| -------- | ------------------------------------------------------------------------------- |
+| **Name** | A unique name for this job. Shown on the Dashboard, History, and Restore pages. |
+
+Check the plain-language summary of what the job will do, then click **Save**.
 
 ---
 
@@ -171,10 +174,9 @@ To stop an in-progress backup:
 
 Vault signals cancellation through the entire pipeline — file I/O, directory traversal, and engine handlers all check for cancellation and stop gracefully. The job is marked as "cancelled" in History.
 
-Jobs also have automatic safeguards:
+Jobs also have an automatic safeguard:
 
-- **4-hour hard timeout** — a job running longer than 4 hours is automatically cancelled
-- **2-hour stall detection** — a job with no progress for 2 hours is cancelled (with a warning at 30 minutes)
+- **2-hour stall detection** — a job with no progress for 2 hours is cancelled (with a warning at 30 minutes). There is no overall time limit: a backup that is still transferring data can run for as long as it needs.
 
 ---
 
@@ -222,7 +224,7 @@ Both paths use the same code, so per-run and on-demand results are directly comp
 
 ## Encryption
 
-If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with AES-256-GCM before they leave the host. The encryption key is derived from your passphrase and a per-installation salt; without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
+If you set a passphrase under **Settings → Security → Encryption**, all backup archives are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the host. Without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.
 
 The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge.
 

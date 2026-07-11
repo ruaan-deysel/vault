@@ -35,13 +35,21 @@ CLI (Cobra) -> API Server (Chi + WebSocket Hub) -> Handlers -> DB / Storage / En
 ```go
 type Adapter interface {
     Write(path string, reader io.Reader) error
+    WriteFrom(path string, open func() (io.ReadCloser, error)) error
     Read(path string) (io.ReadCloser, error)
+    ReadRange(path string, offset, length int64) (io.ReadCloser, error)
     Delete(path string) error
     List(prefix string) ([]FileInfo, error)
     Stat(path string) (FileInfo, error)
     TestConnection() error
+    GetCapacity(ctx context.Context) (Capacity, error)
+    Usage() (free, total int64, err error)
 }
 ```
+
+`WriteFrom` lets the retry layer re-issue a failed upload from a fresh stream;
+`ReadRange` serves the dedup layer's partial pack reads; `GetCapacity` and
+`Usage` feed the capacity widgets and trajectory detector.
 
 Adapters that hold persistent resources (SFTP, SMB) implement `io.Closer` and
 are released by `storage.CloseAdapter`. Bandwidth throttling is layered on
@@ -52,8 +60,8 @@ constructed via `storage.NewAdapter(type, configJSON)`.
 
 ```go
 type Handler interface {
-    Backup(item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
-    Restore(item BackupItem, source string, progress ProgressFunc) error
+    Backup(ctx context.Context, item BackupItem, dest string, progress ProgressFunc) (*BackupResult, error)
+    Restore(ctx context.Context, item BackupItem, source string, progress ProgressFunc) error
     ListItems() ([]BackupItem, error)
 }
 ```

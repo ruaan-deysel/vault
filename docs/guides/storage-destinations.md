@@ -160,20 +160,21 @@ Vault writes to:    /mnt/user/backups/vault/my-server
 
 - Vault uses the AWS SDK v2's reusable client, which pools HTTP connections internally — a single S3 destination can sustain many concurrent uploads.
 - Server-side encryption is your provider's responsibility. Vault's own encryption (Settings → Security) layers on top and protects backups even from the storage operator.
-- **"Test Connection succeeds but every upload fails with `SignatureDoesNotMatch`"** — a known quirk of many S3-compatible providers (MEGA, Backblaze B2, IDrive E2, older MinIO), and Vault handles it for you automatically whenever a custom **Endpoint** is set. Background: recent AWS SDK versions add a checksum trailer to every upload that these providers don't understand, so they reject the request; the connection test passes because it sends no data. With a custom endpoint Vault omits the trailer (real AWS S3 keeps it), and Vault's own SHA-256 verification still guarantees backup integrity either way. If you see this error anyway, double-check the Endpoint URL and region.
+- **"Test connection succeeds but every upload fails with `SignatureDoesNotMatch`"** — a known quirk of many S3-compatible providers (MEGA, Backblaze B2, IDrive E2, older MinIO), and Vault handles it for you automatically whenever a custom **Endpoint** is set. Background: recent AWS SDK versions add a checksum trailer to every upload that these providers don't understand, so they reject the request; the connection test passes because it sends no data. With a custom endpoint Vault omits the trailer (real AWS S3 keeps it), and Vault's own SHA-256 verification still guarantees backup integrity either way. If you see this error anyway, double-check the Endpoint URL and region.
 - **Sizing Part size** — the S3 protocol caps a multipart upload at 10,000 parts, so the maximum object Vault can upload is `part_size × 10,000`. Default 64 MiB → 640 GB ceiling, which fits typical home-server workloads. For Immich libraries, full-disk images, or other multi-TB datasets, raise the value: 256 → 2.5 TB, 512 → 5 TB, 1024 → 10 TB. Peak upload memory ≈ `part_size × concurrency` (default 5), so 1 GiB parts cost ~5 GiB RAM during an active upload. Backblaze B2, MinIO, AWS S3, Cloudflare R2, and Wasabi all accept parts in the 5 MiB – 5 GiB range.
 
 ---
 
 ## Testing a Connection
 
-After filling in the fields, always click **Test Connection** before saving. Vault will:
+After filling in the fields, always click **Test connection** before saving. What the test checks depends on the destination type:
 
-1. Attempt to connect using the provided credentials
-2. Try to create and delete a temporary test file in the configured path
-3. Report success or a specific error (wrong password, path not found, permission denied, etc.)
+- **All types** — the destination is reachable and the credentials work.
+- **Local, SFTP, NFS, WebDAV** — Vault also writes and deletes a small test file, so write access is confirmed.
+- **S3** — Vault only checks that the bucket exists and is accessible (no data is written).
+- **SMB** — Vault only lists the configured directory (no data is written).
 
-If the test fails, fix the error before saving — the destination will not work for backups until the connection succeeds.
+On failure you get a specific error (wrong password, path not found, permission denied, etc.) — fix it before saving. Note that on S3 and SMB a passing test can still be followed by an upload failure if the bucket or share is read-only, because the test does not write any data there.
 
 ---
 
@@ -193,7 +194,7 @@ Imported backups appear as restore points on the relevant jobs so you can restor
 
 ## Encryption
 
-If you have configured an encryption passphrase under **Settings → Security → Encryption**, all backup archives written to storage are encrypted with AES-256-GCM before they leave the server. The encryption key is derived from your passphrase — make sure to keep it safe, as there is no recovery path if it is lost.
+If you have configured an encryption passphrase under **Settings → Security → Encryption**, all backup archives written to storage are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the server. Make sure to keep the password safe, as there is no recovery path if it is lost.
 
 Encryption is transparent to storage destinations — it applies regardless of destination type.
 

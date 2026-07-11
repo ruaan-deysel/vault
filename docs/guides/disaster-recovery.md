@@ -11,8 +11,9 @@ a failed boot drive, a rebuilt array, or a full Unraid reinstall.
    and restore your settings.
 4. Fix any folder paths that changed, then restore your data from the Restore page.
 
-You need two things: **access to your backup storage** and **your backup
-password** (the encryption password from Settings → Encryption). Nothing from
+You always need **access to your backup storage**. You also need **your
+backup password**, but only if your backups are encrypted — they are whenever
+you set a password under Settings → Encryption (recommended). Nothing from
 the old server is required.
 
 ---
@@ -32,10 +33,12 @@ the `restore-db` API), which validates the backup and swaps it in atomically.
 
 ## Recovering with the wizard
 
-On a fresh install, Vault has no jobs, no storage destinations, and no
-history — that empty state is what triggers the wizard. Open the **Recovery**
-page and click **Recover Vault** (or choose **Recover from a backup** on first
-run) to start it. The wizard has five steps.
+Open the **Recovery** page and click **Recover Vault** (or choose **Recover
+from a backup** on first run) to start the wizard. It is available any time —
+not just on a fresh install. Keep in mind that restoring **replaces** the
+jobs and storage destinations currently on this Vault; on a configured system
+the wizard warns you with the exact counts before it does anything. The
+wizard has five steps.
 
 <!-- screenshot: step-1 -->
 
@@ -63,7 +66,8 @@ were never encrypted, this step is skipped automatically.
 
 The most recent backup is preselected from a list showing each snapshot's
 date. Confirm to proceed. The wizard states explicitly that this replaces the
-current (empty) settings on the new install — your jobs, storage
+settings currently on this Vault — on a configured system it shows how many
+jobs and storage destinations will be replaced. Your jobs, storage
 destinations, and history come back from the snapshot. Nothing on your backup
 storage is read or modified beyond downloading the database file: your actual
 container, VM, and folder archives are untouched.
