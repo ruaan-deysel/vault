@@ -110,15 +110,21 @@ If you cannot reach the web console, you can restore the database over the
 API from any machine that can reach the daemon:
 
 ```
+export VAULT_BACKUP_PASSWORD='your backup password'   # or read it from a file
 curl -X POST http://SERVER:24085/api/v1/storage/ID/restore-db \
   -H 'Content-Type: application/json' \
-  -d '{"storage_path": "_vault/vault.db.latest.age", "passphrase": "YOUR-BACKUP-PASSWORD"}'
+  -d @- <<EOF
+{"storage_path": "_vault/vault.db.latest.age", "passphrase": "$VAULT_BACKUP_PASSWORD"}
+EOF
 ```
+
+Passing the passphrase via an environment variable (or a JSON file with
+`-d @restore.json`) keeps it out of your shell history and the process list.
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
 
 If an API key is configured and you are calling from a non-loopback address,
-include it with `-H 'X-API-Key: YOUR-KEY'`.
+include it with `-H "X-API-Key: $VAULT_API_KEY"`.
 
 ---
 
