@@ -115,17 +115,17 @@ API from any machine that can reach the daemon:
 
 ```sh
 read -rs VAULT_BACKUP_PASSWORD   # prompts without echoing or recording history
+jq -n --arg p "$VAULT_BACKUP_PASSWORD" \
+  '{storage_path: "_vault/vault.db.latest.age", passphrase: $p}' |
 curl -X POST http://SERVER:24085/api/v1/storage/ID/restore-db \
-  -H 'Content-Type: application/json' \
-  -d @- <<EOF
-{"storage_path": "_vault/vault.db.latest.age", "passphrase": "$VAULT_BACKUP_PASSWORD"}
-EOF
+  -H 'Content-Type: application/json' -d @-
 unset VAULT_BACKUP_PASSWORD
 ```
 
 `read -rs` prompts for the password without echoing it and keeps it out of
-your shell history and the process list (a JSON file with `-d @restore.json`
-works too).
+your shell history and the process list; `jq` (included with Unraid) encodes
+it safely even if it contains quotes or backslashes. A JSON file with
+`-d @restore.json` works too.
 
 List available snapshots first with `GET /api/v1/storage/ID/db-backups`.
 
