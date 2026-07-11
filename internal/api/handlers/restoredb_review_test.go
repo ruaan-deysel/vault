@@ -65,6 +65,42 @@ func TestRestoreDB_SwapFailureReopensDB(t *testing.T) {
 	}
 }
 
+// A backup that opens but fails PRAGMA integrity_check must be rejected
+// before the live DB is touched. db.Open may catch some corruption first —
+// either failure mode is a 400 with the working DB untouched.
+func TestRestoreDB_CorruptBackupRejected(t *testing.T) {
+	h, destID, storageDir := newFileBackedStorageHandler(t)
+	snapPath := writePlaintextDBFixture(t, storageDir, "_vault/vault.db.latest.db")
+
+	// Corrupt a page past the header: the SQLite magic stays intact, so only
+	// open-time validation or the integrity check can catch it.
+	full := filepath.Join(storageDir, snapPath)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 8192 {
+		t.Fatalf("fixture too small to corrupt a page: %d bytes", len(data))
+	}
+	for i := 4096; i < 8192; i++ {
+		data[i] ^= 0xff
+	}
+	if err := os.WriteFile(full, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"storage_path": %q}`, snapPath)
+	w := httptest.NewRecorder()
+	h.RestoreDB(w, reqWithID(http.MethodPost, "/storage/{id}/restore-db",
+		strconv.FormatInt(destID, 10), []byte(body)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	if err := h.db.Ping(); err != nil {
+		t.Fatalf("working DB touched by rejected restore: %v", err)
+	}
+}
+
 // An adapter List error that is NOT "directory missing" must surface as an
 // error, not as an empty backup list (which reads as "no backups exist").
 func TestListDBBackupsAdapterError(t *testing.T) {

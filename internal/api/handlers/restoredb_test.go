@@ -256,6 +256,8 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 	h, destID, storageDir := newFileBackedStorageHandler(t)
 	reloads := 0
 	h.SetScheduleReloadHook(func() error { reloads++; return nil })
+	configFlushes := 0
+	h.SetConfigChangeHook(func() { configFlushes++ })
 
 	const pass = "correct horse battery"
 	hash, err := crypto.HashPassphrase(pass)
@@ -302,6 +304,11 @@ func TestRestoreDBReopensAndReseals(t *testing.T) {
 
 	if reloads != 1 {
 		t.Fatalf("scheduler reloads = %d, want 1", reloads)
+	}
+	// The restored DB must be flushed to flash right away — a power loss
+	// before the next periodic flush would otherwise revert the restore.
+	if configFlushes != 1 {
+		t.Fatalf("config-change hook calls = %d, want 1", configFlushes)
 	}
 }
 

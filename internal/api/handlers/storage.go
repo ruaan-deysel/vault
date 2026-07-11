@@ -638,11 +638,19 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	// Validate the downloaded database.
+	// Validate the downloaded database. Open catches gross damage; the
+	// integrity check catches corrupt pages that still open fine.
 	testDB, err := db.Open(tmpPath)
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		respondError(w, http.StatusBadRequest, "downloaded file is not a valid Vault database: "+err.Error())
+		return
+	}
+	if err := testDB.IntegrityCheck(); err != nil {
+		_ = testDB.Close()
+		_ = os.Remove(tmpPath)
+		log.Printf("RestoreDB: candidate DB failed integrity check: %v", err)
+		respondError(w, http.StatusBadRequest, "that backup file failed the database integrity check")
 		return
 	}
 	_ = testDB.Close()
@@ -736,23 +744,25 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Success — drop backup and temp.
-	if backupExists {
-		_ = os.Remove(backupPath)
-	}
-	_ = os.Remove(tmpPath)
-
 	// Remove WAL and SHM files (stale after replacement).
 	_ = os.Remove(currentPath + "-wal")
 	_ = os.Remove(currentPath + "-shm")
 
-	// Reopen in-process so the daemon keeps working without a restart.
+	// Reopen in-process so the daemon keeps working without a restart. The
+	// .bak safety copy is only dropped once the reopen succeeds — if it
+	// fails, .bak is the pre-restore DB and the only rollback artifact left.
 	if err := h.db.Reopen(); err != nil {
-		log.Printf("RestoreDB: reopen after restore failed: %v", err)
+		log.Printf("RestoreDB: reopen after restore failed: %v — pre-restore DB kept at %s", err, backupPath)
 		respondError(w, http.StatusInternalServerError,
 			"database restored, but the daemon could not reload it — restart Vault from the plugin page to finish")
 		return
 	}
+
+	// Success — drop the safety copy and temp.
+	if backupExists {
+		_ = os.Remove(backupPath)
+	}
+	_ = os.Remove(tmpPath)
 
 	// The restored DB's sealed passphrase used the old server's vault.key.
 	// Re-seal with the current key so scheduled DB backups stay encrypted.
@@ -789,6 +799,10 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 			log.Printf("RestoreDB: scheduler reload after restore failed: %v", err)
 		}
 	}
+
+	// Flush the restored DB to the cache snapshot + USB shadow now — a power
+	// loss before the next periodic flush would revert the restore at boot.
+	h.notifyConfigChange()
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"message":  "Database restored successfully.",
