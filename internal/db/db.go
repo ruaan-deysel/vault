@@ -66,6 +66,23 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
+// Reopen re-opens the database at the same path and swaps the embedded
+// handle in place. Every component (server, scheduler, runner, hub) shares
+// this *DB pointer, so after Reopen they all see the new database. Used
+// after RestoreDB swaps the file on disk, so the daemon keeps running
+// without a restart.
+// ponytail: the Close→Reopen window can surface "database is closed" errors
+// to concurrent queries — an availability blip during deliberate maintenance,
+// not corruption. Fallback if this misbehaves in practice: a restart endpoint.
+func (d *DB) Reopen() error {
+	nd, err := Open(d.path)
+	if err != nil {
+		return fmt.Errorf("reopening database: %w", err)
+	}
+	d.DB = nd.DB
+	return nil
+}
+
 // Vacuum reclaims free space in the database file.
 func (d *DB) Vacuum() error {
 	_, err := d.Exec("VACUUM")

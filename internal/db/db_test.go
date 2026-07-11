@@ -78,6 +78,58 @@ func TestDedupSchemaMigration(t *testing.T) {
 	}
 }
 
+// TestReopen verifies that Reopen() swaps the embedded *sql.DB handle in
+// place after Close(), so the same *DB pointer works again and sees data
+// written before the close. This mirrors the restore-db handler flow: close,
+// swap the file on disk, reopen — all without restarting the daemon.
+func TestReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetSetting("reopen_marker", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Reopen(); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	got, err := d.GetSetting("reopen_marker", "")
+	if err != nil {
+		t.Fatalf("query after reopen: %v", err)
+	}
+	if got != "1" {
+		t.Fatalf("marker = %q, want 1", got)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReopenError verifies that Reopen() returns an error when the
+// database path is no longer openable (e.g. its parent directory was
+// removed).
+func TestReopenError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vault.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Reopen(); err == nil {
+		t.Fatal("Reopen() error = nil, want error for missing directory")
+	}
+}
+
 // columnExists returns true if the named column is present on the
 // given table according to PRAGMA table_info.
 func columnExists(t *testing.T, d *DB, table, column string) bool {
