@@ -753,6 +753,9 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	// fails, .bak is the pre-restore DB and the only rollback artifact left.
 	if err := h.db.Reopen(); err != nil {
 		log.Printf("RestoreDB: reopen after restore failed: %v — pre-restore DB kept at %s", err, backupPath)
+		// The temp file is the decrypted DB copy — don't leave it in the
+		// temp dir. The .bak safety copy stays.
+		_ = os.Remove(tmpPath)
 		respondError(w, http.StatusInternalServerError,
 			"database restored, but the daemon could not reload it — restart Vault from the plugin page to finish")
 		return

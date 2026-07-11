@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"sync/atomic"
 
 	_ "modernc.org/sqlite"
@@ -76,6 +77,8 @@ func Open(path string) (*DB, error) {
 	// params were silently ignored, leaving fresh databases in rollback
 	// journal mode with no busy timeout. DSN pragmas apply to every
 	// connection database/sql opens, unlike a one-off Exec.
+	// journal_size_limit bounds how large the WAL file stays after
+	// checkpoints; it can still grow past it during long transactions.
 	sqlDB, err := sql.Open("sqlite", path+"?_txlock=immediate"+
 		"&_pragma=busy_timeout(30000)"+
 		"&_pragma=journal_mode(WAL)"+
@@ -94,8 +97,13 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	// foreign_keys and journal_size_limit (64 MiB WAL cap) are set via DSN
-	// pragmas above so they survive connection recreation by database/sql.
+	// The journal_mode pragma reports the resulting mode instead of erroring
+	// when WAL can't be enabled (e.g. a filesystem without shared-memory
+	// support), and the driver discards that result — so check explicitly.
+	var mode string
+	if err := sqlDB.QueryRow("PRAGMA journal_mode").Scan(&mode); err == nil && mode != "wal" {
+		log.Printf("Warning: database %s runs in journal_mode=%s — WAL is unavailable on this filesystem; access under contention will be slower", path, mode)
+	}
 
 	if _, err := sqlDB.Exec(schema); err != nil {
 		_ = sqlDB.Close()

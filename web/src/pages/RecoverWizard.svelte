@@ -40,6 +40,7 @@
     .then(([jobs, storage]) => (current = { jobs: jobs.length, storage: storage.length }))
 
   const latestEncrypted = $derived(backups.length > 0 && backups[0].encrypted)
+  const anyEncrypted = $derived(backups.some((b) => b.encrypted))
   const brokenEntries = $derived(audit ? audit.entries.filter((e) => !e.exists) : [])
   const remapError = (e) =>
     remapResults?.find((r) => r.kind === e.kind && r.id === e.id && !r.applied)?.error
@@ -239,7 +240,7 @@
       <p class="text-sm text-text-muted mb-4">
         The most recent backup is already selected — that's the right choice for almost everyone.
       </p>
-      {#if !latestEncrypted}
+      {#if !anyEncrypted}
         <p class="text-xs text-text-dim mb-4">
           These backups aren't encrypted, so no password is needed. To encrypt future
           backups, set a backup password in Settings → Encryption after you finish.

@@ -72,7 +72,7 @@ can route them through the dedup repo on dedup-enabled destinations.
 SQLite with WAL mode and busy timeout. Pure Go driver via `modernc.org/sqlite` (no CGO).
 
 ```go
-sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=5000")
+sql.Open("sqlite", path+"?_txlock=immediate&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(67108864)")
 ```
 
 Schema is applied inline at open time via `CREATE TABLE IF NOT EXISTS` (no versioned migrations). Twelve tables: `storage_destinations`, `jobs`, `job_items`, `job_runs`, `restore_points`, `settings`, `activity_log`, `verify_runs`, `replication_sources`, `dedup_packs`, `dedup_chunks`, `dedup_gc_runs`.
