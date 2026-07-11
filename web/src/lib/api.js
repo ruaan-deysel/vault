@@ -85,7 +85,9 @@ export const api = {
   restoreDB: (id, storagePath, passphrase = '', verifyOnly = false) =>
     request('POST', `/storage/${id}/restore-db`,
       { storage_path: storagePath, passphrase, verify_only: verifyOnly },
-      { timeoutMs: TEST_TIMEOUT_MS }),
+      // A real restore downloads + swaps the whole DB — give it 10 minutes
+      // so a slow remote doesn't abort the request client-side mid-restore.
+      { timeoutMs: verifyOnly ? TEST_TIMEOUT_MS : 600000 }),
   // List database backups found under _vault on this destination, latest
   // first then newest→oldest.
   listDBBackups: (id) => request('GET', `/storage/${id}/db-backups`),

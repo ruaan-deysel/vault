@@ -39,6 +39,7 @@
 
   async function onDestinationSaved(newDest) {
     dest = newDest
+    noBackups = false
     try {
       backups = await api.listDBBackups(dest.id)
     } catch (e) {
@@ -52,7 +53,6 @@
       showToast("We couldn't find a Vault backup here. Look for a folder named _vault on your backup storage.", 'warning')
       return
     }
-    noBackups = false
     selected = backups[0]
     step = latestEncrypted ? 2 : 3
   }
@@ -93,7 +93,9 @@
       step = 4
       showToast('Your settings are back.', 'success')
     } catch (e) {
-      showToast(e.message || 'Restore failed — nothing was changed.', 'error')
+      // A client-side timeout doesn't mean the server stopped — don't claim
+      // nothing changed.
+      showToast(e.message || 'The restore did not finish — check the Dashboard before retrying.', 'error')
     } finally {
       restoring = false
       confirmRestore = false
