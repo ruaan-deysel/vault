@@ -230,6 +230,12 @@
       <p class="text-sm text-text-muted mb-4">
         The most recent backup is already selected — that's the right choice for almost everyone.
       </p>
+      {#if !latestEncrypted}
+        <p class="text-xs text-text-dim mb-4">
+          These backups aren't encrypted, so no password is needed. To encrypt future
+          backups, set a backup password in Settings → Encryption after you finish.
+        </p>
+      {/if}
       <fieldset class="space-y-2">
         <legend class="sr-only">Backups found on your storage</legend>
         {#each backups as b (b.path)}
