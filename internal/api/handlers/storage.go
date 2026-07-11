@@ -728,10 +728,16 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	if req.Passphrase != "" && len(h.serverKey) > 0 {
 		if hash, _ := h.db.GetSetting("encryption_passphrase_hash", ""); hash != "" &&
 			crypto.VerifyPassphrase(req.Passphrase, hash) == nil {
-			if sealed, err := crypto.Seal(h.serverKey, req.Passphrase); err == nil {
-				if err := h.db.SetSetting("encryption_passphrase_sealed", sealed); err == nil {
-					resealed = true
-				}
+			sealed, err := crypto.Seal(h.serverKey, req.Passphrase)
+			if err == nil {
+				err = h.db.SetSetting("encryption_passphrase_sealed", sealed)
+			}
+			if err == nil {
+				resealed = true
+			} else {
+				// Not fatal, but future DB backups would use the stale seal
+				// (plaintext fallback) — make the failure findable in logs.
+				log.Printf("RestoreDB: re-sealing passphrase failed: %v", err)
 			}
 		}
 	}
