@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
@@ -29,6 +30,11 @@ type StorageHandler struct {
 	serverKey      []byte
 	schedReload    ScheduleReloader
 	onConfigChange ConfigChangeHook
+
+	// restoreMu serializes RestoreDB: the close→swap→reopen sequence must
+	// never run concurrently. A field (not package-level) so tests with
+	// separate handlers don't contend.
+	restoreMu sync.Mutex
 }
 
 // NewStorageHandler creates a storage destinations handler. serverKey is
@@ -517,6 +523,10 @@ func (h *StorageHandler) Import(w http.ResponseWriter, r *http.Request) {
 // storage and replaces the current database file.
 //
 //	POST /api/v1/storage/{id}/restore-db
+//
+// sqliteMagic is the 16-byte header every SQLite 3 database file starts with.
+const sqliteMagic = "SQLite format 3\x00"
+
 func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r, "id")
 	if !ok {
@@ -546,6 +556,14 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid storage_path")
 		return
 	}
+
+	// Serialize restores: the close→swap→reopen sequence must never race
+	// another restore (verify_only requests also queue here — they're quick).
+	if !h.restoreMu.TryLock() {
+		respondError(w, http.StatusConflict, "a database restore is already in progress")
+		return
+	}
+	defer h.restoreMu.Unlock()
 
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -592,8 +610,14 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.VerifyOnly {
-		// The age header was parsed (and the passphrase checked) when the
-		// decrypt reader was constructed — nothing more to do.
+		// A wrong passphrase on .age already errored above. Now confirm the
+		// (decrypted) payload actually is a SQLite database — otherwise a
+		// plaintext verify validates nothing.
+		header := make([]byte, len(sqliteMagic))
+		if _, rerr := io.ReadFull(src, header); rerr != nil || string(header) != sqliteMagic {
+			respondError(w, http.StatusBadRequest, "that file doesn't look like a Vault database backup")
+			return
+		}
 		respondJSON(w, http.StatusOK, map[string]any{"valid": true})
 		return
 	}
@@ -645,18 +669,25 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 	backupPath := currentPath + ".bak"
 	_ = os.Remove(backupPath) // clear any stale backup
 	backupExists := false
+	// restoreBackup undoes a failed swap: put the original file back (when we
+	// got far enough to move it) AND reopen the handle — otherwise the daemon
+	// keeps a closed DB and fails every request until a manual restart.
+	restoreBackup := func() {
+		if backupExists {
+			_ = os.Rename(backupPath, currentPath)
+		}
+		if err := h.db.Reopen(); err != nil {
+			log.Printf("RestoreDB: reopening DB after failed restore: %v — restart Vault from the plugin page", err)
+		}
+	}
 	if _, statErr := os.Stat(currentPath); statErr == nil {
 		if err := os.Rename(currentPath, backupPath); err != nil {
+			restoreBackup()
 			_ = os.Remove(tmpPath)
 			respondInternalError(w, fmt.Errorf("backup current DB: %w", err))
 			return
 		}
 		backupExists = true
-	}
-	restoreBackup := func() {
-		if backupExists {
-			_ = os.Rename(backupPath, currentPath)
-		}
 	}
 
 	srcFile, err := os.Open(tmpPath) // #nosec G304 — tmpPath is os.CreateTemp result, vault-controlled
@@ -743,6 +774,16 @@ func (h *StorageHandler) RestoreDB(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A plaintext restore can't re-seal: warn when the restored DB carries a
+	// seal made with the OLD server's vault.key, which this server can't open.
+	if req.Passphrase == "" && len(h.serverKey) > 0 {
+		if sealed, _ := h.db.GetSetting("encryption_passphrase_sealed", ""); sealed != "" {
+			if _, err := crypto.Unseal(h.serverKey, sealed); err != nil {
+				log.Printf("RestoreDB: restored DB has a sealed passphrase that cannot be unsealed with this server's key — re-enter it in Settings → Encryption")
+			}
+		}
+	}
+
 	if h.schedReload != nil {
 		if err := h.schedReload(); err != nil {
 			log.Printf("RestoreDB: scheduler reload after restore failed: %v", err)
@@ -788,7 +829,13 @@ func (h *StorageHandler) ListDBBackups(w http.ResponseWriter, r *http.Request) {
 
 	files, err := adapter.List("_vault")
 	if err != nil {
-		respondJSON(w, http.StatusOK, []dbBackupEntry{})
+		if storage.IsNotExist(err) {
+			// A destination that never held a DB backup is normal.
+			respondJSON(w, http.StatusOK, []dbBackupEntry{})
+			return
+		}
+		log.Printf("ListDBBackups: listing _vault on destination %d: %v", id, err)
+		respondError(w, http.StatusBadGateway, "could not read your backup storage — check the connection and try again")
 		return
 	}
 

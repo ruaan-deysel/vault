@@ -333,6 +333,9 @@ func TestRestoreDBEncryptedNeedsPassphrase(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
 	}
+	if err := h.db.Ping(); err != nil {
+		t.Fatalf("working DB unusable after failed restore: %v", err)
+	}
 }
 
 func TestListDBBackups(t *testing.T) {

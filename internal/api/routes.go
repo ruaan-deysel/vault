@@ -113,7 +113,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 			r.Post("/{id}/gc", storageH.RunDedupGC)
 			r.Post("/{id}/scan", storageH.Scan)
 			r.Post("/{id}/import", storageH.Import)
-			r.Post("/{id}/restore-db", storageH.RestoreDB)
+			// Restoring the DB is a full-config overwrite — blocked on
+			// replicas like the other write endpoints (see path-remap).
+			if s.config.ReadOnly {
+				r.With(ReadOnlyGuard).Post("/{id}/restore-db", storageH.RestoreDB)
+			} else {
+				r.Post("/{id}/restore-db", storageH.RestoreDB)
+			}
 			r.Get("/{id}/db-backups", storageH.ListDBBackups)
 			r.Get("/{id}/jobs", storageH.DependentJobs)
 			r.Get("/{id}/list", storageH.ListFiles)
@@ -242,6 +248,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.Get("/destinations/{id}/capacity-trajectory", anomalyH.GetTrajectory)
 
 		recoveryH := handlers.NewRecoveryHandler(s.db, s.config.Version)
+		s.recoveryHandler = recoveryH
 		r.Get("/recovery/plan", recoveryH.GetPlan)
 		r.Get("/recovery/path-audit", recoveryH.PathAudit)
 		if s.config.ReadOnly {

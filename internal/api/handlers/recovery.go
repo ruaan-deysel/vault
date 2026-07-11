@@ -14,13 +14,21 @@ import (
 
 // RecoveryHandler serves the disaster recovery plan.
 type RecoveryHandler struct {
-	db      *db.DB
-	version string
+	db             *db.DB
+	version        string
+	onConfigChange ConfigChangeHook
 }
 
 // NewRecoveryHandler creates a RecoveryHandler.
 func NewRecoveryHandler(database *db.DB, version string) *RecoveryHandler {
 	return &RecoveryHandler{db: database, version: version}
+}
+
+// SetConfigChangeHook registers a function called after path remaps mutate
+// persistent configuration (typically used by the daemon to flush the DB
+// snapshot to USB flash).
+func (h *RecoveryHandler) SetConfigChangeHook(fn ConfigChangeHook) {
+	h.onConfigChange = fn
 }
 
 // GetPlan compiles a disaster recovery plan from existing data.
@@ -244,7 +252,11 @@ func (h *RecoveryHandler) PathAudit(w http.ResponseWriter, _ *http.Request) {
 		var cfg struct {
 			Path string `json:"path"`
 		}
-		if json.Unmarshal([]byte(d.Config), &cfg) != nil || cfg.Path == "" {
+		if err := json.Unmarshal([]byte(d.Config), &cfg); err != nil {
+			log.Printf("path-audit: skipping storage %d (%s): malformed config: %v", d.ID, d.Name, err)
+			continue
+		}
+		if cfg.Path == "" {
 			continue
 		}
 		entries = append(entries, pathAuditEntry{Kind: "storage", ID: d.ID, Name: d.Name, Path: cfg.Path, Exists: dirExists(cfg.Path)})
@@ -312,6 +324,7 @@ func (h *RecoveryHandler) PathRemap(w http.ResponseWriter, r *http.Request) {
 		Error   string `json:"error,omitempty"`
 	}
 	results := make([]remapResult, 0, len(req.Updates))
+	anyApplied := false
 	for _, u := range req.Updates {
 		res := remapResult{Kind: u.Kind, ID: u.ID}
 		switch {
@@ -324,7 +337,11 @@ func (h *RecoveryHandler) PathRemap(w http.ResponseWriter, r *http.Request) {
 		default:
 			res.Error = "unknown kind"
 		}
+		anyApplied = anyApplied || res.Applied
 		results = append(results, res)
+	}
+	if anyApplied && h.onConfigChange != nil {
+		h.onConfigChange()
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"results": results})
 }
@@ -339,15 +356,18 @@ func (h *RecoveryHandler) remapStorage(id int64, newPath string) (bool, string) 
 	}
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(dest.Config), &cfg); err != nil {
+		log.Printf("path-remap: storage %d: malformed config: %v", id, err)
 		return false, "could not read destination config"
 	}
 	cfg["path"] = newPath
 	raw, err := json.Marshal(cfg)
 	if err != nil {
+		log.Printf("path-remap: storage %d: marshal config: %v", id, err)
 		return false, "could not update destination config"
 	}
 	dest.Config = string(raw)
 	if err := h.db.UpdateStorageDestination(dest); err != nil {
+		log.Printf("path-remap: storage %d: save: %v", id, err)
 		return false, "saving destination failed"
 	}
 	return true, ""
@@ -367,14 +387,17 @@ func (h *RecoveryHandler) remapJobItem(jobID, itemID int64, newPath string) (boo
 		}
 		var s map[string]any
 		if err := json.Unmarshal([]byte(it.Settings), &s); err != nil {
+			log.Printf("path-remap: job item %d: malformed settings: %v", itemID, err)
 			return false, "could not read item settings"
 		}
 		s["path"] = newPath
 		raw, err := json.Marshal(s)
 		if err != nil {
+			log.Printf("path-remap: job item %d: marshal settings: %v", itemID, err)
 			return false, "could not update item settings"
 		}
 		if err := h.db.UpdateJobItemSettings(itemID, string(raw)); err != nil {
+			log.Printf("path-remap: job item %d: save: %v", itemID, err)
 			return false, "saving item failed"
 		}
 		return true, ""

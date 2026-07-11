@@ -583,3 +583,41 @@ func TestPathRemapGuards(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// A successful remap must fire the config-change hook (DB → flash flush);
+// a remap where nothing applied must not.
+func TestPathRemapFiresConfigChangeHook(t *testing.T) {
+	d := newTestDB(t)
+	h := NewRecoveryHandler(d, "v1.0.0")
+	calls := 0
+	h.SetConfigChangeHook(func() { calls++ })
+
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "hook-dest", Type: "local", Config: `{"path":"/mnt/gone/away"}`,
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+
+	newDir := t.TempDir()
+	body := []byte(`{"updates":[{"kind":"storage","id":` + itoa(destID) + `,"new_path":"` + newDir + `"}]}`)
+	w := httptest.NewRecorder()
+	h.PathRemap(w, newReq(http.MethodPost, "/api/v1/recovery/path-remap", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("hook calls = %d, want 1", calls)
+	}
+
+	// Nothing applied → no hook call.
+	body = []byte(`{"updates":[{"kind":"storage","id":` + itoa(destID) + `,"new_path":"/still/does/not/exist"}]}`)
+	w = httptest.NewRecorder()
+	h.PathRemap(w, newReq(http.MethodPost, "/api/v1/recovery/path-remap", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("hook calls after failed remap = %d, want still 1", calls)
+	}
+}
