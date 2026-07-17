@@ -171,6 +171,8 @@ func runFolderExclusionCase(t *testing.T, tc folderExclusionCase) {
 	for _, relPath := range tc.wantAbsent {
 		if _, err := os.Stat(filepath.Join(restoreDir, relPath)); err == nil {
 			t.Errorf("expected %s to be absent from restore, but it was present", relPath)
+		} else if !os.IsNotExist(err) {
+			t.Errorf("expected %s to be absent from restore, but stat returned unexpected error: %v", relPath, err)
 		}
 	}
 }
