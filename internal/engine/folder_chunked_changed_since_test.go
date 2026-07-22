@@ -10,163 +10,146 @@ import (
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
-// TestFolderBackupChunked_ChangedSinceSkipsOldFiles verifies that
-// BackupChunked skips files whose mtime is before changed_since.
-func TestFolderBackupChunked_ChangedSinceSkipsOldFiles(t *testing.T) {
+// TestFolderBackupChunked_ChangedSince verifies that BackupChunked
+// honours the changed_since setting for differential backups.
+//
+// Boundary convention: a file whose mtime equals changed_since is
+// treated as "not changed" (skipped). This matches pathChangedSince
+// and tarDirectoryFiltered in the classic tar path.
+func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 	t.Parallel()
 
-	src := t.TempDir()
+	// Use a fixed reference timestamp well in the past so we can
+	// place files at "older", "equal", and "newer" offsets.
+	changedSince := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
 
-	// Create an "old" file and set its mtime to 3 hours ago.
-	oldFile := filepath.Join(src, "old.txt")
-	if err := os.WriteFile(oldFile, []byte("old data"), 0o600); err != nil {
-		t.Fatalf("write old: %v", err)
-	}
-	past := time.Now().Add(-3 * time.Hour)
-	if err := os.Chtimes(oldFile, past, past); err != nil {
-		t.Fatalf("chtimes old: %v", err)
-	}
-
-	// Create a "new" file with current mtime.
-	newFile := filepath.Join(src, "new.txt")
-	if err := os.WriteFile(newFile, []byte("new data"), 0o600); err != nil {
-		t.Fatalf("write new: %v", err)
-	}
-
-	// Create a subdirectory with an old file.
-	subDir := filepath.Join(src, "subdir")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	subOldFile := filepath.Join(subDir, "sub_old.txt")
-	if err := os.WriteFile(subOldFile, []byte("sub old"), 0o600); err != nil {
-		t.Fatalf("write sub old: %v", err)
-	}
-	if err := os.Chtimes(subOldFile, past, past); err != nil {
-		t.Fatalf("chtimes sub old: %v", err)
-	}
-
-	// Open repo using the shared test helper.
-	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
-
-	// Backup with changed_since = 1 hour ago.
-	changedSince := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	h := &FolderHandler{}
-	manifestID, err := h.BackupChunked(context.Background(), BackupItem{
-		Name: "test-folder",
-		Type: "folder",
-		Settings: map[string]any{
-			"path":          src,
-			"changed_since": changedSince,
+	tests := []struct {
+		name           string
+		settings       map[string]any
+		files          []testFile
+		wantInManifest []string
+		wantExcluded   []string
+	}{
+		{
+			name: "skips old files, includes new files and directory entries",
+			settings: map[string]any{
+				"changed_since": changedSince.Format(time.RFC3339),
+			},
+			files: []testFile{
+				{name: "old.txt", content: "old", offset: -3 * time.Hour},
+				{name: "new.txt", content: "new", offset: +2 * time.Hour},
+				{name: "subdir/sub_old.txt", content: "sub old", offset: -3 * time.Hour},
+			},
+			wantInManifest: []string{"new.txt", "subdir"},
+			wantExcluded:   []string{"old.txt", filepath.Join("subdir", "sub_old.txt")},
 		},
-	}, repo, func(string, int, string) {})
-	if err != nil {
-		t.Fatalf("BackupChunked: %v", err)
-	}
-	if err := repo.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
+		{
+			name:     "omitting changed_since produces a full backup",
+			settings: map[string]any{},
+			files: []testFile{
+				{name: "a.txt", content: "aaa", offset: -3 * time.Hour},
+			},
+			wantInManifest: []string{"a.txt"},
+		},
+		{
+			name: "malformed changed_since falls back to full backup",
+			settings: map[string]any{
+				"changed_since": "not-rfc3339",
+			},
+			files: []testFile{
+				{name: "b.txt", content: "bbb", offset: -3 * time.Hour},
+			},
+			wantInManifest: []string{"b.txt"},
+		},
+		{
+			name: "file with mtime equal to changed_since is excluded",
+			settings: map[string]any{
+				"changed_since": changedSince.Format(time.RFC3339),
+			},
+			files: []testFile{
+				{name: "boundary.txt", content: "equal", atExact: changedSince},
+				{name: "after.txt", content: "after", offset: +1 * time.Hour},
+			},
+			wantInManifest: []string{"after.txt"},
+			wantExcluded:   []string{"boundary.txt"},
+		},
 	}
 
-	// Retrieve manifest and verify only the new file is present.
-	m, err := repo.GetManifest(manifestID)
-	if err != nil {
-		t.Fatalf("GetManifest: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// new.txt should be in the manifest.
-	if _, ok := m.Files["new.txt"]; !ok {
-		t.Error("expected new.txt in manifest")
-	}
+			src := t.TempDir()
+			for _, tf := range tt.files {
+				tf.write(t, src, changedSince)
+			}
 
-	// old.txt and subdir/sub_old.txt should NOT be in the manifest.
-	if _, ok := m.Files["old.txt"]; ok {
-		t.Error("expected old.txt to be skipped (mtime before changed_since)")
-	}
-	if _, ok := m.Files[filepath.Join("subdir", "sub_old.txt")]; ok {
-		t.Error("expected subdir/sub_old.txt to be skipped (mtime before changed_since)")
-	}
+			repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
 
-	// The subdir entry itself should still be recorded (directory structure preserved).
-	if _, ok := m.Files["subdir"]; !ok {
-		t.Error("expected subdir directory entry in manifest")
+			tt.settings["path"] = src
+
+			h := &FolderHandler{}
+			manifestID, err := h.BackupChunked(context.Background(), BackupItem{
+				Name:     "test-folder",
+				Type:     "folder",
+				Settings: tt.settings,
+			}, repo, func(string, int, string) {})
+			if err != nil {
+				t.Fatalf("BackupChunked: %v", err)
+			}
+			if err := repo.Flush(); err != nil {
+				t.Fatalf("Flush: %v", err)
+			}
+
+			m, err := repo.GetManifest(manifestID)
+			if err != nil {
+				t.Fatalf("GetManifest: %v", err)
+			}
+
+			for _, name := range tt.wantInManifest {
+				if _, ok := m.Files[name]; !ok {
+					t.Errorf("expected %q in manifest", name)
+				}
+			}
+			for _, name := range tt.wantExcluded {
+				if _, ok := m.Files[name]; ok {
+					t.Errorf("expected %q to be excluded from manifest", name)
+				}
+			}
+		})
 	}
 }
 
-// TestFolderBackupChunked_NoChangedSinceBacksUpAll verifies that
-// omitting changed_since produces a full backup (all files in manifest).
-func TestFolderBackupChunked_NoChangedSinceBacksUpAll(t *testing.T) {
-	t.Parallel()
-
-	src := t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("aaa"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
-
-	h := &FolderHandler{}
-	manifestID, err := h.BackupChunked(context.Background(), BackupItem{
-		Name: "all-files",
-		Type: "folder",
-		Settings: map[string]any{
-			"path": src,
-		},
-	}, repo, func(string, int, string) {})
-	if err != nil {
-		t.Fatalf("BackupChunked: %v", err)
-	}
-	if err := repo.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	m, err := repo.GetManifest(manifestID)
-	if err != nil {
-		t.Fatalf("GetManifest: %v", err)
-	}
-	if _, ok := m.Files["a.txt"]; !ok {
-		t.Error("expected a.txt in manifest (no changed_since filter)")
-	}
+// testFile describes a file to create on disk for a test case.
+type testFile struct {
+	name    string
+	content string
+	// offset is relative to changedSince; negative = before, positive = after.
+	// Ignored when atExact is non-zero.
+	offset time.Duration
+	// atExact pins the file mtime to this timestamp.
+	atExact time.Time
 }
 
-// TestFolderBackupChunked_InvalidChangedSinceFallsBackToFull verifies
-// that a malformed changed_since value is silently ignored (same behaviour
-// as the classic tar path).
-func TestFolderBackupChunked_InvalidChangedSinceFallsBackToFull(t *testing.T) {
-	t.Parallel()
+func (tf testFile) write(t *testing.T, dir string, changedSince time.Time) {
+	t.Helper()
 
-	src := t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(src, "b.txt"), []byte("bbb"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	full := filepath.Join(dir, tf.name)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", tf.name, err)
+	}
+	if err := os.WriteFile(full, []byte(tf.content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", tf.name, err)
 	}
 
-	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
-
-	h := &FolderHandler{}
-	manifestID, err := h.BackupChunked(context.Background(), BackupItem{
-		Name: "garbage-changed-since",
-		Type: "folder",
-		Settings: map[string]any{
-			"path":          src,
-			"changed_since": "not-rfc3339",
-		},
-	}, repo, func(string, int, string) {})
-	if err != nil {
-		t.Fatalf("BackupChunked: %v", err)
+	var mtime time.Time
+	if !tf.atExact.IsZero() {
+		mtime = tf.atExact
+	} else {
+		mtime = changedSince.Add(tf.offset)
 	}
-	if err := repo.Flush(); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	m, err := repo.GetManifest(manifestID)
-	if err != nil {
-		t.Fatalf("GetManifest: %v", err)
-	}
-	if _, ok := m.Files["b.txt"]; !ok {
-		t.Error("expected b.txt in manifest (invalid changed_since should fall back to full)")
+	if err := os.Chtimes(full, mtime, mtime); err != nil {
+		t.Fatalf("chtimes %s: %v", tf.name, err)
 	}
 }

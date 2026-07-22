@@ -303,7 +303,8 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
 			return nil
 		}
-		// Skip files whose mtime is before the changed_since reference.
+		// Skip files whose mtime is not after the changed_since reference.
+		// Consistent with pathChangedSince and tarDirectoryFiltered.
 		// Directory entries are still recorded above for restore structure.
 		if hasChangedSince && !info.ModTime().After(changedSince) {
 			return nil
