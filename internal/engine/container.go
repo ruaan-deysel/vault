@@ -811,7 +811,9 @@ func runWithRestart(shouldRestart bool, itemName string, progress ProgressFunc, 
 		return runErr
 	}
 
-	progress(itemName, 92, "restarting container")
+	if progress != nil {
+		progress(itemName, 92, "restarting container")
+	}
 	restartErr := restart()
 	if restartErr == nil {
 		return runErr
@@ -1318,6 +1320,12 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		if err != nil {
 			return dedup.ID{}, fmt.Errorf("inspecting container: %w", err)
 		}
+		// Reassign containerID from the fresh inspect so that
+		// ContainerStop/ContainerStart below target the current container,
+		// not a stale ID from a previous run. Mirrors the classic Backup
+		// path (see containerID reassignment after fallback inspect).
+		containerID = inspectResult.Container.ID
+		log.Printf("[backup-chunked] container %q: resolved by name (ID changed from stored value to %s)", item.Name, ShortID(containerID))
 	}
 	inspect := inspectResult.Container
 	warnNetworkDependency(inspect, item.Name)
@@ -1378,13 +1386,15 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 	wasRunning := inspect.State.Running
 	noStop, _ := item.Settings["no_stop"].(bool)
 	if wasRunning && !noStop {
-		progress(item.Name, 5, "stopping container")
+		if progress != nil {
+			progress(item.Name, 20, "stopping container")
+		}
 		if _, err := h.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{}); err != nil {
 			return dedup.ID{}, fmt.Errorf("stopping container %s: %w", item.Name, err)
 		}
 	}
 	if progress != nil {
-		progress(item.Name, 50, "backing up volumes")
+		progress(item.Name, 60, "backing up volumes")
 	}
 
 	err = runWithRestart(wasRunning && !noStop, item.Name, progress, func() error {

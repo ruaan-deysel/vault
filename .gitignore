@@ -94,4 +94,3 @@ internal/release/CHANGELOG.md
 
 # Generated docs reference (built fresh in CI)
 docs/reference/*.md
-.worktrees
