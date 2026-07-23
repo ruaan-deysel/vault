@@ -17,6 +17,24 @@ let previousStatus = null
 let pollEnabled = false
 let status = $state('disconnected')
 
+// Bounded exponential backoff for reconnection. A fixed 3s uncapped loop churned
+// silently forever when the daemon was unreachable; backoff with jitter and a
+// ceiling makes persistent failures gentle on the daemon and diagnosable via the
+// connection indicator (issue #250).
+const RECONNECT_BASE_MS = 1000
+const RECONNECT_MAX_MS = 30000
+let reconnectAttempts = 0
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer)
+  const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts)
+  // Full jitter: pick a random delay in [0, backoff] so many clients reconnecting
+  // after a daemon restart don't stampede in lockstep.
+  const delay = Math.round(Math.random() * backoff)
+  reconnectAttempts++
+  reconnectTimer = setTimeout(connectWs, delay)
+}
+
 export function getWsStatus() {
   return status
 }
@@ -128,14 +146,19 @@ export function connectWs() {
   let url = `${proto}//${location.host}/api/v1/ws`
 
   status = 'connecting'
-  ws = new WebSocket(url)
+  // Capture this socket locally so a stale handler (from a socket that was
+  // replaced) can never mutate shared state for the current connection.
+  const socket = new WebSocket(url)
+  ws = socket
 
-  ws.onopen = () => {
+  socket.onopen = () => {
+    if (ws !== socket) return
     status = 'connected'
+    reconnectAttempts = 0
     clearTimeout(reconnectTimer)
   }
 
-  ws.onmessage = (e) => {
+  socket.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data)
       emitMessage(msg)
@@ -144,14 +167,18 @@ export function connectWs() {
     }
   }
 
-  ws.onclose = () => {
-    status = 'disconnected'
+  socket.onclose = () => {
+    if (ws !== socket) return
+    // Every onclose schedules an automatic retry (disconnectWs detaches this
+    // handler for manual/terminal closes), so 'reconnecting' is the honest
+    // status — 'disconnected' is reserved for the idle/torn-down state.
+    status = 'reconnecting'
     ws = null
-    reconnectTimer = setTimeout(connectWs, 3000)
+    scheduleReconnect()
   }
 
-  ws.onerror = () => {
-    ws?.close()
+  socket.onerror = () => {
+    socket.close()
   }
 }
 
@@ -161,6 +188,7 @@ export function disconnectWs() {
   pollTimer = null
   pollEnabled = false
   previousStatus = null
+  reconnectAttempts = 0
   if (ws) {
     ws.onclose = null
     ws.close()
