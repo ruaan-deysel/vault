@@ -148,9 +148,10 @@
   // and 'connected' are healthy/transient and stay silent. Deliberately NOT tied
   // to boot-degraded state — a browser that merely blocks storage must not be
   // reported as a daemon outage.
-  let connectionLost = $derived(
-    ready && (getWsStatus() === 'disconnected' || getWsStatus() === 'reconnecting')
-  )
+  let connectionLost = $derived.by(() => {
+    const wsStatus = getWsStatus()
+    return ready && (wsStatus === 'disconnected' || wsStatus === 'reconnecting')
+  })
 
   function isActive(path) {
     const route = getRoute()
