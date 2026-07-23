@@ -1,6 +1,7 @@
 /** WebSocket client with auto-reconnect */
 
 import { buildApiRequest, getLiveMode } from './runtime-config.js'
+import { backoffDelay } from './ws-backoff.js'
 import {
   handleAnomalyRaised,
   handleAnomalyUpdated,
@@ -18,19 +19,14 @@ let pollEnabled = false
 let status = $state('disconnected')
 
 // Bounded exponential backoff for reconnection. A fixed 3s uncapped loop churned
-// silently forever when the daemon was unreachable; backoff with jitter and a
-// ceiling makes persistent failures gentle on the daemon and diagnosable via the
-// connection indicator (issue #250).
-const RECONNECT_BASE_MS = 1000
-const RECONNECT_MAX_MS = 30000
+// silently forever when the daemon was unreachable; jittered, capped backoff
+// (see ws-backoff.js) makes persistent failures gentle on the daemon and
+// diagnosable via the connection indicator (issue #250).
 let reconnectAttempts = 0
 
 function scheduleReconnect() {
   clearTimeout(reconnectTimer)
-  const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts)
-  // Full jitter: pick a random delay in [0, backoff] so many clients reconnecting
-  // after a daemon restart don't stampede in lockstep.
-  const delay = Math.round(Math.random() * backoff)
+  const delay = backoffDelay(reconnectAttempts)
   reconnectAttempts++
   reconnectTimer = setTimeout(connectWs, delay)
 }
@@ -148,7 +144,18 @@ export function connectWs() {
   status = 'connecting'
   // Capture this socket locally so a stale handler (from a socket that was
   // replaced) can never mutate shared state for the current connection.
-  const socket = new WebSocket(url)
+  let socket
+  try {
+    socket = new WebSocket(url)
+  } catch {
+    // The WebSocket constructor can throw (blocked API / SecurityError). This
+    // runs from the reconnect timer too, so swallow it and keep the bounded
+    // retry loop alive instead of letting the exception kill reconnection.
+    ws = null
+    status = 'reconnecting'
+    scheduleReconnect()
+    return
+  }
   ws = socket
 
   socket.onopen = () => {

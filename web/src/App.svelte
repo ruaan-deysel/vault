@@ -136,6 +136,10 @@
         ready = true
       }
     })()
+
+    // Clear the watchdog on unmount so a pending timeout can't fire against a
+    // destroyed component (e.g. during dev HMR).
+    return () => clearTimeout(watchdog)
   })
 
   // Surface persistent connection trouble in a small, non-blocking banner so a
