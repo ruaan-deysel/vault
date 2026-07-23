@@ -166,6 +166,9 @@ export function connectWs() {
   }
 
   socket.onmessage = (e) => {
+    // Drop late messages from a superseded socket so a reconnect race can't
+    // emit stale events — same guard as onopen/onclose.
+    if (ws !== socket) return
     try {
       const msg = JSON.parse(e.data)
       emitMessage(msg)
