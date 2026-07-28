@@ -121,3 +121,36 @@ func TestRestoreDedupContainerDifferentialRestoresDirectly(t *testing.T) {
 	// etc.) is acceptable — the point is we took the dedup restore path,
 	// not the broken classic staging path.
 }
+
+// TestRestoreClassicContainerDifferentialStillUsesChain verifies that a
+// differential container restore on a CLASSIC (non-dedup) destination is
+// unaffected by the fix — it should still go through restoreMergedChain
+// (the only path that correctly overlays full + diff tar layers for
+// classic container backups).
+//
+// We cannot easily exercise the full staging pipeline in a unit test
+// (requires a real Docker socket), so we assert that the restore does NOT
+// take the dedup shortcut: resolveManifestID must return false for a
+// classic restore point with no manifest metadata. This confirms the
+// guard correctly falls through to usesMergedRestoreChain for containers.
+func TestRestoreClassicContainerDifferentialStillUsesChain(t *testing.T) {
+	t.Parallel()
+
+	// A classic restore point has no manifest_id and no item_manifests
+	// metadata. resolveManifestID must return ok=false.
+	rp := db.RestorePoint{
+		BackupType: "differential",
+		Metadata:   ``, // no manifest metadata
+	}
+
+	_, ok := resolveManifestID(rp, "sonarr")
+	if ok {
+		t.Fatal("resolveManifestID returned ok=true for a classic (non-dedup) restore point — this would incorrectly bypass chain replay for classic containers")
+	}
+
+	// Also verify the dispatch order: usesMergedRestoreChain("container")
+	// must still return true so classic containers go through merged staging.
+	if !usesMergedRestoreChain("container") {
+		t.Fatal("usesMergedRestoreChain(\"container\") returned false — classic containers would not use merged chain staging")
+	}
+}
