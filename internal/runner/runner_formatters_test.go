@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/format"
 	"github.com/ruaan-deysel/vault/internal/notify"
 )
 
@@ -32,25 +33,21 @@ func TestFmtDuration(t *testing.T) {
 	}
 }
 
-func TestFmtSize(t *testing.T) {
+func TestFmtSizeDelegatesToNotify(t *testing.T) {
 	t.Parallel()
+	// Spot-check that format.Bytes is used for Discord embed values.
+	// Full coverage lives in notify/format_test.go.
 	cases := []struct {
 		bytes int64
 		want  string
 	}{
 		{0, "0 B"},
-		{1, "1 B"},
-		{1023, "1023 B"},
-		{1024, "1 KB"},
-		{2048, "2 KB"},
-		{1024 * 1024, "1.0 MB"},
 		{int64(1024) * 1024 * 1024, "1.0 GB"},
-		// Slightly off-binary values exercise the float formatting branch.
-		{1536 * 1024, "1.5 MB"},
+		{int64(1024) * 1024 * 1024 * 1024, "1.0 TB"},
 	}
 	for _, c := range cases {
-		if got := fmtSize(c.bytes); got != c.want {
-			t.Errorf("fmtSize(%d) = %q, want %q", c.bytes, got, c.want)
+		if got := format.FormatBytes(c.bytes); got != c.want {
+			t.Errorf("format.FormatBytes(%d) = %q, want %q", c.bytes, got, c.want)
 		}
 	}
 }

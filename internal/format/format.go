@@ -1,4 +1,4 @@
-package notify
+package format
 
 import "fmt"
 
