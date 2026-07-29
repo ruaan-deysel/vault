@@ -38,6 +38,14 @@ func Bytes(b float64) string {
 		v /= k
 		i++
 	}
+	// A value that rounds up to 1024 at its unit belongs in the next one.
+	// Without this, one byte under a petabyte renders as "1024 TB" here while
+	// the web UI's log-based index picks "1 PB" — the two disagree at exactly
+	// the boundaries, which is where a mismatch is most visible.
+	if i < len(units)-1 && math.Round(v*10)/10 >= k {
+		v /= k
+		i++
+	}
 	if i == 0 {
 		// Whole bytes — no fractional part.
 		return fmt.Sprintf("%.0f %s", v, units[i])

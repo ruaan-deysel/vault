@@ -36,6 +36,10 @@ describe('formatBytes', () => {
     expect(formatBytes(1024 ** 4)).toBe('1 TB')
     expect(formatBytes(1024 ** 5)).toBe('1 PB')
     expect(formatBytes(1024 ** 6)).toBe('1024 PB')
+    // Just under a boundary promotes, matching the daemon exactly. The old
+    // Math.log index disagreed with it here.
+    expect(formatBytes(1024 ** 5 - 1)).toBe('1 PB')
+    expect(formatBytes(1024 ** 2 - 1)).toBe('1 MB')
   })
 })
 

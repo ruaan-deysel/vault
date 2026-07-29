@@ -22,13 +22,15 @@ func TestBytes(t *testing.T) {
 		{1024, "1 KB"},
 		{1536, "1.5 KB"}, // was "2 KB"
 		{2048, "2 KB"},
-		{1024*1024 - 1, "1024 KB"},
+		// Just under a boundary promotes rather than printing "1024 KB".
+		{1024*1024 - 1, "1 MB"},
 		{1024 * 1024, "1 MB"},
 		{1536 * 1024, "1.5 MB"},
 		{1 << 30, "1 GB"},
 		{1536 * 1024 * 1024, "1.5 GB"},
 		{1 << 40, "1 TB"},
 		{2500 * (1 << 30), "2.4 TB"},
+		{1<<50 - 1, "1 PB"}, // must not render as "1024 TB" (web parity)
 		{1 << 50, "1 PB"},
 		// Beyond the largest unit it keeps scaling PB rather than wrapping.
 		{1024 * (1 << 50), "1024 PB"},

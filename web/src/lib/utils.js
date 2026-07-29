@@ -12,8 +12,22 @@ export function formatBytes(bytes) {
   // clamp a petabyte-scale value indexed past the end of the array and
   // rendered as "1 undefined".
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1)
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + units[i]
+  // Divide rather than index by Math.log: the logarithm is inexact near a
+  // boundary and picked a different unit than the daemon for values just
+  // under one (1 PB minus a byte came out as '1 PB' here and '1024 TB'
+  // there). A value that rounds up to 1024 promotes, so neither side ever
+  // prints '1024 TB'.
+  let i = 0
+  let v = bytes
+  while (v >= k && i < units.length - 1) {
+    v /= k
+    i++
+  }
+  if (i < units.length - 1 && Math.round(v * 10) / 10 >= k) {
+    v /= k
+    i++
+  }
+  return parseFloat(v.toFixed(1)) + ' ' + units[i]
 }
 
 export function formatDate(str) {
