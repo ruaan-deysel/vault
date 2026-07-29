@@ -231,27 +231,6 @@ var jobEnums = map[string][]string{
 	"notify_on":      {"always", "failure", "never"},
 }
 
-// legacyJobEnumAliases maps values this API once accepted onto the canonical
-// ones. "all_at_once" was only ever in the container_mode allow-list — the
-// runner has always compared against "stop_all", so a job carrying it ran
-// sequentially regardless. Writers that skip this validator (MCP, import,
-// replication) can still have persisted it, and simply rejecting the value
-// would make those jobs impossible to edit or even toggle from the UI. They
-// are normalised on the next save instead, which also gives them the batch
-// behaviour the value always claimed.
-var legacyJobEnumAliases = map[string]map[string]string{
-	"container_mode": {"all_at_once": "stop_all"},
-}
-
-// normalizeJobEnum resolves a deprecated alias to its canonical value,
-// returning value unchanged when there is no alias for it.
-func normalizeJobEnum(field, value string) string {
-	if canonical, ok := legacyJobEnumAliases[field][value]; ok {
-		return canonical
-	}
-	return value
-}
-
 // validateJobEnum reports whether value is allowed for field. An empty value is
 // accepted: the DB layer applies the column default, and the wizard omits
 // fields that do not apply to the selected item types.
@@ -289,10 +268,6 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
 		return false
 	}
-	// Resolve deprecated aliases in place before validating, so a job written
-	// by a path that skips this validator is repaired rather than rejected.
-	job.ContainerMode = normalizeJobEnum("container_mode", job.ContainerMode)
-
 	for field, value := range map[string]string{
 		"backup_type_chain": job.BackupTypeChain,
 		"compression":       job.Compression,

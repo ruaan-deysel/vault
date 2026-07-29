@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,6 +30,44 @@ type VMHandler struct {
 	// break the connection (issue #265). Holding the socket lets us close it
 	// outright, which never blocks.
 	sock net.Conn
+	// mu guards conn/sock/aborted, which the abort goroutine and the
+	// reconnect path both touch while the run's own goroutine is using conn.
+	mu      sync.Mutex
+	aborted bool
+}
+
+// libvirtConnectTimeout bounds the connect handshake. ConnectToURI performs
+// RPC initialisation synchronously with no deadline of its own, so a libvirtd
+// that accepts the socket but never answers would hang the constructor — and
+// with it the whole run, before any abort guard is installed (issue #265).
+const libvirtConnectTimeout = 30 * time.Second
+
+// dialLibvirt opens a bounded connection to the local hypervisor and returns
+// both the socket and the client, so callers keep the net.Conn needed to force
+// the connection down later.
+func dialLibvirt(uri *url.URL) (net.Conn, *libvirt.Libvirt, error) {
+	// Dial the socket ourselves rather than using libvirt.ConnectToURI, which
+	// hides the net.Conn. Everything else is what ConnectToURI does.
+	sock, err := dialers.NewLocal().Dial()
+	if err != nil {
+		return nil, nil, err
+	}
+	// A deadline over the handshake only; cleared once connected, since the
+	// connection is long-lived and idle between RPCs.
+	if err := sock.SetDeadline(time.Now().Add(libvirtConnectTimeout)); err != nil {
+		_ = sock.Close()
+		return nil, nil, fmt.Errorf("setting libvirt handshake deadline: %w", err)
+	}
+	conn := libvirt.NewWithDialer(dialers.NewAlreadyConnected(sock))
+	if err := conn.ConnectToURI(libvirt.RemoteURI(uri)); err != nil {
+		_ = sock.Close()
+		return nil, nil, err
+	}
+	if err := sock.SetDeadline(time.Time{}); err != nil {
+		_ = sock.Close()
+		return nil, nil, fmt.Errorf("clearing libvirt handshake deadline: %w", err)
+	}
+	return sock, conn, nil
 }
 
 // NewVMHandler creates a new VMHandler connected to the local QEMU hypervisor.
@@ -37,19 +76,10 @@ func NewVMHandler() (*VMHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing libvirt URI: %w", err)
 	}
-
-	// Dial the socket ourselves rather than using libvirt.ConnectToURI, which
-	// hides the net.Conn. Everything else is what ConnectToURI does.
-	sock, err := dialers.NewLocal().Dial()
+	sock, conn, err := dialLibvirt(uri)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}
-	conn := libvirt.NewWithDialer(dialers.NewAlreadyConnected(sock))
-	if err := conn.ConnectToURI(libvirt.RemoteURI(uri)); err != nil {
-		_ = sock.Close()
-		return nil, fmt.Errorf("connecting to libvirt: %w", err)
-	}
-
 	return &VMHandler{conn: conn, sock: sock}, nil
 }
 
@@ -127,8 +157,11 @@ func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string,
 	result := &BackupResult{ItemName: item.Name, Meta: map[string]any{}}
 
 	// A cancelled run must actually end, even if libvirt has stopped
-	// answering (issue #265).
-	defer h.abortLibvirtOnCancel(ctx, vmAbortGrace)()
+	// answering (issue #265). stopAbort is idempotent: teardown disarms it
+	// early so the socket cannot be pulled out from under the cleanup that
+	// brings the guest back up.
+	stopAbort := h.abortLibvirtOnCancel(ctx, vmAbortGrace)
+	defer stopAbort()
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating dest dir: %w", err)
@@ -304,9 +337,21 @@ func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string,
 			return nil, err
 		}
 
+		// Teardown restores the guest's power state and must survive
+		// cancellation, so it disarms the socket abort first and reconnects
+		// if the abort already fired. Otherwise aborting a wedged call would
+		// leave the guest paused or off — the exact fault of issue #265.
+		finishDomainState := func() error {
+			stopAbort()
+			if _, err := h.reconnectIfAborted(); err != nil {
+				return err
+			}
+			return restoreDomainState()
+		}
+
 		artifacts, err = h.backupDisks(ctx, backupDom, item.Name, copyDisks, destDir, parentCheckpoint, forceQcow2, progress, result)
 		if err != nil {
-			if restoreErr := restoreDomainState(); restoreErr != nil {
+			if restoreErr := finishDomainState(); restoreErr != nil {
 				return nil, fmt.Errorf("%v; restoring domain state: %w", err, restoreErr)
 			}
 			return nil, err
@@ -322,7 +367,7 @@ func (h *VMHandler) Backup(ctx context.Context, item BackupItem, destDir string,
 			checkpointName = ""
 		}
 
-		if err := restoreDomainState(); err != nil {
+		if err := finishDomainState(); err != nil {
 			return nil, fmt.Errorf("restoring domain state: %w", err)
 		}
 	} else {
@@ -809,6 +854,7 @@ const vmAbortGrace = 15 * time.Minute
 // RPC call sites individually buys the same guarantee for a far larger diff.
 func (h *VMHandler) abortLibvirtOnCancel(ctx context.Context, grace time.Duration) func() {
 	done := make(chan struct{})
+	var once sync.Once
 	go func() {
 		select {
 		case <-done:
@@ -819,15 +865,59 @@ func (h *VMHandler) abortLibvirtOnCancel(ctx context.Context, grace time.Duratio
 		case <-done:
 		case <-time.After(grace):
 			log.Printf("engine/vm: run cancelled but a libvirt call is still outstanding after %s — closing the libvirt socket to unblock it", grace)
-			if h.sock == nil {
+			h.mu.Lock()
+			sock, aborted := h.sock, h.sock != nil
+			h.aborted = aborted
+			h.mu.Unlock()
+			if sock == nil {
 				return
 			}
-			if err := h.sock.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := sock.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 				log.Printf("engine/vm: closing the libvirt socket: %v", err)
 			}
 		}
 	}()
-	return func() { close(done) }
+	// Idempotent: callers disarm it early, before teardown, and again via defer.
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// lookupDomainFresh re-resolves a domain by its name, which is stable across
+// reconnects. Falls back to the caller's existing handle when the lookup
+// fails, so this can never make teardown worse than it already was.
+func (h *VMHandler) lookupDomainFresh(name string, fallback libvirt.Domain) libvirt.Domain {
+	d, err := h.conn.DomainLookupByName(name)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+// reconnectIfAborted re-establishes the libvirt connection when the abort path
+// has closed the socket, reporting whether it had to.
+//
+// Teardown after a cancelled cold backup still has real work to do — destroy
+// the paused session and bring the guest back up — and it runs on the same
+// handler whose socket the abort may have just dropped. Without this, aborting
+// a wedged RPC would itself leave the VM paused or powered off, which is the
+// very failure #265 is about.
+func (h *VMHandler) reconnectIfAborted() (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.aborted {
+		return false, nil
+	}
+
+	uri, err := url.Parse(string(libvirt.QEMUSystem))
+	if err != nil {
+		return true, fmt.Errorf("parsing libvirt URI: %w", err)
+	}
+	sock, conn, err := dialLibvirt(uri)
+	if err != nil {
+		return true, fmt.Errorf("reconnecting to libvirt after abort: %w", err)
+	}
+	h.sock, h.conn, h.aborted = sock, conn, false
+	log.Printf("engine/vm: reconnected to libvirt after aborting a stuck call")
+	return true, nil
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() on
@@ -842,10 +932,6 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
-}
-
-func libvirtDomainIsShutOff(state libvirt.DomainState) bool {
-	return state == libvirt.DomainShutoff || state == libvirt.DomainShutdown
 }
 
 func (h *VMHandler) libvirtUndefineDomain(dom libvirt.Domain) error {
@@ -959,7 +1045,7 @@ func (h *VMHandler) destroyDomainWithRetry(ctx context.Context, dom libvirt.Doma
 // paused VM, then tear the session back down. Guests that were already paused
 // can use their existing paused state directly without another reboot cycle.
 func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom libvirt.Domain, state libvirt.DomainState, backupMode string, progress ProgressFunc) (libvirt.Domain, func() error, error) {
-	if state == libvirt.DomainShutoff || state == libvirt.DomainShutdown {
+	if libvirtDomainIsShutOff(state) {
 		progress(name, 20, "starting domain paused for backup")
 		backupDom, err := h.conn.DomainCreateWithFlags(dom, uint32(libvirt.DomainStartPaused))
 		if err != nil {
@@ -1013,6 +1099,12 @@ func (h *VMHandler) prepareDomainForBackup(ctx context.Context, name string, dom
 	}
 
 	return backupDom, func() error {
+		// Re-resolve by name first: if the abort path dropped the socket and
+		// the caller reconnected, handles taken earlier belong to a connection
+		// that no longer exists. The name is the stable identity here.
+		backupDom = h.lookupDomainFresh(name, backupDom)
+		dom = h.lookupDomainFresh(name, dom)
+
 		// Teardown must complete even after cancellation — fresh context.
 		//
 		// The restart is attempted even when the session teardown fails. A

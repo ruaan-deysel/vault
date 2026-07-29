@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ruaan-deysel/vault/internal/db"
 )
 
 func TestStallWatchdogCancelsOnNoProgress(t *testing.T) {
@@ -21,7 +23,7 @@ func TestStallWatchdogCancelsOnNoProgress(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	defer close(done)
-	r.startStallWatchdog(ctx, done, cancel, 1, 2*time.Millisecond, 5*time.Millisecond, 10*time.Millisecond)
+	r.startStallWatchdog(ctx, done, cancel, 1, 0, 2*time.Millisecond, 5*time.Millisecond, 10*time.Millisecond)
 
 	select {
 	case <-ctx.Done():
@@ -42,7 +44,7 @@ func TestStallWatchdogHeartbeatPreventsCancel(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	defer close(done)
-	r.startStallWatchdog(ctx, done, cancel, 1, 2*time.Millisecond, 20*time.Millisecond, 40*time.Millisecond)
+	r.startStallWatchdog(ctx, done, cancel, 1, 0, 2*time.Millisecond, 20*time.Millisecond, 40*time.Millisecond)
 
 	// Heartbeat for ~120ms, longer than cancelAfter, to prove fresh progress
 	// keeps the context alive.
@@ -100,7 +102,7 @@ func TestStallWatchdogKeepsWarningAfterCancel(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	defer close(done)
-	r.startStallWatchdog(ctx, done, cancel, 1, 2*time.Millisecond, 4*time.Millisecond, 6*time.Millisecond)
+	r.startStallWatchdog(ctx, done, cancel, 1, 0, 2*time.Millisecond, 4*time.Millisecond, 6*time.Millisecond)
 
 	<-ctx.Done() // the cancel has fired
 
@@ -134,7 +136,7 @@ func TestStallWatchdogReportsExternalCancel(t *testing.T) {
 	done := make(chan struct{})
 	defer close(done)
 	// cancelAfter is an hour: only the external cancel can trigger reporting.
-	r.startStallWatchdog(ctx, done, cancel, 1, 2*time.Millisecond, time.Hour, time.Hour)
+	r.startStallWatchdog(ctx, done, cancel, 1, 0, 2*time.Millisecond, time.Hour, time.Hour)
 
 	cancel() // operator hits Cancel; the handler is wedged and never returns
 
@@ -146,4 +148,55 @@ func TestStallWatchdogReportsExternalCancel(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("watchdog never reported a wedged run after an external cancel; log was:\n%s", sink.String())
+}
+
+// TestStallWatchdogRecordsStalledState covers the part of #265 that logging
+// alone cannot: the reporter asked to be able to tell a stuck run from a
+// healthy one, and status stays "running" in both cases because the run has
+// genuinely not finished. The stall must therefore be recorded on the run row
+// where the API can serve it.
+func TestStallWatchdogRecordsStalledState(t *testing.T) {
+	r, database, _ := setupTestRunner(t)
+
+	jobID, err := database.CreateJob(db.Job{Name: "stall-test", Schedule: "0 2 * * *"})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "running", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+
+	r.lastProgressMu.Lock()
+	r.lastProgress = time.Now().Add(-time.Hour) // already stale
+	r.lastProgressMu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	defer close(done)
+	r.startStallWatchdog(ctx, done, cancel, jobID, runID, 2*time.Millisecond, 4*time.Millisecond, 6*time.Millisecond)
+
+	<-ctx.Done()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := database.GetJobRun(runID)
+		if err != nil {
+			t.Fatalf("GetJobRun: %v", err)
+		}
+		if run.StalledAt != nil {
+			if run.StallReason == "" {
+				t.Error("stalled run recorded without a reason")
+			}
+			// Status must NOT have been flipped: the run has not finished,
+			// and pretending otherwise would lose the real outcome.
+			if run.Status != "running" {
+				t.Errorf("status = %q, want it left as running", run.Status)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("watchdog never recorded stalled_at on the run row")
 }

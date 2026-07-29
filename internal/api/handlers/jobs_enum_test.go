@@ -19,6 +19,8 @@ func TestValidateJobEnumContainerMode(t *testing.T) {
 		{string(config.ContainerStopAll), false},
 		{"", false}, // omitted — the DB column default applies
 		{"nonsense", true},
+		// Migrated away by dataMigrations at upgrade, not accepted here.
+		{"all_at_once", true},
 	}
 
 	for _, tc := range cases {
@@ -31,26 +33,6 @@ func TestValidateJobEnumContainerMode(t *testing.T) {
 				t.Fatalf("validateJobEnum(container_mode, %q) = %v, want nil", tc.value, err)
 			}
 		})
-	}
-}
-
-// TestNormalizeJobEnumLegacyAlias pins the repair path for jobs persisted by a
-// writer that skips this validator (MCP, import, replication). Rejecting the
-// stored value outright would leave such a job uneditable — even toggling
-// Enabled sends the whole job back through validation.
-func TestNormalizeJobEnumLegacyAlias(t *testing.T) {
-	got := normalizeJobEnum("container_mode", "all_at_once")
-	if got != string(config.ContainerStopAll) {
-		t.Fatalf("normalizeJobEnum(container_mode, all_at_once) = %q, want %q", got, config.ContainerStopAll)
-	}
-	if err := validateJobEnum("container_mode", got); err != nil {
-		t.Fatalf("normalised value must validate: %v", err)
-	}
-	// Values with no alias are passed through untouched.
-	for _, v := range []string{string(config.ContainerOneByOne), string(config.ContainerStopAll), "nonsense", ""} {
-		if out := normalizeJobEnum("container_mode", v); out != v {
-			t.Errorf("normalizeJobEnum(container_mode, %q) = %q, want it unchanged", v, out)
-		}
 	}
 }
 
