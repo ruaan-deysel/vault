@@ -52,8 +52,11 @@ func Bytes(b float64) string {
 		i++
 	}
 	if i == 0 {
-		// Whole bytes — no fractional part.
-		return fmt.Sprintf("%.0f %s", v, units[i])
+		// Whole bytes — no fractional part. Round explicitly for the same
+		// reason as below: %.0f breaks a tie to even (0.5 -> "0") while
+		// JavaScript's Math.round takes it up. Fractional byte counts reach
+		// here from the Discord transfer rate, which is a division.
+		return fmt.Sprintf("%.0f %s", math.Round(v), units[i])
 	}
 	// Round explicitly rather than leaving it to the formatter: Go's
 	// FormatFloat breaks a tie to even (1.25 -> "1.2") while JavaScript's

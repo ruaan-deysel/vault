@@ -39,6 +39,10 @@ func TestBytes(t *testing.T) {
 		// JavaScript rounds it up, so both now round half away from zero.
 		{1280, "1.3 KB"},
 		{math.Copysign(0, -1), "0 B"}, // -0 must not render as "-0 B"
+		// Sub-kilobyte ties. A transfer rate is a division, so fractional
+		// byte counts do reach here; %.0f alone would break these to even.
+		{0.5, "1 B"},
+		{2.5, "3 B"},
 	}
 	for _, c := range cases {
 		if got := Bytes(c.bytes); got != c.want {

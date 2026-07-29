@@ -45,6 +45,8 @@ describe('formatBytes', () => {
     expect(formatBytes(-1536)).toBe('-1.5 KB')
     expect(formatBytes(NaN)).toBe('—')
     expect(formatBytes(Infinity)).toBe('—')
+    expect(formatBytes(0.5)).toBe('1 B')
+    expect(formatBytes(2.5)).toBe('3 B')
   })
 })
 
