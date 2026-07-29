@@ -35,8 +35,8 @@ func TestFmtDuration(t *testing.T) {
 
 func TestFmtSizeDelegatesToNotify(t *testing.T) {
 	t.Parallel()
-	// Spot-check that format.Bytes is used for Discord embed values.
-	// Full coverage lives in notify/format_test.go.
+	// Spot-check that format.FormatBytes is used for Discord embed values.
+	// Full coverage lives in internal/format/format_test.go.
 	cases := []struct {
 		bytes int64
 		want  string
