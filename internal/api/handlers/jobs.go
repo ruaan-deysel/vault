@@ -221,10 +221,35 @@ var jobEnums = map[string][]string{
 	"backup_type_chain": {"full", "incremental", "differential"},
 	"compression":       {"none", "gzip", "zstd"},
 	"encryption":        {"none", "age"},
-	"container_mode":    {"one_by_one", "all_at_once"},
-	"vm_mode":           {"snapshot", "cold"},
-	"verify_mode":       {"quick", "deep"},
-	"notify_on":         {"always", "failure", "never"},
+	// "stop_all" is the canonical value everywhere else — config.ContainerStopAll,
+	// the runner's batch path, and the value BackupModeSelector.svelte submits.
+	// This list said "all_at_once", so saving a job in Batch mode was rejected
+	// (issue #261).
+	"container_mode": {"one_by_one", "stop_all"},
+	"vm_mode":        {"snapshot", "cold"},
+	"verify_mode":    {"quick", "deep"},
+	"notify_on":      {"always", "failure", "never"},
+}
+
+// legacyJobEnumAliases maps values this API once accepted onto the canonical
+// ones. "all_at_once" was only ever in the container_mode allow-list — the
+// runner has always compared against "stop_all", so a job carrying it ran
+// sequentially regardless. Writers that skip this validator (MCP, import,
+// replication) can still have persisted it, and simply rejecting the value
+// would make those jobs impossible to edit or even toggle from the UI. They
+// are normalised on the next save instead, which also gives them the batch
+// behaviour the value always claimed.
+var legacyJobEnumAliases = map[string]map[string]string{
+	"container_mode": {"all_at_once": "stop_all"},
+}
+
+// normalizeJobEnum resolves a deprecated alias to its canonical value,
+// returning value unchanged when there is no alias for it.
+func normalizeJobEnum(field, value string) string {
+	if canonical, ok := legacyJobEnumAliases[field][value]; ok {
+		return canonical
+	}
+	return value
 }
 
 // validateJobEnum reports whether value is allowed for field. An empty value is
@@ -264,6 +289,10 @@ func validateJobInput(w http.ResponseWriter, job *db.Job) bool {
 		respondError(w, http.StatusBadRequest, "invalid schedule: "+err.Error())
 		return false
 	}
+	// Resolve deprecated aliases in place before validating, so a job written
+	// by a path that skips this validator is repaired rather than rejected.
+	job.ContainerMode = normalizeJobEnum("container_mode", job.ContainerMode)
+
 	for field, value := range map[string]string{
 		"backup_type_chain": job.BackupTypeChain,
 		"compression":       job.Compression,
