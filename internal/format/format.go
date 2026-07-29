@@ -27,6 +27,11 @@ func Bytes(b float64) string {
 	if math.IsNaN(b) || math.IsInf(b, 0) {
 		return "—"
 	}
+	// -0 compares equal to 0 but formats as "-0", so short-circuit it here
+	// rather than letting it reach the sign branch or the formatter.
+	if b == 0 {
+		return "0 B"
+	}
 	if b < 0 {
 		return "-" + Bytes(-b)
 	}
@@ -50,7 +55,11 @@ func Bytes(b float64) string {
 		// Whole bytes — no fractional part.
 		return fmt.Sprintf("%.0f %s", v, units[i])
 	}
-	s := strconv.FormatFloat(v, 'f', 1, 64)
+	// Round explicitly rather than leaving it to the formatter: Go's
+	// FormatFloat breaks a tie to even (1.25 -> "1.2") while JavaScript's
+	// toFixed rounds it up ("1.3"), so the same byte count read differently
+	// in the daemon and the interface. Both now round half away from zero.
+	s := strconv.FormatFloat(math.Round(v*10)/10, 'f', 1, 64)
 	s = strings.TrimSuffix(s, ".0")
 	return s + " " + units[i]
 }

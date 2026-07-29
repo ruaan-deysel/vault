@@ -35,6 +35,10 @@ func TestBytes(t *testing.T) {
 		// Beyond the largest unit it keeps scaling PB rather than wrapping.
 		{1024 * (1 << 50), "1024 PB"},
 		{-1536, "-1.5 KB"},
+		// Tie: Go's formatter would break this to even ("1.2 KB") while
+		// JavaScript rounds it up, so both now round half away from zero.
+		{1280, "1.3 KB"},
+		{math.Copysign(0, -1), "0 B"}, // -0 must not render as "-0 B"
 	}
 	for _, c := range cases {
 		if got := Bytes(c.bytes); got != c.want {

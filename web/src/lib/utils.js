@@ -3,7 +3,17 @@
 import { getHour12 } from './runtime-config.js'
 
 export function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B'
+  // Mirrors Bytes() in internal/format exactly, including these guards: a
+  // rate computed from a zero duration can arrive as NaN or Infinity, and
+  // rendering that as a number would be worse than saying nothing.
+  // Missing data (null/undefined) keeps reading as "0 B" — callers pass it
+  // for a size that has not been measured yet, and an em dash there would be
+  // a behaviour change. NaN/Infinity are different: they mean a computed
+  // value went wrong, which is what Go reports as an em dash too.
+  if (bytes == null) return '0 B'
+  if (!Number.isFinite(bytes)) return '—'
+  if (bytes === 0) return '0 B'
+  if (bytes < 0) return '-' + formatBytes(-bytes)
   const k = 1024
   // Keep these units and this rounding in step with Bytes() in
   // internal/format — the same number is shown by the daemon (notifications,
@@ -27,7 +37,9 @@ export function formatBytes(bytes) {
     v /= k
     i++
   }
-  return parseFloat(v.toFixed(1)) + ' ' + units[i]
+  if (i === 0) return `${Math.round(v)} ${units[i]}`
+  // Round half away from zero, matching Go — see the note there.
+  return parseFloat((Math.round(v * 10) / 10).toFixed(1)) + ' ' + units[i]
 }
 
 export function formatDate(str) {

@@ -40,6 +40,11 @@ describe('formatBytes', () => {
     // Math.log index disagreed with it here.
     expect(formatBytes(1024 ** 5 - 1)).toBe('1 PB')
     expect(formatBytes(1024 ** 2 - 1)).toBe('1 MB')
+    // Rounding tie and degraded inputs, all matching internal/format.Bytes.
+    expect(formatBytes(1280)).toBe('1.3 KB')
+    expect(formatBytes(-1536)).toBe('-1.5 KB')
+    expect(formatBytes(NaN)).toBe('—')
+    expect(formatBytes(Infinity)).toBe('—')
   })
 })
 
