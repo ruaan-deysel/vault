@@ -3970,10 +3970,10 @@ func (r *Runner) buildDiscordEmbed(jobName, status string, done, failed int, siz
 
 	fields := []notify.DiscordField{
 		{Name: "Duration", Value: fmtDuration(durationSec), Inline: true},
-		{Name: "Size", Value: format.FormatBytes(sizeBytes), Inline: true},
+		{Name: "Size", Value: format.Bytes(float64(sizeBytes)), Inline: true},
 	}
 	if durationSec > 0 {
-		fields = append(fields, notify.DiscordField{Name: "Speed", Value: format.FormatBytes(sizeBytes/int64(durationSec)) + "/s", Inline: true})
+		fields = append(fields, notify.DiscordField{Name: "Speed", Value: format.Bytes(float64(sizeBytes)/float64(durationSec)) + "/s", Inline: true})
 	}
 	fields = append(fields, notify.DiscordField{
 		Name:   "Items",

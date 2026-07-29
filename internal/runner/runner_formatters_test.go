@@ -33,21 +33,21 @@ func TestFmtDuration(t *testing.T) {
 	}
 }
 
-func TestFmtSizeDelegatesToNotify(t *testing.T) {
+func TestDiscordEmbedSizesUseSharedFormatter(t *testing.T) {
 	t.Parallel()
-	// Spot-check that format.FormatBytes is used for Discord embed values.
-	// Full coverage lives in internal/format/format_test.go.
+	// Spot-check that Discord embed values go through the one project-wide
+	// contract. Full coverage lives in internal/format/format_test.go.
 	cases := []struct {
-		bytes int64
+		bytes float64
 		want  string
 	}{
 		{0, "0 B"},
-		{int64(1024) * 1024 * 1024, "1.0 GB"},
-		{int64(1024) * 1024 * 1024 * 1024, "1.0 TB"},
+		{1 << 30, "1 GB"},
+		{1 << 40, "1 TB"},
 	}
 	for _, c := range cases {
-		if got := format.FormatBytes(c.bytes); got != c.want {
-			t.Errorf("format.FormatBytes(%d) = %q, want %q", c.bytes, got, c.want)
+		if got := format.Bytes(c.bytes); got != c.want {
+			t.Errorf("format.Bytes(%v) = %q, want %q", c.bytes, got, c.want)
 		}
 	}
 }

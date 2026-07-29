@@ -80,7 +80,7 @@ func Send(event, subject, description string, importance Importance) error {
 }
 
 func JobSuccess(jobName string, itemsDone int, sizeBytes int64) error {
-	desc := fmt.Sprintf("Backed up %d items (%s)", itemsDone, format.FormatBytes(sizeBytes))
+	desc := fmt.Sprintf("Backed up %d items (%s)", itemsDone, format.Bytes(float64(sizeBytes)))
 	return Send("Vault", fmt.Sprintf("Backup job '%s' completed", jobName), desc, ImportanceNormal)
 }
 

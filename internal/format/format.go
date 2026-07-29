@@ -1,29 +1,48 @@
+// Package format holds the project's single rendering contract for values
+// that reach an operator — currently byte counts.
+//
+// It exists because the same number was being rendered three different ways:
+// notifications divided by 1024 twice and printed "%.1f MB" (so a 2 TB backup
+// read as "2097152.0 MB"), while internal/engine and internal/anomaly each
+// carried their own copy of an adaptive formatter. Anything that shows a size
+// to a user should call Bytes, so the number a person sees is the same
+// wherever they see it.
 package format
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+)
 
-// FormatBytes returns a human-readable string for the given byte count.
-// It uses binary (1024-based) thresholds: B, KB, MB, GB, TB.
-// Values at or above 1024 of the current unit promote to the next unit.
-// The largest unit shown with one decimal place; the smallest (bytes) shown
-// as an integer.
-func FormatBytes(bytes int64) string {
-	const (
-		kb = 1024
-		mb = kb * 1024
-		gb = mb * 1024
-		tb = gb * 1024
-	)
-	switch {
-	case bytes >= tb:
-		return fmt.Sprintf("%.1f TB", float64(bytes)/float64(tb))
-	case bytes >= gb:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/float64(gb))
-	case bytes >= mb:
-		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(mb))
-	case bytes >= kb:
-		return fmt.Sprintf("%.0f KB", float64(bytes)/float64(kb))
-	default:
-		return fmt.Sprintf("%d B", bytes)
+// Bytes renders a byte count as an adaptive, human-friendly string
+// (B / KB / MB / GB / TB / PB), matching the web UI's formatBytes helper:
+// 1024-based units, one decimal place, with a trailing ".0" trimmed — so
+// 34359738368 → "32 GB", 1572864 → "1.5 MB", 1536 → "1.5 KB".
+//
+// The unit is chosen by dividing until the value drops below 1024, so a count
+// just under a boundary renders in the smaller unit rather than as "1024 KB".
+func Bytes(b float64) string {
+	if math.IsNaN(b) || math.IsInf(b, 0) {
+		return "—"
 	}
+	if b < 0 {
+		return "-" + Bytes(-b)
+	}
+	const k = 1024.0
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	i := 0
+	v := b
+	for v >= k && i < len(units)-1 {
+		v /= k
+		i++
+	}
+	if i == 0 {
+		// Whole bytes — no fractional part.
+		return fmt.Sprintf("%.0f %s", v, units[i])
+	}
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s + " " + units[i]
 }
