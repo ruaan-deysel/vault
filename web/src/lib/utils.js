@@ -5,8 +5,14 @@ import { getHour12 } from './runtime-config.js'
 export function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B'
   const k = 1024
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  // Keep these units and this rounding in step with Bytes() in
+  // internal/format — the same number is shown by the daemon (notifications,
+  // backup progress, anomaly summaries) and by this interface, and they used
+  // to disagree. PB is included and the index is clamped to it: without the
+  // clamp a petabyte-scale value indexed past the end of the array and
+  // rendered as "1 undefined".
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1)
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + units[i]
 }
 

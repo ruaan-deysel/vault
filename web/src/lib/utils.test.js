@@ -29,6 +29,14 @@ describe('formatBytes', () => {
     expect(formatBytes(1048576)).toBe('1 MB')
     expect(formatBytes(1073741824)).toBe('1 GB')
   })
+
+  it('matches the daemon at and beyond the largest unit', () => {
+    // internal/format.Bytes renders these identically. PB used to be missing
+    // here, so the index ran off the units array and produced '1 undefined'.
+    expect(formatBytes(1024 ** 4)).toBe('1 TB')
+    expect(formatBytes(1024 ** 5)).toBe('1 PB')
+    expect(formatBytes(1024 ** 6)).toBe('1024 PB')
+  })
 })
 
 describe('formatDuration', () => {
