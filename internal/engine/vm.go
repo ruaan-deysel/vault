@@ -44,7 +44,7 @@ func NewVMHandler() (*VMHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}
-	conn := libvirt.New(sock)
+	conn := libvirt.NewWithDialer(dialers.NewAlreadyConnected(sock))
 	if err := conn.ConnectToURI(libvirt.RemoteURI(uri)); err != nil {
 		_ = sock.Close()
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
