@@ -1182,21 +1182,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			continue // skip if archive doesn't exist
 		}
 
-		targetPath := mount.Source
-		if restoreDest != "" {
-			// For named volumes the recreated container's bind is rewritten to
-			// restoreDest/<volume-name> (see recreateAndStartContainer), so the
-			// data must land there too — not restoreDest/_data (base of the
-			// /var/lib/docker/volumes/<name>/_data source).
-			component := filepath.Base(mount.Source)
-			if mount.Type == "volume" && mount.Name != "" {
-				component = mount.Name
-			}
-			volumeName, err := normalizeRestoreComponent(component)
-			if err != nil {
-				return err
-			}
-			targetPath = filepath.Join(restoreDest, volumeName)
+		// For named volumes the recreated container's bind is rewritten to
+		// restoreDest/<volume-name> (see recreateAndStartContainer), so the
+		// data must land there too — not restoreDest/_data.
+		targetPath, err := volumeRestoreTarget(restoreDest, mount.Type, mount.Name, mount.Source)
+		if err != nil {
+			return err
 		}
 		normalizedTargetPath, err := normalizeRestorePath(targetPath)
 		if err != nil {
