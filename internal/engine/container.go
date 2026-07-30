@@ -1309,6 +1309,16 @@ type restoreInspect struct {
 	} `json:"Mounts"`
 }
 
+// mountInfo carries the mount fields needed to route a chunked volume
+// restore to the correct target directory. It mirrors the anonymous struct
+// in restoreInspect.Mounts but as a named type so it can be passed in maps.
+type mountInfo struct {
+	Type        string
+	Name        string
+	Source      string
+	Destination string
+}
+
 // recreateAndStartContainer is the shared post-volume-restore pipeline:
 //
 //  1. Remove any existing container with the same name.
@@ -1987,6 +1997,58 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	}
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
+	}
+	return nil
+}
+
+// restoreChunkedVolumes restores each __vol__<dest> sub-manifest entry in m
+// to its target directory: the original bind/volume source when restoreDest
+// is empty, or restoreDest/<volume-name> when a custom destination is set
+// (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
+// The function needs no Docker client — it delegates file extraction to
+// FolderHandler.RestoreChunked — making it testable without a Docker mock.
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+	fh := &FolderHandler{}
+	mountByDest := map[string]mountInfo{}
+	for _, mnt := range inspect.Mounts {
+		if backupableMount(mnt.Type) && mnt.Destination != "" {
+			mountByDest[mnt.Destination] = mountInfo{
+				Type:        mnt.Type,
+				Name:        mnt.Name,
+				Source:      mnt.Source,
+				Destination: mnt.Destination,
+			}
+		}
+	}
+	for k, v := range m.Files {
+		if !strings.HasPrefix(k, containerVolPrefix) {
+			continue
+		}
+		if v.Size == volumeSkippedSize {
+			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
+			continue
+		}
+		if len(v.Chunks) == 0 {
+			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
+			continue
+		}
+		dest := strings.TrimPrefix(k, containerVolPrefix)
+		mnt, ok := mountByDest[dest]
+		if !ok || mnt.Source == "" {
+			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
+			continue
+		}
+		src, err := volumeRestoreTarget(restoreDest, mnt.Type, mnt.Name, mnt.Source)
+		if err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
+		if err := os.MkdirAll(src, 0o750); err != nil {
+			return fmt.Errorf("mkdir volume %s: %w", src, err)
+		}
+		proxy := BackupItem{Name: dest, Type: "folder"}
+		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+			return fmt.Errorf("restore volume %s: %w", dest, err)
+		}
 	}
 	return nil
 }
