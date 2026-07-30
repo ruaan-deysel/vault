@@ -1858,11 +1858,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 // recreates + starts the container via the shared
 // recreateAndStartContainer helper.
 //
-// The fifth argument is the legacy destPath used by other RestoreChunked
-// implementations; for containers it is ignored because each volume's
-// destination is the original bind source from inspect.Mounts (so volumes
-// land back where they were).
-func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, _ string, progress ProgressFunc) error {
+// The destPath argument is the custom restore destination (empty for
+// in-place restore). When set, volumes are extracted under
+// destPath/<volume-name> rather than their original bind sources, matching
+// the bind-mount rewrite recreateAndStartContainer applies.
+func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
 	if repo == nil {
 		return fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1927,52 +1927,12 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 	}
 
-	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
-	//    sub-manifest ID — hand off to FolderHandler.RestoreChunked with
-	//    the original bind source from inspect.Mounts as the dest path.
-	//    Skipped entries (Size == volumeSkippedSize) are silently honoured.
-	if progress != nil {
-		progress(item.Name, 40, "restoring volumes")
+	// Resolve custom restore destination: explicit destPath parameter wins,
+	// fall back to item.Settings["restore_destination"].
+	restoreDest := destPath
+	if restoreDest == "" {
+		restoreDest, _ = item.Settings["restore_destination"].(string)
 	}
-	fh := &FolderHandler{}
-	mountByDest := map[string]string{} // destination → host source
-	for _, mnt := range inspect.Mounts {
-		if backupableMount(mnt.Type) && mnt.Destination != "" {
-			mountByDest[mnt.Destination] = mnt.Source
-		}
-	}
-	for k, v := range m.Files {
-		if !strings.HasPrefix(k, containerVolPrefix) {
-			continue
-		}
-		if v.Size == volumeSkippedSize {
-			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
-			continue
-		}
-		if len(v.Chunks) == 0 {
-			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
-			continue
-		}
-		dest := strings.TrimPrefix(k, containerVolPrefix)
-		src, ok := mountByDest[dest]
-		if !ok || src == "" {
-			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
-			continue
-		}
-		if err := os.MkdirAll(src, 0o750); err != nil {
-			return fmt.Errorf("mkdir volume %s: %w", src, err)
-		}
-		proxy := BackupItem{Name: dest, Type: "folder"}
-		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
-			return fmt.Errorf("restore volume %s: %w", dest, err)
-		}
-	}
-
-	// 5. Recreate + start container (shared helper with classic restore).
-	//    Pass sourceDir="" because the chunked format has no template.xml
-	//    or image_meta.json sidecars — image_meta seeding above already
-	//    handled the update-status seeding from the manifest entry.
-	restoreDest, _ := item.Settings["restore_destination"].(string)
 	if restoreDest != "" {
 		normalized, err := normalizeRestorePath(restoreDest)
 		if err != nil {
@@ -1980,6 +1940,21 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 		}
 		restoreDest = normalized
 	}
+
+	// 4. Restore volumes. Each __vol__<dest> entry's single chunk ID is a
+	//    sub-manifest ID — restoreChunkedVolumes routes each to the correct
+	//    target (original source or custom dest).
+	if progress != nil {
+		progress(item.Name, 40, "restoring volumes")
+	}
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress); err != nil {
+		return err
+	}
+
+	// 5. Recreate + start container (shared helper with classic restore).
+	//    Pass sourceDir="" because the chunked format has no template.xml
+	//    or image_meta.json sidecars — image_meta seeding above already
+	//    handled the update-status seeding from the manifest entry.
 	// Reassemble the logical dump, if this backup carried one, so the shared
 	// recreate path reloads it exactly as it does for a classic backup.
 	// Without this a dedup restore would silently ignore a dump the backup
