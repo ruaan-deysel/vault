@@ -308,7 +308,7 @@ export function largestBackupsByJob(runs, nameByJob, limit = 5) {
     size,
   }))
     .sort((a, b) => b.size - a.size)
-    .slice(0, limit)
+    .slice(0, Math.max(0, limit))
 }
 
 // Describes the outcome of a database location change for the Settings toast,
