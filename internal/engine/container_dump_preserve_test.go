@@ -111,3 +111,43 @@ func TestPreserveDatabaseDumpNoDestination(t *testing.T) {
 		t.Errorf("saved = %q, want empty (no durable location)", saved)
 	}
 }
+
+// TestPreserveDatabaseDumpSkipsFileMount ensures a leading file mount is not
+// chosen for the in-place location; the first directory mount is used instead.
+func TestPreserveDatabaseDumpSkipsFileMount(t *testing.T) {
+	staging := t.TempDir()
+	root := t.TempDir()
+
+	// A file mount (bind of a single file) comes first, then a directory mount.
+	fileMount := filepath.Join(root, "config.yml")
+	if err := os.WriteFile(fileMount, []byte("cfg"), 0o600); err != nil {
+		t.Fatalf("write file mount: %v", err)
+	}
+	dirParent := filepath.Join(root, "appdata")
+	dirMount := filepath.Join(dirParent, "mariadb")
+	if err := os.MkdirAll(dirMount, 0o750); err != nil {
+		t.Fatalf("mkdir dir mount: %v", err)
+	}
+	dump := filepath.Join(staging, DatabaseDumpFile)
+	if err := os.WriteFile(dump, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write dump: %v", err)
+	}
+
+	var inspect restoreInspect
+	inspectJSON := `{"Name":"/mariadb","Mounts":[` +
+		`{"Type":"bind","Source":"` + fileMount + `","Destination":"/config.yml"},` +
+		`{"Type":"bind","Source":"` + dirMount + `","Destination":"/config"}]}`
+	if err := json.Unmarshal([]byte(inspectJSON), &inspect); err != nil {
+		t.Fatalf("unmarshal inspect: %v", err)
+	}
+
+	saved, err := preserveDatabaseDump(context.Background(), dump, "", inspect)
+	if err != nil {
+		t.Fatalf("preserveDatabaseDump: %v", err)
+	}
+	// Beside the directory mount (its parent), not beside the file mount.
+	want := filepath.Join(dirParent, "mariadb-"+DatabaseDumpFile)
+	if saved != want {
+		t.Fatalf("saved = %q, want %q (file mount should be skipped)", saved, want)
+	}
+}

@@ -1593,6 +1593,13 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	if sourceDir != "" {
 		pendingDump = findDatabaseDump(sourceDir)
 	}
+	// Reason the dump ends up preserved rather than replayed, for the
+	// operator-facing log in Step 8. Defaults to the running-but-volume-newer
+	// case; overridden below for the not-running and not-ready cases.
+	dumpReason := "the restored volume is the newer, consistent copy"
+	if !inspect.State.Running {
+		dumpReason = "the container was not running"
+	}
 
 	if inspect.State.Running {
 		progress(item.Name, 90, "starting container")
@@ -1616,6 +1623,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 			progress(item.Name, 95, "reloading database dump")
 			if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
 				log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
+				dumpReason = "the database did not become ready"
 			} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, pendingDump); err != nil {
 				// Fatal, per the invariant above. The reload has already
 				// begun executing the dump's DROP/replace statements against
@@ -1643,9 +1651,9 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 			log.Printf("engine: %s: WARNING could not preserve database dump %s: %v", item.Name, pendingDump, err)
 		} else if saved != "" {
 			progress(item.Name, 97, "database dump saved to "+saved)
-			log.Printf("engine: %s: database dump not reloaded (the restored volume is the newer, consistent copy) — saved to %s for manual replay", item.Name, saved)
+			log.Printf("engine: %s: database dump not reloaded (%s) — saved to %s for manual replay", item.Name, dumpReason, saved)
 		} else {
-			log.Printf("engine: %s: database dump not reloaded and no durable restore location was available; it remains only in the temporary staging directory", item.Name)
+			log.Printf("engine: %s: database dump not reloaded (%s) and no durable restore location was available; it remains only in the temporary staging directory", item.Name, dumpReason)
 		}
 	}
 	return nil
@@ -1661,13 +1669,20 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 	base := restoreDest
 	if base == "" {
 		// In-place restore: no custom destination was given, so land the dump
-		// beside the container's first restored bind mount, which persists on
-		// the host after the staging directory is cleaned up.
+		// beside the container's first restored directory mount, which persists
+		// on the host after the staging directory is cleaned up. File mounts
+		// are skipped: their source is a single bind-mounted file, so dropping
+		// the dump beside it would be surprising and could land it in an
+		// unrelated directory.
 		for _, m := range inspect.Mounts {
-			if backupableMount(m.Type) && m.Source != "" {
-				base = filepath.Dir(m.Source)
-				break
+			if !backupableMount(m.Type) || m.Source == "" {
+				continue
 			}
+			if info, err := os.Stat(m.Source); err != nil || !info.IsDir() {
+				continue
+			}
+			base = filepath.Dir(m.Source)
+			break
 		}
 	}
 	if base == "" {
