@@ -117,8 +117,10 @@ func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dst, "config.toml")); err != nil {
+	if got, err := os.ReadFile(filepath.Join(dst, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
 		t.Errorf("selected file config.toml should have been restored: %v", err)
+	} else if string(got) != "setting=true" {
+		t.Errorf("selected file config.toml has unexpected content: %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "data/state.bin")); !os.IsNotExist(err) {
 		t.Errorf("unselected file data/state.bin should not have been restored (err=%v)", err)
