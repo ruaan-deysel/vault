@@ -328,4 +328,10 @@ var dataMigrations = []string{
 	// would instead make identical data behave differently depending on which
 	// jobs an operator happened to edit.
 	"UPDATE jobs SET container_mode = 'stop_all' WHERE container_mode = 'all_at_once'",
+	// Replication last-successful-sync backfill (#287). last_sync_success_at is
+	// a new column, so existing sources that already completed a successful
+	// sync before the upgrade would report no successful sync until the next
+	// run. Seed it from last_sync_at for rows whose last recorded status was a
+	// success, so the UI shows the historical timestamp immediately.
+	"UPDATE replication_sources SET last_sync_success_at = last_sync_at WHERE last_sync_success_at IS NULL AND last_sync_status = 'success' AND last_sync_at IS NOT NULL",
 }

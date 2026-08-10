@@ -64,13 +64,24 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		t.Fatalf("len(sources) = %d, want 1", len(sources))
 	}
 
+	// getSource re-reads the row and fails the test on error, so a query
+	// failure can't be masked by assertions passing against a zero-value struct.
+	getSource := func(t *testing.T) ReplicationSource {
+		t.Helper()
+		src, err := database.GetReplicationSource(id)
+		if err != nil {
+			t.Fatalf("GetReplicationSource() error = %v", err)
+		}
+		return src
+	}
+
 	// Update
 	got.Name = "prod-server-v2"
 	got.Schedule = "0 */12 * * *"
 	if err := database.UpdateReplicationSource(got); err != nil {
 		t.Fatalf("UpdateReplicationSource() error = %v", err)
 	}
-	updated, _ := database.GetReplicationSource(id)
+	updated := getSource(t)
 	if updated.Name != "prod-server-v2" {
 		t.Errorf("Name after update = %q, want %q", updated.Name, "prod-server-v2")
 	}
@@ -79,7 +90,7 @@ func TestReplicationSourceCRUD(t *testing.T) {
 	if err := database.UpdateReplicationSyncStatus(id, "success", ""); err != nil {
 		t.Fatalf("UpdateReplicationSyncStatus() error = %v", err)
 	}
-	synced, _ := database.GetReplicationSource(id)
+	synced := getSource(t)
 	if synced.LastSyncStatus != "success" {
 		t.Errorf("LastSyncStatus = %q, want %q", synced.LastSyncStatus, "success")
 	}
@@ -95,7 +106,7 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		if err := database.UpdateReplicationSyncResult(id, "success", "", 3, 0, 12, 1024); err != nil {
 			t.Fatalf("UpdateReplicationSyncResult() error = %v", err)
 		}
-		withCounts, _ := database.GetReplicationSource(id)
+		withCounts := getSource(t)
 		if withCounts.LastSyncJobsSynced != 3 || withCounts.LastSyncJobsFailed != 0 || withCounts.LastSyncRestorePoints != 12 || withCounts.LastSyncBytes != 1024 {
 			t.Errorf("counters = %d/%d/%d/%d, want 3/0/12/1024",
 				withCounts.LastSyncJobsSynced, withCounts.LastSyncJobsFailed, withCounts.LastSyncRestorePoints, withCounts.LastSyncBytes)
@@ -110,7 +121,7 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		if err := database.UpdateReplicationSyncStatus(id, "running", ""); err != nil {
 			t.Fatalf("UpdateReplicationSyncStatus(running) error = %v", err)
 		}
-		running, _ := database.GetReplicationSource(id)
+		running := getSource(t)
 		if running.LastSyncJobsSynced != 0 || running.LastSyncRestorePoints != 0 || running.LastSyncBytes != 0 {
 			t.Errorf("counters after running = %d/%d/%d, want all 0",
 				running.LastSyncJobsSynced, running.LastSyncRestorePoints, running.LastSyncBytes)
@@ -125,7 +136,7 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		if err := database.UpdateReplicationSyncResult(id, "failed", "boom", 0, 2, 0, 0); err != nil {
 			t.Fatalf("UpdateReplicationSyncResult(failed) error = %v", err)
 		}
-		failed, _ := database.GetReplicationSource(id)
+		failed := getSource(t)
 		if failed.LastSyncJobsFailed != 2 {
 			t.Errorf("LastSyncJobsFailed = %d, want 2", failed.LastSyncJobsFailed)
 		}
