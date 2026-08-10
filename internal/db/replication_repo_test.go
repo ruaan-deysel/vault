@@ -87,6 +87,44 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		t.Error("LastSyncAt should not be nil after sync")
 	}
 
+	// #287: a completed sync persists its per-item counters and, on success,
+	// advances last_sync_success_at.
+	if err := database.UpdateReplicationSyncResult(id, "success", "", 3, 0, 12, 1024); err != nil {
+		t.Fatalf("UpdateReplicationSyncResult() error = %v", err)
+	}
+	withCounts, _ := database.GetReplicationSource(id)
+	if withCounts.LastSyncJobsSynced != 3 || withCounts.LastSyncRestorePoints != 12 || withCounts.LastSyncBytes != 1024 {
+		t.Errorf("counters = %d/%d/%d, want 3/12/1024",
+			withCounts.LastSyncJobsSynced, withCounts.LastSyncRestorePoints, withCounts.LastSyncBytes)
+	}
+	if withCounts.LastSyncSuccessAt == nil {
+		t.Error("LastSyncSuccessAt should be set after a successful sync")
+	}
+
+	// A subsequent running/failed status resets the counters but preserves the
+	// last successful timestamp.
+	if err := database.UpdateReplicationSyncStatus(id, "running", ""); err != nil {
+		t.Fatalf("UpdateReplicationSyncStatus(running) error = %v", err)
+	}
+	running, _ := database.GetReplicationSource(id)
+	if running.LastSyncJobsSynced != 0 || running.LastSyncRestorePoints != 0 || running.LastSyncBytes != 0 {
+		t.Errorf("counters after running = %d/%d/%d, want all 0",
+			running.LastSyncJobsSynced, running.LastSyncRestorePoints, running.LastSyncBytes)
+	}
+	if running.LastSyncSuccessAt == nil {
+		t.Error("LastSyncSuccessAt should survive a later running state")
+	}
+
+	// A failed completion does not advance last_sync_success_at.
+	prevSuccess := *running.LastSyncSuccessAt
+	if err := database.UpdateReplicationSyncResult(id, "failed", "boom", 0, 2, 0, 0); err != nil {
+		t.Fatalf("UpdateReplicationSyncResult(failed) error = %v", err)
+	}
+	failed, _ := database.GetReplicationSource(id)
+	if failed.LastSyncSuccessAt == nil || !failed.LastSyncSuccessAt.Equal(prevSuccess) {
+		t.Errorf("LastSyncSuccessAt should not change on a failed sync")
+	}
+
 	// Delete
 	if err := database.DeleteReplicationSource(id); err != nil {
 		t.Fatalf("DeleteReplicationSource() error = %v", err)
