@@ -271,6 +271,57 @@ func TestListJobsByStorageDestID(t *testing.T) {
 	}
 }
 
+func TestCountRunningBackupsOnDestination(t *testing.T) {
+	t.Parallel()
+	d := setupTestDB(t)
+	destA, err := d.CreateStorageDestination(StorageDestination{Name: "A", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destB, err := d.CreateStorageDestination(StorageDestination{Name: "B", Type: "local", Config: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobA, err := d.CreateJob(Job{Name: "ja", StorageDestID: destA, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobB, err := d.CreateJob(Job{Name: "jb", StorageDestID: destB, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing running yet.
+	if n, err := d.CountRunningBackupsOnDestination(destA); err != nil || n != 0 {
+		t.Fatalf("CountRunningBackupsOnDestination(destA) = %d, %v; want 0, nil", n, err)
+	}
+
+	// One running and one finished run on destA; one running on destB.
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "success", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateJobRun(JobRun{JobID: jobB, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only the running run on destA counts; the finished one and destB's run
+	// do not.
+	if n, err := d.CountRunningBackupsOnDestination(destA); err != nil || n != 1 {
+		t.Fatalf("CountRunningBackupsOnDestination(destA) = %d, %v; want 1, nil", n, err)
+	}
+	if n, err := d.CountRunningBackupsOnDestination(destB); err != nil || n != 1 {
+		t.Fatalf("CountRunningBackupsOnDestination(destB) = %d, %v; want 1, nil", n, err)
+	}
+
+	// A destination with no jobs counts zero.
+	if n, err := d.CountRunningBackupsOnDestination(99999); err != nil || n != 0 {
+		t.Fatalf("CountRunningBackupsOnDestination(missing) = %d, %v; want 0, nil", n, err)
+	}
+}
+
 // --- storage_repo: ReplaceDedupPack / ReplaceDedupChunk ---------------------
 
 func TestReplaceDedupPackUpsertsExisting(t *testing.T) {

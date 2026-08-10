@@ -61,6 +61,109 @@ func TestRunScheduledVerifyInvalidMode(t *testing.T) {
 	r.RunScheduledVerify(jobID, "totally-bogus-mode")
 }
 
+// seedVerifiableJob creates a job on its own destination with a single restore
+// point so RunScheduledVerify reaches the dispatch decision. It returns the
+// job ID and its storage destination.
+func seedVerifiableJob(t *testing.T, database *db.DB, storageDir, name string) (int64, db.StorageDestination) {
+	t.Helper()
+	dest := createLocalDest(t, database, storageDir)
+	jobID, err := database.CreateJob(db.Job{
+		Name: name, Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full",
+		StoragePath: name + "/1_run", Metadata: "{}", SizeBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return jobID, dest
+}
+
+// TestRunScheduledDeepVerifyDeferredWhenBackupActive covers #290: a scheduled
+// deep verify must not start while a backup is running on the same storage
+// destination, or the two saturate the destination and the backup appears to
+// freeze.
+func TestRunScheduledDeepVerifyDeferredWhenBackupActive(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-defer")
+
+	// A second job on the SAME destination is mid-backup.
+	busyJob, err := database.CreateJob(db.Job{
+		Name: "busy", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r.RunScheduledVerify(jobID, "deep")
+
+	runs, err := database.ListRecentVerifyRuns(10)
+	if err != nil {
+		t.Fatalf("ListRecentVerifyRuns: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("deep verify was dispatched despite an active backup on the destination (%d verify runs)", len(runs))
+	}
+}
+
+// TestRunScheduledDeepVerifyProceedsWhenIdle is the control: with no backup
+// running on the destination, the deep verify is dispatched (a verify_run row
+// is created).
+func TestRunScheduledDeepVerifyProceedsWhenIdle(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	jobID, _ := seedVerifiableJob(t, database, storageDir, "verify-idle")
+
+	r.RunScheduledVerify(jobID, "deep")
+
+	runs, err := database.ListRecentVerifyRuns(10)
+	if err != nil {
+		t.Fatalf("ListRecentVerifyRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected the deep verify to be dispatched (1 verify run), got %d", len(runs))
+	}
+}
+
+// TestRunScheduledQuickVerifyProceedsDespiteActiveBackup confirms only deep
+// verify is gated — a quick verify (HEAD-only) still runs during a backup.
+func TestRunScheduledQuickVerifyProceedsDespiteActiveBackup(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-quick")
+
+	busyJob, err := database.CreateJob(db.Job{
+		Name: "busy-quick", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r.RunScheduledVerify(jobID, "quick")
+
+	runs, err := database.ListRecentVerifyRuns(10)
+	if err != nil {
+		t.Fatalf("ListRecentVerifyRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected quick verify to run during a backup (1 verify run), got %d", len(runs))
+	}
+}
+
 // TestVerifyOneFileMissingFile exercises the Stat-failure error path.
 func TestVerifyOneFileMissingFile(t *testing.T) {
 	t.Parallel()
