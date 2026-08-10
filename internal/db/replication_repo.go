@@ -1,6 +1,9 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // CreateReplicationSource inserts a new replication source and returns its ID.
 func (d *DB) CreateReplicationSource(src ReplicationSource) (int64, error) {
@@ -107,7 +110,10 @@ func (d *DB) UpdateReplicationSyncStatus(id int64, status, syncError string) err
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		status, syncError, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("update replication sync status for source %d: %w", id, err)
+	}
+	return nil
 }
 
 // UpdateReplicationSyncResult stores the outcome of a completed sync along
@@ -124,7 +130,10 @@ func (d *DB) UpdateReplicationSyncResult(id int64, status, syncError string, job
 		updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		status, syncError, jobsSynced, jobsFailed, restorePoints, bytes, status, id,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("update replication sync result for source %d: %w", id, err)
+	}
+	return nil
 }
 
 // DeleteReplicationSource removes a replication source by ID.

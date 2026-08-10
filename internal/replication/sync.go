@@ -224,10 +224,14 @@ func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *S
 	// Persist the status together with the per-item counters BEFORE
 	// broadcasting completion: the UI reloads on the completion event, so a
 	// broadcast that raced ahead of the write could read the previous row and
-	// show stale counters / last_sync_success_at.
+	// show stale counters / last_sync_success_at. If the write itself fails,
+	// stop here rather than announce a completion the database does not
+	// reflect — the source stays in its "running" state and self-corrects on
+	// the next sync instead of showing stale completed numbers.
 	if err := s.db.UpdateReplicationSyncResult(sourceID, status, errMsg,
 		result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred); err != nil {
 		log.Printf("replication: update sync result for source %d: %v", sourceID, err)
+		return
 	}
 
 	s.broadcast(map[string]any{
