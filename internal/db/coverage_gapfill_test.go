@@ -306,9 +306,13 @@ func TestCountRunningBackupsOnDestination(t *testing.T) {
 	if _, err := d.CreateJobRun(JobRun{JobID: jobB, Status: "running", BackupType: "full"}); err != nil {
 		t.Fatal(err)
 	}
+	// A running *restore* on destA must not count as backup write load.
+	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "running", BackupType: "full", RunType: "restore"}); err != nil {
+		t.Fatal(err)
+	}
 
-	// Only the running run on destA counts; the finished one and destB's run
-	// do not.
+	// Only the running backup run on destA counts; the finished one, the
+	// running restore, and destB's run do not.
 	if n, err := d.CountRunningBackupsOnDestination(destA); err != nil || n != 1 {
 		t.Fatalf("CountRunningBackupsOnDestination(destA) = %d, %v; want 1, nil", n, err)
 	}

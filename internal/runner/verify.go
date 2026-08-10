@@ -77,8 +77,11 @@ func (r *Runner) RunScheduledVerify(jobID int64, mode string) {
 		} else if active > 0 {
 			msg := fmt.Sprintf("Deep verify for %q deferred: a backup is running on the same storage destination", job.Name)
 			log.Printf("runner: scheduled verify: %s (active backups=%d); will retry at the next scheduled verify", msg, active)
-			r.logActivity("info", "verify", msg,
-				fmt.Sprintf(`{"job_id":%d,"storage_dest_id":%d,"active_backups":%d}`, jobID, job.StorageDestID, active))
+			r.logActivity("info", "verify", msg, structuredDetails(map[string]any{
+				"job_id":          jobID,
+				"storage_dest_id": job.StorageDestID,
+				"active_backups":  active,
+			}))
 			return
 		}
 	}
