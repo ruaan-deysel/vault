@@ -221,6 +221,15 @@ func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *S
 		level = "warning"
 	}
 
+	// Persist the status together with the per-item counters BEFORE
+	// broadcasting completion: the UI reloads on the completion event, so a
+	// broadcast that raced ahead of the write could read the previous row and
+	// show stale counters / last_sync_success_at.
+	if err := s.db.UpdateReplicationSyncResult(sourceID, status, errMsg,
+		result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred); err != nil {
+		log.Printf("replication: update sync result for source %d: %v", sourceID, err)
+	}
+
 	s.broadcast(map[string]any{
 		"type":              "replication_sync_completed",
 		"source_id":         sourceID,
@@ -232,13 +241,6 @@ func (s *Syncer) completeSyncStatus(sourceID int64, sourceName string, result *S
 		"bytes_transferred": result.BytesTransferred,
 	})
 
-	// Persist the status together with the per-item counters so the UI can
-	// show an explicit synced / up-to-date / failed state on load, not only
-	// from the transient completion event above.
-	if err := s.db.UpdateReplicationSyncResult(sourceID, status, errMsg,
-		result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred); err != nil {
-		log.Printf("replication: update sync result for source %d: %v", sourceID, err)
-	}
 	s.db.LogActivity(level, "replication",
 		fmt.Sprintf("Replication sync %s: %s — %d jobs, %d failed, %d restore points, %d bytes",
 			status, sourceName, result.JobsSynced, result.JobsFailed, result.RestorePointsNew, result.BytesTransferred),

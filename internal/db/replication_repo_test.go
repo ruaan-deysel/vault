@@ -103,6 +103,7 @@ func TestReplicationSourceCRUD(t *testing.T) {
 
 	// A subsequent running/failed status resets the counters but preserves the
 	// last successful timestamp.
+	successBeforeRunning := *withCounts.LastSyncSuccessAt
 	if err := database.UpdateReplicationSyncStatus(id, "running", ""); err != nil {
 		t.Fatalf("UpdateReplicationSyncStatus(running) error = %v", err)
 	}
@@ -111,8 +112,8 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		t.Errorf("counters after running = %d/%d/%d, want all 0",
 			running.LastSyncJobsSynced, running.LastSyncRestorePoints, running.LastSyncBytes)
 	}
-	if running.LastSyncSuccessAt == nil {
-		t.Error("LastSyncSuccessAt should survive a later running state")
+	if running.LastSyncSuccessAt == nil || !running.LastSyncSuccessAt.Equal(successBeforeRunning) {
+		t.Error("LastSyncSuccessAt should survive a later running state unchanged")
 	}
 
 	// A failed completion does not advance last_sync_success_at.
