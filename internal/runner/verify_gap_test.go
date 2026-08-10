@@ -130,6 +130,29 @@ func TestRunScheduledVerifyBackupContention(t *testing.T) {
 			if len(runs) != tc.wantRuns {
 				t.Fatalf("verify runs = %d, want %d (mode=%s, busyBackup=%v)", len(runs), tc.wantRuns, tc.mode, tc.busyBackup)
 			}
+
+			if tc.wantRuns == 0 {
+				// Deferral must be surfaced in the activity log so the user can
+				// see why the deep verify did not run.
+				entries, err := database.ListActivityLogs(10, "verify")
+				if err != nil {
+					t.Fatalf("ListActivityLogs: %v", err)
+				}
+				if len(entries) != 1 {
+					t.Fatalf("verify activity entries = %d, want 1", len(entries))
+				}
+				if !strings.Contains(entries[0].Message, "deferred") {
+					t.Errorf("activity message = %q, want it to mention the deferral", entries[0].Message)
+				}
+				if !strings.Contains(entries[0].Details, `"active_backups"`) {
+					t.Errorf("activity details = %q, want the active_backups count", entries[0].Details)
+				}
+			} else {
+				// A dispatched run must carry the requested mode.
+				if runs[0].Mode != tc.mode {
+					t.Errorf("dispatched verify mode = %q, want %q", runs[0].Mode, tc.mode)
+				}
+			}
 		})
 	}
 }
