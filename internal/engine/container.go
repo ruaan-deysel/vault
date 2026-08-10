@@ -1675,11 +1675,18 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 	}
 	// Prefix with the container name so restores that share a parent directory
 	// (e.g. several appdata containers under /mnt/user/appdata) do not collide
-	// on a bare "database.sql".
-	dest := filepath.Join(base, restoreDumpName(inspect.Name, filepath.Base(dumpPath)))
-	if err := os.MkdirAll(base, 0750); err != nil {
-		return "", fmt.Errorf("creating dump destination %s: %w", base, err)
+	// on a bare "database.sql". base originates from a user-supplied restore
+	// destination (or an inspected mount source), so confirm it resolves within
+	// the approved restore roots before creating it; copyFile applies the same
+	// guard to the file path itself.
+	safeBase, err := normalizeRestorePath(base)
+	if err != nil {
+		return "", fmt.Errorf("resolving dump destination: %w", err)
 	}
+	if err := os.MkdirAll(safeBase, 0750); err != nil {
+		return "", fmt.Errorf("creating dump destination %s: %w", safeBase, err)
+	}
+	dest := filepath.Join(base, restoreDumpName(inspect.Name, filepath.Base(dumpPath)))
 	if err := copyFile(ctx, dumpPath, dest); err != nil {
 		return "", fmt.Errorf("copying database dump to %s: %w", dest, err)
 	}
