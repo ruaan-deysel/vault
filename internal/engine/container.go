@@ -1584,13 +1584,23 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 	}
 
 	// Step 6: Start container if it was originally running.
+	// A database dump the backup carried only ever exists inside sourceDir,
+	// the temporary restore staging directory — it is a sidecar of the
+	// backup, not part of any restored volume. Track it here so both the
+	// running (reload) and the leave-in-place paths can act on it, and so it
+	// is preserved somewhere durable before the staging dir is cleaned up.
+	var pendingDump string
+	if sourceDir != "" {
+		pendingDump = findDatabaseDump(sourceDir)
+	}
+
 	if inspect.State.Running {
 		progress(item.Name, 90, "starting container")
 		if _, err := h.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("starting restored container: %w", err)
 		}
 
-		// Step 7: reload a logical database dump, if the backup carried one.
+		// Step 7: reload a logical database dump, if the backup requested it.
 		//
 		// A failure here is NOT swallowed. The reload replays into the server
 		// restored from its volume, and the dump's own DROP/replace statements
@@ -1600,34 +1610,92 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		// restored and is not.
 		//
 		// Failing to become ready is different: nothing has been replayed, the
-		// volume restore stands on its own, so that is a warning.
-		if sourceDir != "" {
-			if dumpPath := findDatabaseDump(sourceDir); dumpPath != "" && !databaseReplayRequested(sourceDir) {
-				// The volumes were captured with the server stopped, so they are
-				// consistent AND newer than the dump. Replaying it would roll the
-				// database back to where it stood when the dump began. The dump
-				// is left in place for a manual or cross-version reload.
-				log.Printf("engine: %s: database dump restored to %s but not reloaded — "+
-					"the restored volume is the newer, consistent copy", item.Name, dumpPath)
-			} else if dumpPath != "" {
-				progress(item.Name, 95, "reloading database dump")
-				if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
-					log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
-				} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, dumpPath); err != nil {
-					// Fatal, per the invariant above. The reload has already
-					// begun executing the dump's DROP/replace statements against
-					// the volume-restored server, so the file-level result is no
-					// longer an intact fallback to "stand on". A timeout, SQL
-					// error, or full disk part-way through leaves tables dropped
-					// and only partly recreated; returning nil here would report
-					// that as a completed restore.
-					return fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
-						"its contents are not the restored state and should not be relied on)", item.Name, err)
-				}
+		// volume restore stands on its own, so that is a warning and the dump
+		// is preserved below rather than lost.
+		if pendingDump != "" && databaseReplayRequested(sourceDir) {
+			progress(item.Name, 95, "reloading database dump")
+			if err := h.waitForDatabaseReady(ctx, created.ID, inspect.Config.Image, inspect.Config.Env); err != nil {
+				log.Printf("engine: %s: WARNING database did not become ready, dump not reloaded (the file-level restore stands): %v", item.Name, err)
+			} else if err := h.restoreDatabase(ctx, created.ID, item.Name, inspect.Config.Image, inspect.Config.Env, pendingDump); err != nil {
+				// Fatal, per the invariant above. The reload has already
+				// begun executing the dump's DROP/replace statements against
+				// the volume-restored server, so the file-level result is no
+				// longer an intact fallback to "stand on". A timeout, SQL
+				// error, or full disk part-way through leaves tables dropped
+				// and only partly recreated; returning nil here would report
+				// that as a completed restore.
+				return fmt.Errorf("reloading database dump for %s: %w (the database is partially reloaded — "+
+					"its contents are not the restored state and should not be relied on)", item.Name, err)
+			} else {
+				// Reloaded successfully; nothing left to preserve.
+				pendingDump = ""
 			}
 		}
 	}
+
+	// Step 8 (#289): a dump that was not reloaded — because the restored volume
+	// is the newer, consistent copy, the container was not running, or the
+	// server never became ready — would otherwise disappear with the staging
+	// directory. Copy it somewhere durable and report the final path so the
+	// operator can locate it (and replay it manually if they choose).
+	if pendingDump != "" {
+		if saved, err := preserveDatabaseDump(ctx, pendingDump, restoreDest, inspect); err != nil {
+			log.Printf("engine: %s: WARNING could not preserve database dump %s: %v", item.Name, pendingDump, err)
+		} else if saved != "" {
+			progress(item.Name, 97, "database dump saved to "+saved)
+			log.Printf("engine: %s: database dump not reloaded (the restored volume is the newer, consistent copy) — saved to %s for manual replay", item.Name, saved)
+		} else {
+			log.Printf("engine: %s: database dump not reloaded and no durable restore location was available; it remains only in the temporary staging directory", item.Name)
+		}
+	}
 	return nil
+}
+
+// preserveDatabaseDump copies a database dump that will not be auto-reloaded
+// out of the temporary restore staging directory into a persistent, operator-
+// discoverable location, returning the final path (or "" if there is nowhere
+// durable to place it). The dump is a sidecar of the backup, not part of any
+// restored volume, so without this it would vanish with the staging directory
+// once the restore completes (#289).
+func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, inspect restoreInspect) (string, error) {
+	base := restoreDest
+	if base == "" {
+		// In-place restore: no custom destination was given, so land the dump
+		// beside the container's first restored bind mount, which persists on
+		// the host after the staging directory is cleaned up.
+		for _, m := range inspect.Mounts {
+			if backupableMount(m.Type) && m.Source != "" {
+				base = filepath.Dir(m.Source)
+				break
+			}
+		}
+	}
+	if base == "" {
+		return "", nil
+	}
+	// Prefix with the container name so restores that share a parent directory
+	// (e.g. several appdata containers under /mnt/user/appdata) do not collide
+	// on a bare "database.sql".
+	dest := filepath.Join(base, restoreDumpName(inspect.Name, filepath.Base(dumpPath)))
+	if err := os.MkdirAll(base, 0750); err != nil {
+		return "", fmt.Errorf("creating dump destination %s: %w", base, err)
+	}
+	if err := copyFile(ctx, dumpPath, dest); err != nil {
+		return "", fmt.Errorf("copying database dump to %s: %w", dest, err)
+	}
+	return dest, nil
+}
+
+// restoreDumpName builds a collision-resistant file name for a preserved dump,
+// prefixing the container name (sanitised to a single path component) onto the
+// dump's base name. Falls back to the bare dump name when the container name
+// yields nothing usable.
+func restoreDumpName(containerName, dumpBase string) string {
+	clean := filepath.Base(strings.TrimPrefix(containerName, "/"))
+	if clean == "" || clean == "." || clean == string(filepath.Separator) {
+		return dumpBase
+	}
+	return clean + "-" + dumpBase
 }
 
 // findDatabaseDump locates the dump file a backup may carry, whatever
