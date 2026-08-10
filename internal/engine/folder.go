@@ -230,7 +230,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	}
 	manifestID, err := repo.PutManifest(item.Name, m)
 	if err != nil {
-		return dedup.ID{}, err
+		return dedup.ID{}, fmt.Errorf("folder: write manifest for %q: %w", item.Name, err)
 	}
 	if progress != nil {
 		msg := fmt.Sprintf("manifest written (%d entries, %s)", len(m.Files), humanizeBytes(float64(totalBytes)))
@@ -244,9 +244,9 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 
 // buildChunkedManifest performs the walk-and-chunk pass and returns the
 // in-memory manifest WITHOUT persisting it, so a caller can attach extra
-// synthetic entries (e.g. PluginHandler's .plg installer) before the single
-// PutManifest. Returns the manifest, total bytes chunked, and the number of
-// inaccessible paths that were skipped.
+// out-of-tree data (e.g. PluginHandler's .plg installer) to the manifest
+// before the single PutManifest. Returns the manifest, total bytes chunked,
+// and the number of inaccessible paths that were skipped.
 func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
 	srcPath, _ := item.Settings["path"].(string)
 	if srcPath == "" {
@@ -267,7 +267,7 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 	changedSince, hasChangedSince := parseChangedSince(item.Settings)
 	chunker, err := dedup.NewChunker(repo.SplitterSecret())
 	if err != nil {
-		return dedup.Manifest{}, 0, 0, err
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: init chunker: %w", err)
 	}
 
 	// Open srcPath as a rooted handle so file opens during the walk go
@@ -361,7 +361,7 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 		return nil
 	})
 	if err != nil {
-		return dedup.Manifest{}, 0, 0, err
+		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: walk %q: %w", item.Name, err)
 	}
 
 	if skipped > 0 {
@@ -369,16 +369,6 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 	}
 	return m, totalBytes, skipped, nil
 }
-
-// PluginPlgManifestKey is the reserved manifest key under which the chunked
-// plugin backup stores the plugin's .plg installer bytes as a single data
-// chunk. It lives on the same manifest as the plugin's config files (so GC
-// and deep verify reach it as an ordinary data chunk), but it is not a real
-// file inside the config tree: FolderHandler.RestoreChunked skips it and
-// PluginHandler.RestoreChunked restores it to the .plg path instead. Defined
-// here (not in the linux-only plugin.go) so this cross-platform restore loop
-// can reference it.
-const PluginPlgManifestKey = "__plg"
 
 // RestoreChunked reads the Manifest at manifestID and reconstructs the file
 // tree under destPath. Directories are restored first (sorted shallowest-to-
@@ -405,12 +395,6 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 
 	var dirs, files []string
 	for p, e := range m.Files {
-		// Reserved synthetic entry written by the chunked plugin backup;
-		// PluginHandler.RestoreChunked restores it to the .plg path, so it
-		// must never be materialised as a file inside the config tree.
-		if p == PluginPlgManifestKey {
-			continue
-		}
 		if !include.matches(p) {
 			continue
 		}

@@ -127,54 +127,80 @@ func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
 	}
 }
 
-// TestPluginChunkedBackupRestoresPlgFile is a regression test for #273: the
-// chunked plugin backup omitted the .plg installer, so a dedup-only restore
-// left the plugin without its installer file. The .plg is now stored on the
-// manifest and restored to its own path — not into the config tree.
-func TestPluginChunkedBackupRestoresPlgFile(t *testing.T) {
-	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "config.toml"), []byte("setting=true"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// TestPluginChunkedInstaller is a regression test for #273: the chunked plugin
+// backup omitted the .plg installer, so a dedup-only restore left the plugin
+// without its installer file. The installer is now recorded out-of-tree in the
+// manifest's Installer field and restored to <pluginsDir>/<name>.plg. The
+// table covers both an installer-present and an installer-absent (backward
+// compatible) plugin.
+func TestPluginChunkedInstaller(t *testing.T) {
+	const pluginName = "test-plugin"
 	plgBody := []byte(`<?xml version="1.0"?><PLUGIN name="test-plugin"></PLUGIN>`)
-	plgSrc := filepath.Join(t.TempDir(), "test-plugin.plg")
-	if err := os.WriteFile(plgSrc, plgBody, 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	r, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
+	cases := []struct {
+		name         string
+		hasInstaller bool
+	}{
+		{name: "installer present", hasInstaller: true},
+		{name: "installer absent", hasInstaller: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Redirect the well-known plugins dir so backup reads and restore
+			// writes the installer under a tempdir instead of /boot/config.
+			base := t.TempDir()
+			orig := pluginsDir
+			pluginsDir = base
+			t.Cleanup(func() { pluginsDir = orig })
 
-	h := &PluginHandler{}
-	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src, "plg_path": plgSrc}}
-	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Flush(); err != nil {
-		t.Fatal(err)
-	}
+			src := t.TempDir()
+			if err := os.WriteFile(filepath.Join(src, "config.toml"), []byte("setting=true"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.hasInstaller {
+				if err := os.WriteFile(filepath.Join(base, pluginName+".plg"), plgBody, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	dst := t.TempDir()
-	plgDst := filepath.Join(t.TempDir(), "test-plugin.plg")
-	restoreItem := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"plg_path": plgDst}}
-	if err := h.RestoreChunked(ctx, restoreItem, r, manifestID, dst, nil); err != nil {
-		t.Fatal(err)
-	}
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
 
-	if got, err := os.ReadFile(plgDst); err != nil { // #nosec G304 — test-controlled tempdir
-		t.Errorf("plugin .plg should have been restored: %v", err)
-	} else if !bytes.Equal(got, plgBody) {
-		t.Errorf("restored .plg content mismatch: got %q", got)
-	}
-	if got, err := os.ReadFile(filepath.Join(dst, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
-		t.Errorf("plugin config should have been restored: %v", err)
-	} else if string(got) != "setting=true" {
-		t.Errorf("restored config content mismatch: got %q", got)
-	}
-	// The reserved __plg entry must never be materialised inside the config tree.
-	if _, err := os.Stat(filepath.Join(dst, PluginPlgManifestKey)); !os.IsNotExist(err) {
-		t.Errorf("reserved .plg key must not be written into config dir (err=%v)", err)
+			h := &PluginHandler{}
+			item := BackupItem{Name: pluginName, Type: "plugin", Settings: map[string]any{"path": src}}
+			ctx := context.Background()
+			manifestID, err := h.BackupChunked(ctx, item, r, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Remove the source-side installer so the restore must recreate it.
+			_ = os.Remove(filepath.Join(base, pluginName+".plg"))
+
+			dst := t.TempDir()
+			if err := h.RestoreChunked(ctx, BackupItem{Name: pluginName, Type: "plugin"}, r, manifestID, dst, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			if got, err := os.ReadFile(filepath.Join(dst, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
+				t.Errorf("plugin config should have been restored: %v", err)
+			} else if string(got) != "setting=true" {
+				t.Errorf("restored config content mismatch: got %q", got)
+			}
+
+			plgRestored := filepath.Join(base, pluginName+".plg")
+			if tc.hasInstaller {
+				if got, err := os.ReadFile(plgRestored); err != nil { // #nosec G304 — test-controlled tempdir
+					t.Errorf("plugin .plg should have been restored: %v", err)
+				} else if !bytes.Equal(got, plgBody) {
+					t.Errorf("restored .plg content mismatch: got %q", got)
+				}
+			} else if _, err := os.Stat(plgRestored); !os.IsNotExist(err) {
+				t.Errorf("no .plg should be restored when none was backed up (err=%v)", err)
+			}
+		})
 	}
 }
