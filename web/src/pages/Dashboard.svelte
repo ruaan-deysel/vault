@@ -398,11 +398,17 @@
   // smaller incrementals become the most recent runs. Populated by
   // loadLargest() during the dashboard load.
   let largestBackups = $state([])
+  // Guards against a slow reload's response overwriting a newer one: each
+  // call claims a generation and only the latest applies its result.
+  let largestLoadGeneration = 0
   async function loadLargest() {
+    const generation = ++largestLoadGeneration
     try {
       const history = await api.getHistory(200)
       const nameByJob = new Map(jobs.map(j => [j.id, j.name]))
-      largestBackups = largestBackupsByJob(history, nameByJob)
+      if (generation === largestLoadGeneration) {
+        largestBackups = largestBackupsByJob(history, nameByJob)
+      }
     } catch { /* keep previous value on failure */ }
   }
 
