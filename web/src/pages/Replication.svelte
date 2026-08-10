@@ -280,7 +280,7 @@
       `${jobs} job${jobs === 1 ? '' : 's'} synced`,
       `${rps} new restore point${rps === 1 ? '' : 's'}`,
     ]
-    if (src.last_sync_bytes) parts.push(formatBytes(src.last_sync_bytes))
+    if (src.last_sync_bytes != null) parts.push(formatBytes(src.last_sync_bytes))
     if ((src.last_sync_jobs_failed || 0) > 0) parts.push(`${src.last_sync_jobs_failed} job(s) failed`)
     return parts.join(' · ')
   }

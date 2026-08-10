@@ -93,9 +93,9 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		t.Fatalf("UpdateReplicationSyncResult() error = %v", err)
 	}
 	withCounts, _ := database.GetReplicationSource(id)
-	if withCounts.LastSyncJobsSynced != 3 || withCounts.LastSyncRestorePoints != 12 || withCounts.LastSyncBytes != 1024 {
-		t.Errorf("counters = %d/%d/%d, want 3/12/1024",
-			withCounts.LastSyncJobsSynced, withCounts.LastSyncRestorePoints, withCounts.LastSyncBytes)
+	if withCounts.LastSyncJobsSynced != 3 || withCounts.LastSyncJobsFailed != 0 || withCounts.LastSyncRestorePoints != 12 || withCounts.LastSyncBytes != 1024 {
+		t.Errorf("counters = %d/%d/%d/%d, want 3/0/12/1024",
+			withCounts.LastSyncJobsSynced, withCounts.LastSyncJobsFailed, withCounts.LastSyncRestorePoints, withCounts.LastSyncBytes)
 	}
 	if withCounts.LastSyncSuccessAt == nil {
 		t.Error("LastSyncSuccessAt should be set after a successful sync")
@@ -121,6 +121,9 @@ func TestReplicationSourceCRUD(t *testing.T) {
 		t.Fatalf("UpdateReplicationSyncResult(failed) error = %v", err)
 	}
 	failed, _ := database.GetReplicationSource(id)
+	if failed.LastSyncJobsFailed != 2 {
+		t.Errorf("LastSyncJobsFailed = %d, want 2", failed.LastSyncJobsFailed)
+	}
 	if failed.LastSyncSuccessAt == nil || !failed.LastSyncSuccessAt.Equal(prevSuccess) {
 		t.Errorf("LastSyncSuccessAt should not change on a failed sync")
 	}
