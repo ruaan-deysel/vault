@@ -291,11 +291,6 @@ func TestCountRunningBackupsOnDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Nothing running yet.
-	if n, err := d.CountRunningBackupsOnDestination(destA); err != nil || n != 0 {
-		t.Fatalf("CountRunningBackupsOnDestination(destA) = %d, %v; want 0, nil", n, err)
-	}
-
 	// One running and one finished run on destA; one running on destB.
 	if _, err := d.CreateJobRun(JobRun{JobID: jobA, Status: "running", BackupType: "full"}); err != nil {
 		t.Fatal(err)
@@ -311,18 +306,26 @@ func TestCountRunningBackupsOnDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only the running backup run on destA counts; the finished one, the
-	// running restore, and destB's run do not.
-	if n, err := d.CountRunningBackupsOnDestination(destA); err != nil || n != 1 {
-		t.Fatalf("CountRunningBackupsOnDestination(destA) = %d, %v; want 1, nil", n, err)
+	cases := []struct {
+		name string
+		dest int64
+		want int
+	}{
+		{"only the running backup counts, not the finished run or the restore", destA, 1},
+		{"a different destination counts its own running backup", destB, 1},
+		{"a destination with no jobs counts zero", 99999, 0},
 	}
-	if n, err := d.CountRunningBackupsOnDestination(destB); err != nil || n != 1 {
-		t.Fatalf("CountRunningBackupsOnDestination(destB) = %d, %v; want 1, nil", n, err)
-	}
-
-	// A destination with no jobs counts zero.
-	if n, err := d.CountRunningBackupsOnDestination(99999); err != nil || n != 0 {
-		t.Fatalf("CountRunningBackupsOnDestination(missing) = %d, %v; want 0, nil", n, err)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := d.CountRunningBackupsOnDestination(tc.dest)
+			if err != nil {
+				t.Fatalf("CountRunningBackupsOnDestination(%d): %v", tc.dest, err)
+			}
+			if n != tc.want {
+				t.Fatalf("CountRunningBackupsOnDestination(%d) = %d, want %d", tc.dest, n, tc.want)
+			}
+		})
 	}
 }
 

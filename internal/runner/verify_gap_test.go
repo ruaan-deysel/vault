@@ -86,81 +86,51 @@ func seedVerifiableJob(t *testing.T, database *db.DB, storageDir, name string) (
 	return jobID, dest
 }
 
-// TestRunScheduledDeepVerifyDeferredWhenBackupActive covers #290: a scheduled
-// deep verify must not start while a backup is running on the same storage
-// destination, or the two saturate the destination and the backup appears to
-// freeze.
-func TestRunScheduledDeepVerifyDeferredWhenBackupActive(t *testing.T) {
+// TestRunScheduledVerifyBackupContention covers #290: a scheduled deep verify
+// must not start while a backup is running on the same storage destination (it
+// would saturate the destination and make the backup appear frozen), while a
+// quick verify and an idle deep verify still dispatch.
+func TestRunScheduledVerifyBackupContention(t *testing.T) {
 	t.Parallel()
-	r, database, storageDir := setupTestRunner(t)
-	jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-defer")
-
-	// A second job on the SAME destination is mid-backup.
-	busyJob, err := database.CreateJob(db.Job{
-		Name: "busy", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
-	})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name       string
+		mode       string
+		busyBackup bool
+		wantRuns   int
+	}{
+		{"deep deferred while backup active", "deep", true, 0},
+		{"deep dispatched when destination idle", "deep", false, 1},
+		{"quick runs alongside an active backup", "quick", true, 1},
 	}
-	if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, database, storageDir := setupTestRunner(t)
+			jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-job")
 
-	r.RunScheduledVerify(jobID, "deep")
+			if tc.busyBackup {
+				busyJob, err := database.CreateJob(db.Job{
+					Name: "busy-job", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	runs, err := database.ListRecentVerifyRuns(10)
-	if err != nil {
-		t.Fatalf("ListRecentVerifyRuns: %v", err)
-	}
-	if len(runs) != 0 {
-		t.Fatalf("deep verify was dispatched despite an active backup on the destination (%d verify runs)", len(runs))
-	}
-}
+			r.RunScheduledVerify(jobID, tc.mode)
 
-// TestRunScheduledDeepVerifyProceedsWhenIdle is the control: with no backup
-// running on the destination, the deep verify is dispatched (a verify_run row
-// is created).
-func TestRunScheduledDeepVerifyProceedsWhenIdle(t *testing.T) {
-	t.Parallel()
-	r, database, storageDir := setupTestRunner(t)
-	jobID, _ := seedVerifiableJob(t, database, storageDir, "verify-idle")
-
-	r.RunScheduledVerify(jobID, "deep")
-
-	runs, err := database.ListRecentVerifyRuns(10)
-	if err != nil {
-		t.Fatalf("ListRecentVerifyRuns: %v", err)
-	}
-	if len(runs) != 1 {
-		t.Fatalf("expected the deep verify to be dispatched (1 verify run), got %d", len(runs))
-	}
-}
-
-// TestRunScheduledQuickVerifyProceedsDespiteActiveBackup confirms only deep
-// verify is gated — a quick verify (HEAD-only) still runs during a backup.
-func TestRunScheduledQuickVerifyProceedsDespiteActiveBackup(t *testing.T) {
-	t.Parallel()
-	r, database, storageDir := setupTestRunner(t)
-	jobID, dest := seedVerifiableJob(t, database, storageDir, "verify-quick")
-
-	busyJob, err := database.CreateJob(db.Job{
-		Name: "busy-quick", Enabled: true, BackupTypeChain: "full", StorageDestID: dest.ID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.CreateJobRun(db.JobRun{JobID: busyJob, Status: "running", BackupType: "full"}); err != nil {
-		t.Fatal(err)
-	}
-
-	r.RunScheduledVerify(jobID, "quick")
-
-	runs, err := database.ListRecentVerifyRuns(10)
-	if err != nil {
-		t.Fatalf("ListRecentVerifyRuns: %v", err)
-	}
-	if len(runs) != 1 {
-		t.Fatalf("expected quick verify to run during a backup (1 verify run), got %d", len(runs))
+			runs, err := database.ListRecentVerifyRuns(10)
+			if err != nil {
+				t.Fatalf("ListRecentVerifyRuns: %v", err)
+			}
+			if len(runs) != tc.wantRuns {
+				t.Fatalf("verify runs = %d, want %d (mode=%s, busyBackup=%v)", len(runs), tc.wantRuns, tc.mode, tc.busyBackup)
+			}
+		})
 	}
 }
 
