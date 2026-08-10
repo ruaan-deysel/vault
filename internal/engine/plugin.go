@@ -201,18 +201,34 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	return nil
 }
 
+// pluginPlgFilePath resolves where the plugin's .plg installer lives.
+// item.Settings["plg_path"] overrides the default (used by tests so they can
+// point at a t.TempDir()); in production it is /boot/config/plugins/<name>.plg,
+// matching the classic Backup/Restore path.
+func pluginPlgFilePath(name string, settings map[string]any) string {
+	if p, _ := settings["plg_path"].(string); p != "" {
+		return p
+	}
+	if name == "" {
+		return ""
+	}
+	return filepath.Join(pluginsDir, name+".plg")
+}
+
 // BackupChunked walks the plugin's config directory tree and chunks every
-// regular file into the dedup repo. Returns the manifest's chunk ID. Thin
-// wrapper that delegates to FolderHandler.BackupChunked with the plugin's
-// directory as the source — plugins are folder-shaped under
-// /boot/config/plugins/<name>/.
+// regular file into the dedup repo, then stores the plugin's .plg installer
+// file as a single reserved manifest entry so a dedup-only restore can
+// reinstate it. Delegates the config directory to FolderHandler.BackupChunked
+// — plugins are folder-shaped under /boot/config/plugins/<name>/.
 //
-// item.Settings["path"] overrides the default plugin path lookup (used by
-// tests so they can point at a t.TempDir() instead of /boot/config/plugins/);
-// in production the runner does not set it and pluginPath(item.Name) applies.
-// Note: this only chunks the plugin's config directory — the .plg installer
-// file itself is not part of the chunked stream (the runner handles plg
-// preservation separately if needed).
+// item.Settings["path"] overrides the default config path lookup and
+// item.Settings["plg_path"] overrides the .plg lookup (both used by tests so
+// they can point at a t.TempDir() instead of /boot/config/plugins/); in
+// production the runner sets neither and the well-known paths apply.
+//
+// When no .plg file is present (tests, or a plugin without an installer) the
+// manifest holds only the config files, exactly as the folder backup produced
+// before this change, so existing restore points are unaffected.
 func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
@@ -223,11 +239,27 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": src}}
 	fh := &FolderHandler{}
-	return fh.BackupChunked(ctx, proxy, repo, progress)
+	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, progress)
+	if err != nil {
+		return dedup.ID{}, err
+	}
+
+	// Attach the .plg installer as a reserved single-chunk entry on the same
+	// manifest (best-effort). Done before PutManifest because the config
+	// manifest is not yet flushed and so cannot be read back mid-run.
+	if plgData, rErr := os.ReadFile(pluginPlgFilePath(item.Name, item.Settings)); rErr == nil { // #nosec G304 — path derived from the plugin name / test override
+		chunkID, pErr := repo.Put(plgData)
+		if pErr != nil {
+			return dedup.ID{}, fmt.Errorf("plugin: storing .plg: %w", pErr)
+		}
+		m.Files[PluginPlgManifestKey] = dedup.ManifestEntry{Size: int64(len(plgData)), Chunks: []dedup.ID{chunkID}}
+	}
+	return repo.PutManifest(item.Name, m)
 }
 
 // RestoreChunked reconstructs the plugin's config directory tree from the
-// manifest. destPath defaults to the plugin's well-known directory
+// manifest and, when the backup captured one, restores the .plg installer
+// file. destPath defaults to the plugin's well-known directory
 // (pluginPath(item.Name)) when empty — the runner passes "" so production
 // restore lands in /boot/config/plugins/<name>/. Tests pass a t.TempDir().
 func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
@@ -247,5 +279,41 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
-	return fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress)
+	// The config restore skips the reserved PluginPlgManifestKey entry, so the
+	// .plg is never written into the config tree by the folder restore.
+	if err := fh.RestoreChunked(ctx, proxy, repo, manifestID, destPath, progress); err != nil {
+		return err
+	}
+	return h.restorePlgFromManifest(item, repo, manifestID)
+}
+
+// restorePlgFromManifest writes the plugin's .plg installer back to its
+// well-known location when the manifest carries one. Manifests written before
+// the .plg was captured simply have no such entry and this is a no-op.
+func (h *PluginHandler) restorePlgFromManifest(item BackupItem, repo *dedup.Repo, manifestID dedup.ID) error {
+	m, err := repo.GetManifest(manifestID)
+	if err != nil {
+		return err
+	}
+	entry, ok := m.Files[PluginPlgManifestKey]
+	if !ok || len(entry.Chunks) == 0 {
+		return nil
+	}
+	data, err := repo.Get(entry.Chunks[0])
+	if err != nil {
+		return fmt.Errorf("plugin: reading stored .plg: %w", err)
+	}
+
+	dst, _ := item.Settings["plg_path"].(string)
+	if dst == "" {
+		safeName, err := normalizeRestoreComponent(item.Name)
+		if err != nil {
+			return err
+		}
+		dst = filepath.Join(pluginsDir, safeName+".plg")
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil { // #nosec G306 — .plg is installed world-readable, matching classic Restore
+		return fmt.Errorf("plugin: writing .plg: %w", err)
+	}
+	return nil
 }

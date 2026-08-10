@@ -37,6 +37,11 @@ func dedupManifestToTarIndex(itemName string, m dedup.Manifest) engine.TarIndex 
 		Files:   make([]engine.TarIndexEntry, 0, len(m.Files)),
 	}
 	for p, e := range m.Files {
+		// Skip reserved synthetic entries (e.g. the plugin .plg installer)
+		// that are not real files the user can select in the picker.
+		if p == engine.PluginPlgManifestKey {
+			continue
+		}
 		idx.Files = append(idx.Files, engine.TarIndexEntry{
 			Path:    p,
 			Size:    e.Size,

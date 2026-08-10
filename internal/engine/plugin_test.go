@@ -126,3 +126,55 @@ func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
 		t.Errorf("unselected file data/state.bin should not have been restored (err=%v)", err)
 	}
 }
+
+// TestPluginChunkedBackupRestoresPlgFile is a regression test for #273: the
+// chunked plugin backup omitted the .plg installer, so a dedup-only restore
+// left the plugin without its installer file. The .plg is now stored on the
+// manifest and restored to its own path — not into the config tree.
+func TestPluginChunkedBackupRestoresPlgFile(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.toml"), []byte("setting=true"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plgBody := []byte(`<?xml version="1.0"?><PLUGIN name="test-plugin"></PLUGIN>`)
+	plgSrc := filepath.Join(t.TempDir(), "test-plugin.plg")
+	if err := os.WriteFile(plgSrc, plgBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &PluginHandler{}
+	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src, "plg_path": plgSrc}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	plgDst := filepath.Join(t.TempDir(), "test-plugin.plg")
+	restoreItem := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"plg_path": plgDst}}
+	if err := h.RestoreChunked(ctx, restoreItem, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := os.ReadFile(plgDst); err != nil { // #nosec G304 — test-controlled tempdir
+		t.Errorf("plugin .plg should have been restored: %v", err)
+	} else if !bytes.Equal(got, plgBody) {
+		t.Errorf("restored .plg content mismatch: got %q", got)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
+		t.Errorf("plugin config should have been restored: %v", err)
+	} else if string(got) != "setting=true" {
+		t.Errorf("restored config content mismatch: got %q", got)
+	}
+	// The reserved __plg entry must never be materialised inside the config tree.
+	if _, err := os.Stat(filepath.Join(dst, PluginPlgManifestKey)); !os.IsNotExist(err) {
+		t.Errorf("reserved .plg key must not be written into config dir (err=%v)", err)
+	}
+}
