@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **Replication targets now show what the last sync actually did.** A target that connected but had nothing new to copy previously just read "Synced", which looked the same as a sync that transferred data — so replication could appear to "connect but not do much". Each target now shows an explicit **Up to date** state when a sync found nothing new, a per-sync summary (jobs synced, new restore points, bytes transferred, and any failures), and the time replication last fully succeeded. These counters are stored with each run, so they are visible on page load and after a refresh, not only in the moment a sync finishes. Closes #287.
+- **Contributor build and run guidance is now discoverable from the repository root and docs site.** Added explicit local development prerequisites and workflows across `CONTRIBUTING.md`, `README.md`, and docs pages so new contributors can find compile/build/run/lint/test/docker instructions, frontend-dev notes, and architecture links from a single entry path. Closes #341.
 
 ### Security
 

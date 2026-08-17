@@ -9,10 +9,19 @@ Vault is a Go backup daemon for Unraid with a Svelte 5 web UI, shipped as an Unr
 
 ## Prerequisites
 
-- **Go 1.26** (see `go.mod`) — the binary is pure Go (`CGO_ENABLED=0`).
-- **Node/npm** — for the Svelte 5 web UI in `web/`.
-- **golangci-lint** — linting is enforced with zero tolerance.
-- **pre-commit** — run `make pre-commit-install` once to set up the hooks.
+- **Go 1.26.5** (CI version) — the binary is pure Go (`CGO_ENABLED=0`).
+- **Node 22** (CI version) — for the Svelte 5 web UI in `web/`.
+- **pre-commit** — run either `make pre-commit-install` or `./scripts/setup-pre-commit.sh` once.
+
+`./scripts/setup-pre-commit.sh` is the quickest setup path: it installs Python/pip, pre-commit, Go tools, and Node prerequisites, then installs hooks.
+
+If you install tools manually, ensure these are available on `PATH`:
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+go install github.com/securego/gosec/v2/cmd/gosec@latest
+go install golang.org/x/vuln/cmd/govulncheck@latest
+```
 
 ## Local Development
 
@@ -21,8 +30,11 @@ make deps               # go mod download && go mod tidy
 make build-local        # Build for Linux/amd64 → build/vault-linux-amd64 (also builds the web UI)
 make test               # go test ./... -v
 make test-short         # go test ./... -short
+make test-coverage      # go test ./... with coverage.out + coverage.html
 make lint               # golangci-lint with .golangci.yml
+make lint-web           # npm run lint in web/
 make security-check     # gosec + govulncheck + go mod verify
+make clean              # remove build artifacts and coverage output
 ```
 
 Run a single test:
@@ -35,9 +47,27 @@ Web UI:
 
 ```bash
 cd web && npm run build    # Build the UI
+cd web && npm run dev      # Vite dev server (proxies /api -> http://localhost:24085)
 cd web && npm run lint     # Lint the UI (also: make lint-web)
 cd web && npm test         # Run Vitest
 ```
+
+Running the daemon locally:
+
+```bash
+./build/vault daemon --db=vault.db --addr=:24085
+```
+
+Frontend development loop:
+
+- Run `npm run dev` in `web/` while the daemon is running on `:24085`; Vite proxies `/api` to `http://localhost:24085` (see `web/vite.config.js`).
+- Build `web/dist` with `npm run build` before `go build`/`make build-local`, because `web/embed.go` embeds files from `dist/*`.
+
+Docker build:
+
+- `make docker-build` builds the image with `VERSION`, `COMMIT`, and `BUILD_DATE` passed as Docker build arguments from the `Makefile`.
+
+For project layout and deeper design details, see [Architecture](docs/architecture.md).
 
 ## Post-Change Workflow
 

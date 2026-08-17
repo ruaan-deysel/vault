@@ -90,6 +90,7 @@ https://raw.githubusercontent.com/ruaan-deysel/vault/main/plugin/vault.plg
 | [API Reference](docs/api.md)                                | Full REST API endpoint reference                      |
 | [MCP Integration](docs/mcp.md)                              | Model Context Protocol server for AI tools            |
 | [Architecture](docs/architecture.md)                        | Project structure, build commands, deployment         |
+| [Contributing](CONTRIBUTING.md)                             | Local contributor workflow, checks, and PR conventions |
 | [Changelog](CHANGELOG.md)                                   | Release notes by version                              |
 
 Home Assistant users: use the ready-to-use custom integration at
@@ -104,6 +105,12 @@ Home Assistant users: use the ready-to-use custom integration at
 - Bug reports: [open a bug report](https://github.com/ruaan-deysel/vault/issues/new?template=01-bug-report.yml)
 - Enhancement requests: [request an improvement](https://github.com/ruaan-deysel/vault/issues/new?template=02-enhancement-request.yml)
 - Questions and support: [use the Unraid forum support thread](https://forums.unraid.net/topic/197786-plugin-vault-backup-manager)
+
+## Development
+
+- Prerequisites: **Go 1.26.5** and **Node 22**.
+- Use [CONTRIBUTING.md](CONTRIBUTING.md) for the full local build/run/lint/deploy contributor workflow.
+- See [Architecture](docs/architecture.md) for project structure and implementation details.
 
 ## License
 

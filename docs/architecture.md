@@ -141,6 +141,11 @@ On startup the daemon restores from the **freshest integrity-passing source** am
 
 ## Build Commands
 
+Build and CI currently use:
+
+- **Go 1.26.5**
+- **Node 22**
+
 ### Plugin Lifecycle (Ansible-driven)
 
 ```bash
@@ -165,11 +170,26 @@ make pre-commit-run      # Run the full local quality gate
 make clean               # Remove build artifacts
 ```
 
+### Web Frontend (Svelte + Vite)
+
+```bash
+cd web && npm run dev    # Vite dev server (proxies /api -> http://localhost:24085)
+cd web && npm run build  # Build dist assets for embedding
+cd web && npm run lint   # Frontend lint checks
+make lint-web            # Same lint check via Makefile
+cd web && npm test       # Runs vitest run
+```
+
 ### Running the Daemon
 
 ```bash
 ./build/vault daemon --db=vault.db --addr=:24085
 ```
+
+Build constraints:
+
+- `web/embed.go` uses `//go:embed dist/*`, so `web/dist` must exist before `go build` (handled by `make build-local` and CI's web build step).
+- `internal/release` embeds `CHANGELOG.md`; the build flow first copies the repo-root changelog into `internal/release/CHANGELOG.md` before lint/tests/build (also mirrored by the Makefile and CI).
 
 The production binary is built with `CGO_ENABLED=0` using `modernc.org/sqlite`, keeping it pure Go.
 

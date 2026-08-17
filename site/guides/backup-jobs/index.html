@@ -1,0 +1,2198 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Backup and restore daemon for Unraid servers">
+      
+      
+      
+        <link rel="canonical" href="https://ruaan-deysel.github.io/vault/guides/backup-jobs/">
+      
+      
+        <link rel="prev" href="../../getting-started/">
+      
+      
+        <link rel="next" href="../storage-destinations/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Backup Jobs - Vault</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#backup-jobs" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Vault" class="md-header__button md-logo" aria-label="Vault" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Vault
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Backup Jobs
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ruaan-deysel/vault" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ruaan-deysel/vault
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Vault" class="md-nav__button md-logo" aria-label="Vault" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Vault
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ruaan-deysel/vault" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ruaan-deysel/vault
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backup Jobs
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backup Jobs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a Job
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating a Job">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — What
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 1 — What">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on containers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#container-database-dumps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container database dumps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#excluding-container-sub-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excluding container sub-paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backing-up-immich" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backing up Immich
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-zfs-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on ZFS datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on folders
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-where-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — Where &amp; when
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2 — Where &amp; when">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-how" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — How
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 3 — How">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backup-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backup Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-name-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Name &amp; review
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-job-manually" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a Job Manually
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring Progress
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancelling-a-running-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelling a Running Job
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a Job
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-individual-restore-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting Individual Restore Points
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-stale-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing Stale Items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scheduled-verification-and-backup-contention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduled verification and backup contention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#encryption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encryption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deduplication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deduplication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage-destinations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage Destinations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../anomaly-detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anomaly Detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../disaster-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disaster Recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-backup-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Backup Works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Settings Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/app-settings.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    App / Daemon Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/job-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/notifications.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-sftp.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: SFTP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-smb.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: SMB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-nfs.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: NFS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-webdav.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: WebDAV
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-s3.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: S3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/storage-local.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage: Local
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API & MCP
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API & MCP
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a Job
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating a Job">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — What
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 1 — What">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on containers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#container-database-dumps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container database dumps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#excluding-container-sub-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excluding container sub-paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backing-up-immich" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backing up Immich
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-zfs-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on ZFS datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on folders
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-where-when" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — Where &amp; when
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2 — Where &amp; when">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-how" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — How
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 3 — How">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backup-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backup Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-name-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Name &amp; review
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-job-manually" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a Job Manually
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring Progress
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancelling-a-running-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelling a Running Job
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-job" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a Job
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-individual-restore-points" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting Individual Restore Points
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-stale-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing Stale Items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scheduled-verification-and-backup-contention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scheduled verification and backup contention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#encryption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encryption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deduplication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deduplication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="backup-jobs">Backup Jobs<a class="headerlink" href="#backup-jobs" title="Permanent link">&para;</a></h1>
+<p>A backup job defines <em>what</em> to back up, <em>where</em> to put it, <em>when</em> to run, and how many copies to keep. This guide explains every option in the job wizard.</p>
+<h2 id="creating-a-job">Creating a Job<a class="headerlink" href="#creating-a-job" title="Permanent link">&para;</a></h2>
+<p>Go to <strong>Jobs</strong> → <strong>Create Job</strong>. The wizard has four steps.</p>
+<p><img alt="Create backup job wizard" src="../../screenshots/14-job-wizard.png" /></p>
+<hr />
+<h3 id="step-1-what">Step 1 — What<a class="headerlink" href="#step-1-what" title="Permanent link">&para;</a></h3>
+<p>Pick which items to include in this job. Vault discovers items automatically from your server:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>What's included</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Containers</strong></td>
+<td>Docker containers (image, XML template, and all mapped appdata volumes); per-container path excludes</td>
+</tr>
+<tr>
+<td><strong>Virtual Machines</strong></td>
+<td>libvirt VMs (live snapshot or cold backup depending on running state); NVRAM preserved</td>
+</tr>
+<tr>
+<td><strong>ZFS datasets</strong></td>
+<td>Native <code>zfs send</code>/<code>receive</code> with snapshot management</td>
+</tr>
+<tr>
+<td><strong>Folders</strong></td>
+<td>Any arbitrary path on your server (e.g. <code>/mnt/user/appdata</code>, <code>/boot/config</code>)</td>
+</tr>
+<tr>
+<td><strong>Plugins</strong></td>
+<td>Installed Unraid plugins</td>
+</tr>
+</tbody>
+</table>
+<h4 id="notes-on-containers">Notes on containers<a class="headerlink" href="#notes-on-containers" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Vault backs up the container image, its XML template, and all host paths mapped into the container.</li>
+<li>Special files (Unix sockets, device nodes, named pipes) are skipped automatically — they cannot be archived and their presence does not fail the backup.</li>
+<li>Tailscale-enabled containers are fully supported.</li>
+<li>Bind-mounts that point at the host root (<code>/</code> → <code>/rootfs</code>, used by Glances, Telegraf, Netdata, cAdvisor, node-exporter) are detected and skipped without walking the host filesystem.</li>
+</ul>
+<h4 id="container-database-dumps">Container database dumps<a class="headerlink" href="#container-database-dumps" title="Permanent link">&para;</a></h4>
+<p>For containers Vault recognises as a database (PostgreSQL, MySQL, MariaDB), a
+job can capture a <strong>logical SQL dump</strong> alongside the volume archive. The dump is
+a sidecar of the backup (<code>database.sql</code>, optionally <code>.gz</code>/<code>.zst</code> when the job
+compresses) — it is not stored inside any restored volume.</p>
+<p>On restore Vault decides whether to replay it automatically:</p>
+<ul>
+<li><strong>Reloaded automatically</strong> when the backup recorded that the dump is the
+  authoritative copy (the volumes were captured while the server was running,
+  so the dump is the consistent snapshot). Vault waits for the database to
+  become ready and replays the dump into the restored container.</li>
+<li><strong>Left for you, not reloaded</strong> when the restored volume is the newer,
+  consistent copy (the volumes were captured with the server stopped), when the
+  container was not running, or when the database never became ready. Replaying
+  in these cases would roll the database back to where the dump began, so Vault
+  preserves the dump instead of applying it.</li>
+</ul>
+<p>When the dump is <strong>not</strong> reloaded, Vault copies it out of its temporary staging
+directory to a durable, discoverable location and reports the exact path in the
+restore progress and logs (<code>database dump saved to …</code>):</p>
+<ul>
+<li><strong>Custom destination</strong> — written to <code>&lt;destination&gt;/&lt;container&gt;-database.sql</code>
+  (with the job's <code>.gz</code>/<code>.zst</code> suffix when compressed).</li>
+<li><strong>In place (no custom destination)</strong> — written beside the container's first
+  restored volume, for example
+  <code>/mnt/user/appdata/&lt;container&gt;-database.sql</code>.</li>
+</ul>
+<p>The file name is prefixed with the container name so several containers
+restored under a shared parent (such as <code>/mnt/user/appdata</code>) do not collide.
+You can replay a preserved dump manually with your database's normal import
+tool (for example <code>mysql &lt; database.sql</code> or <code>psql -f database.sql</code>). This
+behaviour is the same for classic and deduplicated backups.</p>
+<h4 id="excluding-container-sub-paths">Excluding container sub-paths<a class="headerlink" href="#excluding-container-sub-paths" title="Permanent link">&para;</a></h4>
+<p>You can list paths to exclude from a container backup (e.g. <code>/config/Library/Application Support/Plex Media Server/Cache</code> or <code>/config/Sonarr/MediaCover</code>). The job wizard exposes a free-text list per container, and Vault ships a <code>GET /api/v1/presets/exclusions</code> catalogue of common rules for popular containers (Plex, Sonarr, Radarr, etc.) the UI offers as starting points. For some apps the response also carries advisory <code>notes</code>/<code>warnings</code> (e.g. the Immich database caveat below), which the wizard shows inline.</p>
+<h4 id="backing-up-immich">Backing up Immich<a class="headerlink" href="#backing-up-immich" title="Permanent link">&para;</a></h4>
+<p>Immich detection works for both the official <code>ghcr.io/immich-app/immich-server</code> image (media root mounted at <code>/data</code>) and the imagegenius fork <code>ghcr.io/imagegenius/immich</code> (<code>/photos</code>). The recommended exclusions cover both layouts:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Always backed up (critical)</th>
+<th>Excluded (regeneratable)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Official (<code>/data</code>)</td>
+<td><code>upload</code>, <code>library</code>, <code>profile</code>, <code>backups</code></td>
+<td><code>thumbs</code>, <code>encoded-video</code></td>
+</tr>
+<tr>
+<td>imagegenius (<code>/photos</code>)</td>
+<td><code>upload</code>, <code>library</code>, <code>profile</code>, <code>backups</code></td>
+<td><code>thumbs</code>, <code>encoded-video</code></td>
+</tr>
+</tbody>
+</table>
+<p>Thumbnails and re-encoded video are re-created by Immich on demand after a restore, so excluding them saves space without data loss. The <code>upload</code>/<code>library</code>/<code>profile</code> folders hold your original photos and videos and are never excluded.</p>
+<p><strong>Immich's database is the catch:</strong> Immich stores every asset's metadata in a <strong>PostgreSQL database that runs in a separate container</strong>, so a filesystem backup of the Immich container does <em>not</em> capture it — and a raw file copy of the Postgres data directory is not crash-consistent. Choose one of:</p>
+<ol>
+<li><strong>Recommended — Immich's built-in database backup.</strong> In Immich, go to <strong>Administration → Settings → Backup Settings</strong> and enable the database dump. Immich writes timestamped <code>.sql.gz</code> dumps into the <code>backups/</code> folder inside your media root (<code>/data/backups</code> or <code>/photos/backups</code>), which Vault keeps. Backing up the media root then captures both your photos and a restorable database dump in one job.</li>
+<li><strong>Back up the Postgres container as its own Vault job.</strong> Add the Immich Postgres container to a separate job; Vault stops it before archiving, giving a consistent copy of its data directory.</li>
+<li><strong>Dump via a pre-backup script.</strong> Vault runs a job's <strong>Pre-backup script</strong> before stopping any containers, with <code>VAULT_JOB_NAME</code>, <code>VAULT_STATUS</code>, <code>VAULT_JOB_ID</code>, and <code>VAULT_RUN_ID</code> exported into its environment. A script can <code>docker exec</code> a <code>pg_dump</code> into the media root before the backup runs.</li>
+</ol>
+<h4 id="notes-on-zfs-datasets">Notes on ZFS datasets<a class="headerlink" href="#notes-on-zfs-datasets" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Vault uses <code>zfs send</code> (full) and <code>zfs send -i</code> (incremental) under the hood and manages the snapshot lifecycle itself.</li>
+<li>Restoration goes through <code>zfs receive</code>, preserving properties and child datasets.</li>
+<li>The host <code>zfs</code> binary must be on <code>PATH</code> — true on any Unraid system with a ZFS pool.</li>
+</ul>
+<h4 id="notes-on-folders">Notes on folders<a class="headerlink" href="#notes-on-folders" title="Permanent link">&para;</a></h4>
+<ul>
+<li>You can back up <code>/mnt/user/appdata</code> to get all container appdata in one shot without selecting individual containers.</li>
+<li>Folder backups only wake the destination disk when writing — the source array is read sequentially.</li>
+</ul>
+<hr />
+<h3 id="step-2-where-when">Step 2 — Where &amp; when<a class="headerlink" href="#step-2-where-when" title="Permanent link">&para;</a></h3>
+<p>Select which storage destination this job will write to. If you have not added one yet, save the wizard and go to <strong>Storage</strong> first — see <a href="../storage-destinations/">Storage Destinations</a>. This step also sets the schedule.</p>
+<h4 id="schedule">Schedule<a class="headerlink" href="#schedule" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Hourly</strong></td>
+<td>Runs at a fixed minute past every hour</td>
+</tr>
+<tr>
+<td><strong>Daily</strong></td>
+<td>Runs at a specific time each day</td>
+</tr>
+<tr>
+<td><strong>Weekly</strong></td>
+<td>Runs on selected days of the week at a specific time</td>
+</tr>
+<tr>
+<td><strong>Monthly</strong></td>
+<td>Runs on a specific day of the month (or First/Last day) at a specific time</td>
+</tr>
+<tr>
+<td><strong>Yearly</strong></td>
+<td>Runs on a specific month and day at a specific time</td>
+</tr>
+<tr>
+<td><strong>Custom (cron)</strong></td>
+<td>Any valid cron expression for advanced schedules</td>
+</tr>
+</tbody>
+</table>
+<p><strong>"First day" and "Last day" of month:</strong>
+Instead of a fixed day number, you can choose <em>First day of month</em> or <em>Last day of month</em>. Last-day jobs fire correctly on months of any length (28, 29, 30, or 31 days).</p>
+<p><strong>Time format:</strong>
+The schedule UI uses your Unraid time format setting (12-hour or 24-hour) automatically.</p>
+<blockquote>
+<p><strong>Manual-only jobs:</strong> Leave the schedule empty to create a job that never runs on its own — you run it on demand with the <strong>Run Now</strong> button.</p>
+</blockquote>
+<hr />
+<h3 id="step-3-how">Step 3 — How<a class="headerlink" href="#step-3-how" title="Permanent link">&para;</a></h3>
+<p>Choose the backup strategy and, under <em>Advanced options</em>, tune compression, retention, verification, and scripts.</p>
+<h4 id="backup-types">Backup Types<a class="headerlink" href="#backup-types" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>What it backs up</th>
+<th>Restore speed</th>
+<th>Storage use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Full</strong></td>
+<td>Everything, every run</td>
+<td>Fastest — single archive</td>
+<td>Highest — full copy each time</td>
+</tr>
+<tr>
+<td><strong>Incremental</strong></td>
+<td>Changes since the last backup of any type</td>
+<td>Slowest — may need to chain archives</td>
+<td>Lowest</td>
+</tr>
+<tr>
+<td><strong>Differential</strong></td>
+<td>Changes since the last <em>full</em> backup</td>
+<td>Medium — needs full + one diff</td>
+<td>Medium</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">First run of an Incremental or Differential job</p>
+<p>On the very first run there is no parent backup to attach to, so an <strong>Incremental</strong> or <strong>Differential</strong> job automatically performs a <strong>Full</strong> backup and only later runs capture changes. Choosing Incremental or Differential from the start is the correct workflow — there is no need to run a manual Full first.</p>
+</div>
+<p>For most home server use cases, a weekly <strong>Full</strong> backup with daily <strong>Incremental</strong> runs gives a good balance between storage cost and restore speed.</p>
+<h4 id="retention">Retention<a class="headerlink" href="#retention" title="Permanent link">&para;</a></h4>
+<p>Retention controls how many restore points are kept before the oldest is deleted. (A <em>restore point</em> is one completed backup you can restore from.) Vault supports two modes. If any Long-Term Retention value is set, LTR is used and the simple settings are ignored.</p>
+<p><strong>Mode 1 — Simple count</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Keep last N restore points</strong></td>
+<td>Vault keeps this many restore points per job. When a new backup completes and the count exceeds the limit, the oldest is pruned — including its backup files from storage.</td>
+</tr>
+</tbody>
+</table>
+<p>Good for "always keep my last 7 backups" type policies.</p>
+<p><strong>Mode 2 — Long-Term Retention (LTR)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Keep latest</strong></td>
+<td>Number of <em>most-recent</em> restore points kept unconditionally (independent of cadence)</td>
+</tr>
+<tr>
+<td><strong>Keep daily</strong></td>
+<td>Number of distinct <em>days</em> to retain (one restore point per day)</td>
+</tr>
+<tr>
+<td><strong>Keep weekly</strong></td>
+<td>Number of distinct <em>weeks</em> (one restore point per week)</td>
+</tr>
+<tr>
+<td><strong>Keep monthly</strong></td>
+<td>Number of distinct <em>months</em> (one restore point per month)</td>
+</tr>
+<tr>
+<td><strong>Keep yearly</strong></td>
+<td>Number of distinct <em>years</em> (one restore point per year)</td>
+</tr>
+</tbody>
+</table>
+<p>Long-Term Retention (LTR) lets you keep, say, "last 7 days + last 4 weeks + last 6 months + last 3 years" without paying for hundreds of restore points. The Job UI shows a <em>retention preview</em> — exactly which restore points the policy would prune on the next run — before you save.</p>
+<p>If you leave all LTR counters at 0, classic simple retention applies. If any LTR counter is greater than 0, Vault uses LTR for that job and ignores the simple settings (<em>Keep last N</em> and <em>keep-for-N-days</em>).</p>
+<p>Set retention based on storage budget and how far back you want to be able to restore:</p>
+<ul>
+<li>7 daily backups → simple count = 7</li>
+<li>A weekly full + 6 daily incrementals → simple count = 7, two jobs (one weekly full, one daily incremental)</li>
+<li>Year of history without storage bloat → LTR with <code>keep_daily=7</code>, <code>keep_weekly=4</code>, <code>keep_monthly=12</code>, <code>keep_yearly=3</code></li>
+</ul>
+<hr />
+<h3 id="step-4-name-review">Step 4 — Name &amp; review<a class="headerlink" href="#step-4-name-review" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Name</strong></td>
+<td>A unique name for this job. Shown on the Dashboard, History, and Restore pages.</td>
+</tr>
+</tbody>
+</table>
+<p>Check the plain-language summary of what the job will do, then click <strong>Save</strong>.</p>
+<hr />
+<h2 id="running-a-job-manually">Running a Job Manually<a class="headerlink" href="#running-a-job-manually" title="Permanent link">&para;</a></h2>
+<p>To trigger an immediate backup without waiting for the schedule:</p>
+<ol>
+<li>Go to <strong>Jobs</strong></li>
+<li>Click the <strong>Run Now</strong> button on the job card (play icon)</li>
+</ol>
+<p>Progress streams in real time via WebSocket. The run appears in <strong>History</strong> when complete.</p>
+<hr />
+<h2 id="monitoring-progress">Monitoring Progress<a class="headerlink" href="#monitoring-progress" title="Permanent link">&para;</a></h2>
+<p>While a job is running:</p>
+<ul>
+<li>The Dashboard shows a live progress indicator</li>
+<li>The <strong>History</strong> page lists the run with status "Running"</li>
+<li>The <strong>Logs</strong> page shows per-item progress entries including container name, backup type, storage destination, and elapsed time</li>
+</ul>
+<hr />
+<h2 id="cancelling-a-running-job">Cancelling a Running Job<a class="headerlink" href="#cancelling-a-running-job" title="Permanent link">&para;</a></h2>
+<p>To stop an in-progress backup:</p>
+<ol>
+<li>Go to <strong>Jobs</strong> (or the Dashboard's <strong>Backup in progress</strong> tile)</li>
+<li>Click the <strong>Cancel</strong> button on the running job</li>
+</ol>
+<p>Vault signals cancellation through the entire pipeline — file I/O, directory traversal, and engine handlers all check for cancellation and stop gracefully. The job is marked as "cancelled" in History.</p>
+<p>Cancel also works on a job that is <strong>queued</strong> behind another run (for example after clicking Run Now while a scheduled backup is active) — the queued run is removed before it starts. Deleting a job that is currently running cancels the run first.</p>
+<p>Jobs also have an automatic safeguard:</p>
+<ul>
+<li><strong>2-hour stall detection</strong> — a job with no progress for 2 hours is cancelled (with a warning at 30 minutes). There is no overall time limit: a backup that is still transferring data can run for as long as it needs.</li>
+</ul>
+<hr />
+<h2 id="deleting-a-job">Deleting a Job<a class="headerlink" href="#deleting-a-job" title="Permanent link">&para;</a></h2>
+<p>To delete a job:</p>
+<ol>
+<li>Go to <strong>Jobs</strong></li>
+<li>Click the <strong>...</strong> menu → <strong>Delete</strong></li>
+<li>Choose whether to <strong>Keep backup files</strong> or <strong>Delete backup files</strong> from storage</li>
+</ol>
+<p>Deleting backup files removes the archives from the storage destination. Keeping them leaves the files in place — useful if you plan to import them into a new job later.</p>
+<hr />
+<h2 id="deleting-individual-restore-points">Deleting Individual Restore Points<a class="headerlink" href="#deleting-individual-restore-points" title="Permanent link">&para;</a></h2>
+<p>To delete a specific backup without touching the job or other restore points:</p>
+<ol>
+<li>Go to <strong>Restore</strong> in the left sidebar</li>
+<li>Select the job</li>
+<li>Find the restore point and click the <strong>trash icon</strong></li>
+<li>Confirm the deletion</li>
+</ol>
+<p>This removes both the backup files from storage and the restore point record from the database.</p>
+<hr />
+<h2 id="managing-stale-items">Managing Stale Items<a class="headerlink" href="#managing-stale-items" title="Permanent link">&para;</a></h2>
+<p>If a container, VM, ZFS dataset, or folder is removed from Unraid after a job is created, Vault marks it as <strong>"Not found"</strong> in the job's item list. Click the <strong>remove</strong> button next to the flagged item to drop it from the job. The Folder picker performs an async <code>os.Stat</code> (via <code>GET /api/v1/path-exists</code>) for every custom folder on mount, so legitimately valid paths aren't falsely flagged.</p>
+<hr />
+<h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
+<p>Every backup item is hashed with SHA-256 during the upload, and Vault stores the digest alongside the restore point. Two verification layers exist on top of that:</p>
+<ul>
+<li><strong>Per-run verify</strong> — when the job's <em>Verify backup</em> setting is on (default), each item is read back from storage at the end of the run and re-hashed. Mismatches fail the run.</li>
+<li><strong>On-demand verify</strong> — from the Restore page you can click <em>Verify</em> on any individual restore point at any time. The result, including per-item byte counts and errors, is stored under <code>verify_runs</code> and listed in the restore point's verify history.</li>
+</ul>
+<p>Both paths use the same code, so per-run and on-demand results are directly comparable.</p>
+<h3 id="scheduled-verification-and-backup-contention">Scheduled verification and backup contention<a class="headerlink" href="#scheduled-verification-and-backup-contention" title="Permanent link">&para;</a></h3>
+<p>A job can also run verification on its own cron schedule (<em>Verify schedule</em>) in either <strong>quick</strong> mode (checks each item exists and is the right size) or <strong>deep</strong> mode (streams every item back and re-hashes it). Deep verification reads the entire backup, so it saturates the destination's disk and network.</p>
+<p>To keep that from turning a running backup into an apparent freeze, Vault <strong>defers a scheduled deep verify while a backup is active on the same storage destination</strong>. The deferral is recorded in the activity log (<code>Deep verify for "&lt;job&gt;" deferred: a backup is running on the same storage destination</code>) and the deep verify simply runs at its next scheduled tick. Quick verification is cheap enough that it still runs alongside a backup, and on-demand verification you trigger yourself is never deferred.</p>
+<hr />
+<h2 id="encryption">Encryption<a class="headerlink" href="#encryption" title="Permanent link">&para;</a></h2>
+<p>If you set a passphrase under <strong>Settings → Security → Encryption</strong>, all backup archives are encrypted with your backup password (age encryption — a modern, audited standard) before they leave the host. Without the passphrase, restoring is not possible. Encryption is transparent to storage destinations — it applies equally to local, SFTP, SMB, NFS, WebDAV, and S3.</p>
+<p>The encryption status is shown on the Dashboard's 3-2-1 compliance widget, and on each restore point's chain-health badge.</p>
+<hr />
+<h2 id="deduplication">Deduplication<a class="headerlink" href="#deduplication" title="Permanent link">&para;</a></h2>
+<p>Deduplication stores each unique piece of data only once, so repeated data across runs and sources doesn't cost extra space — see <a href="../../how-backup-works/#deduplication">How Backup Works</a> for the concept. The rest of this section covers the operational details.</p>
+<p>When you enable <em>Dedup</em> on a storage destination, Vault chunks every backup with Keyed-FastCDC (256 KiB / 1 MiB / 4 MiB min/avg/max) and stores only one copy of each chunk in a per-destination dedup repo at <code>&lt;dest&gt;/_vault/packs/</code> and <code>&lt;dest&gt;/_vault/index/</code>. The repo's chunker is keyed off a 32-byte secret per destination, which closes the fingerprinting-attack class described in Truong et al. 2025 — observers without the secret can't recompute chunk boundaries from public corpora.</p>
+<p>Operational notes:</p>
+<ul>
+<li>Each backup writes a per-item manifest into the dedup repo. The <code>manifest_id</code> (or <code>item_manifests</code> map for multi-item jobs) is stored on the restore point so restores can resolve chunks.</li>
+<li>The Storage card shows live dedup stats (chunks, packs, logical/physical bytes, dedup ratio).</li>
+<li><code>vault dedup gc --dest &lt;id&gt;</code> (or <code>POST /api/v1/storage/{id}/gc</code>) runs mark-and-sweep GC: walks every live restore point's manifest, marks reachable chunks, then deletes packs whose every chunk is unreachable. Mixed packs are left in place.</li>
+<li><code>vault dedup repair --dest &lt;id&gt;</code> rebuilds the SQLite chunk/pack index from the on-storage <code>*.idx</code> blobs — use when the local DB is lost or corrupted but the destination is intact.</li>
+<li>Dedup-mode and non-dedup destinations can coexist on the same Vault install; the flag is per-destination and immutable after creation.</li>
+</ul>
+<p>Imported backups (Storage → <em>Scan</em> + <em>Import</em>) carry per-item dedup manifest IDs in their <code>manifest.json</code>, so dedup restore points produced on one Vault instance can be re-discovered and restored on another.</p>
+<hr />
+<h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Point your job at the right target: <a href="../storage-destinations/">Storage Destinations</a></li>
+<li>Let Vault warn you when backups drift from normal: <a href="../anomaly-detection/">Anomaly Detection</a></li>
+<li>Make sure you can recover if the server dies: <a href="../disaster-recovery/">Disaster Recovery</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/sponsors/ruaan-deysel" target="_blank" rel="noopener" title="Sponsor Vault on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M7.655 14.916zh-.002l-.006-.003-.018-.01a22 22 0 0 1-3.744-2.584C2.045 10.731 0 8.35 0 5.5 0 2.836 2.086 1 4.25 1 5.797 1 7.153 1.802 8 3.02 8.847 1.802 10.203 1 11.75 1 13.914 1 16 2.836 16 5.5c0 2.85-2.044 5.231-3.886 6.818a22 22 0 0 1-3.433 2.414 7 7 0 0 1-.31.17l-.018.01-.008.004a.75.75 0 0 1-.69 0"/></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://github.com/ruaan-deysel/vault" target="_blank" rel="noopener" title="Vault on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

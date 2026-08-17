@@ -64,6 +64,7 @@ nav:
       - Anomaly Detection: guides/anomaly-detection.md
       - Disaster Recovery: guides/disaster-recovery.md
   - How Backup Works: how-backup-works.md
+  - Development: development.md
   - Settings Reference:
       - App / Daemon Settings: reference/app-settings.md
       - Job Configuration: reference/job-config.md
