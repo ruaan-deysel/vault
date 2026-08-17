@@ -99,6 +99,11 @@
   let ready = $state(false)
   let replicaMode = $state(false)
 
+  // Running plugin version shown in the sidebar footer. Sourced from the same
+  // /health response used for replica-mode detection; 'dev' fallback matches
+  // the convention in Settings.svelte.
+  let version = $state('')
+
   // Watchdog threshold: how long any boot step may stall before we force the
   // shell to render anyway. Brave's blocked storage APIs and an unreachable
   // daemon (the LAN-IP workaround) could otherwise hang the SPA forever.
@@ -118,6 +123,7 @@
         // Detect replica mode from health endpoint.
         try {
           const health = await api.health()
+          version = health.version || 'dev'
           if (health.mode === 'replica') {
             setReplicaMode(true)
             replicaMode = true
@@ -253,6 +259,9 @@
         {/each}
       {/each}
     </nav>
+    {#if version}
+      <footer class="px-3 py-3 border-t border-border text-xs text-text-muted">v{version}</footer>
+    {/if}
   </aside>
 
   <!-- Mobile header -->
