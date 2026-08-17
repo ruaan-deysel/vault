@@ -104,6 +104,10 @@
   // the convention in Settings.svelte.
   let version = $state('')
 
+  // Latest published GitHub release tag (normalized, no leading 'v'). Powers
+  // the update-available indicator next to the version in the sidebar footer.
+  let latestTag = $state('')
+
   // Watchdog threshold: how long any boot step may stall before we force the
   // shell to render anyway. Brave's blocked storage APIs and an unreachable
   // daemon (the LAN-IP workaround) could otherwise hang the SPA forever.
@@ -129,6 +133,12 @@
             replicaMode = true
           }
         } catch { /* ignore – default to daemon mode */ }
+
+        // Update-available indicator: best-effort latest-release lookup.
+        // Fire-and-forget on purpose — it must never delay or break boot.
+        api.getLatestRelease()
+          .then((r) => { if (r && r.tag) latestTag = String(r.tag).replace(/^v/i, '') })
+          .catch(() => { /* no indicator when the release lookup fails */ })
 
         // connectWs is synchronous; guard it so a throwing WebSocket constructor
         // can't reject this IIFE. The ws layer owns its own retry/backoff.
@@ -157,6 +167,19 @@
   let connectionLost = $derived.by(() => {
     const wsStatus = getWsStatus()
     return ready && (wsStatus === 'disconnected' || wsStatus === 'reconnecting')
+  })
+
+  // True when the daemon version predates the latest published release.
+  // Mirrors the comparison in Settings.svelte: strip a leading 'v', then plain
+  // string compare (YYYY.MM.PATCH is zero-padded, so it sorts
+  // chronologically). Equal or newer daemon versions show no indicator —
+  // same reasoning as the 'Pre-release' state in Settings — and dev builds
+  // or a failed release lookup never show one.
+  const updateAvailable = $derived.by(() => {
+    if (!version || !latestTag) return false
+    const cur = version.replace(/^v/i, '')
+    if (cur === 'dev') return false
+    return cur < latestTag
   })
 
   function isActive(path) {
@@ -260,7 +283,18 @@
       {/each}
     </nav>
     {#if version}
-      <footer class="px-3 py-3 border-t border-border text-xs text-text-muted">v{version}</footer>
+      <footer class="px-3 py-3 border-t border-border text-xs text-text-muted flex items-center justify-between gap-2">
+        <span>v{version}</span>
+        {#if updateAvailable}
+          <button onclick={() => go('/settings')}
+            title="Update available — latest release v{latestTag}"
+            aria-label="Update available, latest release v{latestTag}. Open settings."
+            class="inline-flex items-center gap-1.5 text-orange-400 hover:text-orange-300 transition-colors">
+            <span class="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" aria-hidden="true"></span>
+            Update available
+          </button>
+        {/if}
+      </footer>
     {/if}
   </aside>
 
