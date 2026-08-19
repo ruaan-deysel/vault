@@ -196,13 +196,21 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := os.MkdirAll(destPath, 0750); err != nil {
-		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
-	}
-
 	// Partial-restore filter from the file-picker. nil = extract everything
 	// (the legacy whole-archive path).
 	include := extractRestoreFilePaths(item.Settings)
+
+	// Whole-item restores land on a clean directory (issue #321): clear
+	// pre-existing contents first. Partial (file-picker) restores merge.
+	if item.Settings["clean_destination"] == true && len(include) == 0 {
+		if err := clearRestoreTarget(ctx, destPath); err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(destPath, 0750); err != nil {
+		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
+	}
 
 	if err := untarDirectoryFiltered(ctx, archivePath, destPath, include); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
@@ -391,7 +399,14 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	// Honour the partial-restore file picker: when restore_file_paths is
 	// set, only reconstruct the selected entries (and descendants of any
 	// selected directory) — mirroring untarDirectoryFiltered's semantics.
-	include := newIncludeSet(extractRestoreFilePaths(item.Settings))
+	restoreFilePaths := extractRestoreFilePaths(item.Settings)
+	include := newIncludeSet(restoreFilePaths)
+
+	if item.Settings["clean_destination"] == true && len(restoreFilePaths) == 0 {
+		if err := clearRestoreTarget(ctx, destPath); err != nil {
+			return err
+		}
+	}
 
 	var dirs, files []string
 	for p, e := range m.Files {

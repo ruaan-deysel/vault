@@ -556,3 +556,97 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 		}
 	})
 }
+
+// TestFolderHandlerRestoreClearsStaleFiles verifies a whole-item classic
+// folder restore replaces the target directory's contents rather than merging
+// with stale pre-existing files (issue #321).
+func TestFolderHandlerRestoreClearsStaleFiles(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &FolderHandler{}
+	dest := t.TempDir()
+	progress := func(string, int, string) {}
+	item := BackupItem{
+		Name:        "test-folder",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), item, dest, progress); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	// Restore target already holds a stale file that must be cleared.
+	restoreDest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(restoreDest, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreItem := BackupItem{
+		Name: "test-folder",
+		Type: "folder",
+		Settings: map[string]any{
+			"restore_destination": restoreDest,
+			"clean_destination":   true,
+		},
+	}
+	if err := h.Restore(context.Background(), restoreItem, dest, progress); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(restoreDest, "keep.txt")); err != nil {
+		t.Errorf("restore missing keep.txt: %v", err)
+	} else if string(data) != "fresh" {
+		t.Errorf("keep.txt content mismatch: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(restoreDest, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
+}
+
+// TestFolderChunkedRestoreClearsStaleFiles verifies a whole-item dedup folder
+// restore replaces the target directory's contents rather than merging with
+// stale pre-existing files (issue #321).
+func TestFolderChunkedRestoreClearsStaleFiles(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreItem := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"clean_destination": true}}
+	if err := h.RestoreChunked(ctx, restoreItem, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(dst, "keep.txt")); err != nil {
+		t.Errorf("restore missing keep.txt: %v", err)
+	} else if string(data) != "fresh" {
+		t.Errorf("keep.txt content mismatch: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
+}
