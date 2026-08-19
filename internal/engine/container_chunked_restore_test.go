@@ -73,7 +73,7 @@ func TestRestoreChunkedVolumes_CustomDestBindMount(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestRestoreChunkedVolumes_DefaultDestRestoresToSource(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, false); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestRestoreChunkedVolumes_CustomDestNamedVolume(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, nil, false); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestRestoreChunkedVolumes_SkippedVolumeNotRestored(t *testing.T) {
 		},
 	}
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil); err != nil {
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil, false); err != nil {
 		t.Fatalf("restoreChunkedVolumes() error = %v", err)
 	}
 
@@ -235,7 +235,7 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 
 	// restoreDest="" causes volumeRestoreTarget to return Source directly,
 	// so normalizeRestorePath must reject /dev/vault.
-	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil)
+	err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, false)
 	if err == nil {
 		t.Fatal("restoreChunkedVolumes() expected error for path outside allowed roots, got nil")
 	}
@@ -246,5 +246,55 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 	// The disallowed path must not have been created on disk.
 	if _, statErr := os.Stat(disallowedSource); !os.IsNotExist(statErr) {
 		t.Errorf("disallowed path %s should not have been created", disallowedSource)
+	}
+}
+
+// TestRestoreChunkedVolumes_ClearsStaleFiles verifies a whole-item dedup
+// container volume restore replaces the target directory's contents rather
+// than merging with stale pre-existing files (issue #321).
+func TestRestoreChunkedVolumes_ClearsStaleFiles(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	subID := backupTestVolume(t, r, src)
+
+	// With restoreDest="" the bind-mount source IS the restore target, so
+	// seed it with a stale file that the restore must clear.
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [{"Type":"bind","Source":%q,"Destination":"/data"}]
+	}`, target))
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/data": {
+				Size:   100,
+				Chunks: []dedup.ID{subID},
+			},
+		},
+	}
+
+	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, true); err != nil {
+		t.Fatalf("restoreChunkedVolumes() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(target, "config.yml")); err != nil {
+		t.Errorf("restored file missing: %v", err)
+	} else if string(data) != "foo: bar\n" {
+		t.Errorf("config.yml content mismatch: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(target, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
 	}
 }

@@ -1268,6 +1268,11 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
 			}
 		} else {
+			if item.Settings["clean_destination"] == true {
+				if err := clearRestoreTarget(ctx, targetPath); err != nil {
+					return err
+				}
+			}
 			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
@@ -2120,7 +2125,8 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	if progress != nil {
 		progress(item.Name, 40, "restoring volumes")
 	}
-	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress); err != nil {
+	cleanDestination := item.Settings["clean_destination"] == true
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress, cleanDestination); err != nil {
 		return err
 	}
 
@@ -2155,7 +2161,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
-func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc, cleanDestination bool) error {
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -2202,6 +2208,9 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
 		}
 		proxy := BackupItem{Name: dest, Type: "folder"}
+		if cleanDestination {
+			proxy.Settings = map[string]any{"clean_destination": true}
+		}
 		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
