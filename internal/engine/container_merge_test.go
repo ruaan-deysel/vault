@@ -73,3 +73,35 @@ func TestMergeContainerChainStagingOverlaysVolumes(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeCopyFilePreservesMode verifies mergeCopyFile copies the source's
+// permission bits rather than defaulting to 0644 (issue #320 review feedback).
+func TestMergeCopyFilePreservesMode(t *testing.T) {
+	t.Parallel()
+
+	src := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(src, []byte(`{"a":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "config.json")
+	if err := mergeCopyFile(src, dst); err != nil {
+		t.Fatalf("mergeCopyFile: %v", err)
+	}
+
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("dst mode = %o, want 600", info.Mode().Perm())
+	}
+
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(data) != `{"a":1}` {
+		t.Errorf("dst content = %q, want %q", string(data), `{"a":1}`)
+	}
+}

@@ -17,10 +17,13 @@ import (
 // treated as "not changed" (skipped). This matches pathChangedSince
 // and tarDirectoryFiltered in the classic tar path.
 //
-// Without a parent manifest (full backup, or a differential whose parent
-// manifest is unavailable), unchanged files are omitted. With a parent
-// manifest, unchanged files are carried forward from the parent so the
-// resulting manifest stays complete for single-point restore (issue #320).
+// changed_since filtering only applies when a parent manifest is supplied.
+// Without a parent (a full backup, a newly-added item, or a missing parent
+// manifest), changed_since is ignored and the tree is chunked FULLY, so a
+// brand-new item with old file mtimes is never silently recorded empty
+// (issue #320). With a parent manifest, unchanged files are carried forward
+// from the parent so the resulting manifest stays complete for single-point
+// restore.
 func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 	t.Parallel()
 
@@ -36,7 +39,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 		wantExcluded   []string
 	}{
 		{
-			name: "no parent: skips old files, includes new files and directory entries",
+			name: "no parent: changed_since ignored, all files included (new item safety)",
 			settings: map[string]any{
 				"changed_since": changedSince.Format(time.RFC3339),
 			},
@@ -45,8 +48,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				{name: "new.txt", content: "new", offset: +2 * time.Hour},
 				{name: "subdir/sub_old.txt", content: "sub old", offset: -3 * time.Hour},
 			},
-			wantInManifest: []string{"new.txt", "subdir"},
-			wantExcluded:   []string{"old.txt", filepath.Join("subdir", "sub_old.txt")},
+			wantInManifest: []string{"old.txt", "new.txt", "subdir", filepath.Join("subdir", "sub_old.txt")},
 		},
 		{
 			name:     "omitting changed_since produces a full backup",
@@ -67,7 +69,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 			wantInManifest: []string{"b.txt"},
 		},
 		{
-			name: "file with mtime equal to changed_since is excluded",
+			name: "no parent: boundary mtime file included (full walk)",
 			settings: map[string]any{
 				"changed_since": changedSince.Format(time.RFC3339),
 			},
@@ -75,8 +77,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				{name: "boundary.txt", content: "equal", atExact: changedSince},
 				{name: "after.txt", content: "after", offset: +1 * time.Hour},
 			},
-			wantInManifest: []string{"after.txt"},
-			wantExcluded:   []string{"boundary.txt"},
+			wantInManifest: []string{"boundary.txt", "after.txt"},
 		},
 	}
 
@@ -138,8 +139,10 @@ func TestFolderBackupChunked_ChangedSince_CarriesForward(t *testing.T) {
 	src := t.TempDir()
 
 	old := testFile{name: "old.txt", content: "old", offset: -3 * time.Hour}
+	boundary := testFile{name: "boundary.txt", content: "equal", atExact: changedSince}
 	newFile := testFile{name: "new.txt", content: "new", offset: +2 * time.Hour}
 	old.write(t, src, changedSince)
+	boundary.write(t, src, changedSince)
 	newFile.write(t, src, changedSince)
 
 	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
@@ -176,7 +179,7 @@ func TestFolderBackupChunked_ChangedSince_CarriesForward(t *testing.T) {
 		t.Fatalf("GetManifest(diff): %v", err)
 	}
 
-	for _, name := range []string{"old.txt", "new.txt"} {
+	for _, name := range []string{"old.txt", "boundary.txt", "new.txt"} {
 		if _, ok := m.Files[name]; !ok {
 			t.Errorf("differential manifest missing %q — unchanged files must be carried forward", name)
 		}

@@ -1987,9 +1987,11 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					}
 					// No parent to carry forward from (e.g. a full backup with a
 					// changed_since set, or a parent whose manifest is missing this
-					// volume). Chunk the unchanged volume anyway so the manifest
-					// stays complete; the per-file changed_since filter will produce
-					// an empty sub-manifest (no changed files).
+					// volume). Chunk the unchanged volume FULLY so the manifest stays
+					// complete. changed_since is deliberately NOT propagated here —
+					// with no parent entry there is nothing to carry forward from,
+					// and the per-file filter would otherwise drop every file
+					// (issue #320).
 					volItem := BackupItem{
 						Name: mnt.Destination,
 						Type: "folder",
@@ -1997,9 +1999,6 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 							"path":          mnt.Source,
 							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 						},
-					}
-					if hasChangedSince {
-						volItem.Settings["changed_since"] = item.Settings["changed_since"]
 					}
 					volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, nil, progress)
 					if vErr != nil {
@@ -2020,20 +2019,22 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}
-			// Propagate changed_since for per-file filtering inside
-			// FolderHandler.BackupChunked, and pass the parent's matching
-			// sub-manifest so unchanged files within a changed volume are
-			// carried forward rather than dropped.
+			// Resolve the parent's matching sub-manifest so unchanged files
+			// within a changed volume are carried forward rather than dropped.
+			// changed_since is only propagated when that parent entry exists:
+			// with no parent entry the volume is new to this backup and must be
+			// chunked FULLY (applying changed_since with a nil parent would
+			// drop every unchanged file — issue #320).
 			var volParent *dedup.Manifest
-			if hasChangedSince {
-				volItem.Settings["changed_since"] = item.Settings["changed_since"]
-				if parent != nil {
-					if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
-						if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
-							volParent = &sub
-						}
+			if hasChangedSince && parent != nil {
+				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
+					if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
+						volParent = &sub
 					}
 				}
+			}
+			if volParent != nil {
+				volItem.Settings["changed_since"] = item.Settings["changed_since"]
 			}
 			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, volParent, progress)
 			if vErr != nil {

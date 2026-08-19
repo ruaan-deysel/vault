@@ -111,26 +111,21 @@ func mergeCopyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+
+	// Preserve the source's permission bits (e.g. config.json at 0600) instead
+	// of os.Create's 0666&umask default.
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
+		_ = os.Remove(dst)
 		return err
 	}
 	return out.Close()
-}
-
-// TarDirectory is an exported wrapper for tarDirectory, used by the runner
-// package's tests to stage volume archives without reaching into unexported
-// engine helpers.
-func TarDirectory(ctx context.Context, srcDir, destPath string, exclusions []string, compression string) error {
-	return tarDirectory(ctx, srcDir, destPath, exclusions, compression)
-}
-
-// UntarDirectory is an exported wrapper for untarDirectory, used by the
-// runner package's tests to inspect merged archives.
-func UntarDirectory(ctx context.Context, srcPath, destDir string) error {
-	return untarDirectory(ctx, srcPath, destDir)
 }

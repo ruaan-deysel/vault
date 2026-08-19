@@ -327,19 +327,22 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
 			return nil
 		}
-		// Skip files whose mtime is not after the changed_since reference.
-		// Consistent with pathChangedSince and tarDirectoryFiltered.
-		// Directory entries are still recorded above for restore structure.
-		// When a parent manifest is supplied (differential/incremental), an
-		// unchanged file is carried forward from the parent instead of being
-		// omitted, so the resulting manifest stays COMPLETE for single-point
-		// restore. Deleted files are never walked, so they are not carried
-		// forward and deletions still take effect (issue #320).
-		if hasChangedSince && !info.ModTime().After(changedSince) {
-			if parent != nil {
-				if pe, ok := parent.Files[rel]; ok {
-					m.Files[rel] = pe
-				}
+		// changed_since filtering is ONLY applied when a parent manifest is
+		// supplied (differential/incremental) so an unchanged file can be
+		// carried forward from the parent instead of being omitted — keeping
+		// the resulting manifest COMPLETE for single-point restore. Deleted
+		// files are never walked, so they are not carried forward and
+		// deletions still take effect (issue #320).
+		//
+		// Without a parent (a full backup, a newly-added item, or a missing
+		// parent manifest), there is nothing to carry forward from, so
+		// changed_since is ignored and the tree is chunked FULLY. Applying the
+		// filter with a nil parent would silently drop every file whose mtime
+		// predates the reference — the literal "new items missing" data loss
+		// class from issue #320.
+		if parent != nil && hasChangedSince && !info.ModTime().After(changedSince) {
+			if pe, ok := parent.Files[rel]; ok {
+				m.Files[rel] = pe
 			}
 			return nil
 		}
