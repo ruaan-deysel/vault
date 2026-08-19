@@ -17,6 +17,13 @@ import (
 // symlink's target).
 func clearRestoreTarget(ctx context.Context, destDir string) error {
 	clean := filepath.Clean(destDir)
+	// filepath.Clean("") and filepath.Clean(".") both yield "." — a bare
+	// current-directory path is just as destructive as the root (it would
+	// os.RemoveAll every entry in the process working directory), so reject
+	// it explicitly alongside the root check.
+	if clean == "." {
+		return fmt.Errorf("refusing to clear restore destination: empty or current-directory path")
+	}
 	if clean == string(filepath.Separator) {
 		return fmt.Errorf("refusing to clear restore destination: filesystem root")
 	}

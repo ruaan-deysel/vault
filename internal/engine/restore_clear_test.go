@@ -116,6 +116,34 @@ func TestClearRestoreTarget(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "refuses empty path",
+			setup: func(t *testing.T) string {
+				return ""
+			},
+			check: func(t *testing.T, dest string, err error) {
+				if err == nil {
+					t.Fatal("clearRestoreTarget() on empty path should error, got nil")
+				}
+				if !strings.Contains(err.Error(), "empty or current-directory") {
+					t.Errorf("error = %q, want mention of empty/current-directory", err.Error())
+				}
+			},
+		},
+		{
+			name: "refuses current directory",
+			setup: func(t *testing.T) string {
+				return "."
+			},
+			check: func(t *testing.T, dest string, err error) {
+				if err == nil {
+					t.Fatal("clearRestoreTarget() on \".\" should error, got nil")
+				}
+				if !strings.Contains(err.Error(), "empty or current-directory") {
+					t.Errorf("error = %q, want mention of empty/current-directory", err.Error())
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
