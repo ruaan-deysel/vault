@@ -3299,8 +3299,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	// VM qcow2 chains must be assembled per-step then flattened with
 	// qemu-img so each chain step keeps its own dirty-block deltas. For
 	// non-VM items we keep the simple flat staging where each chain step
-	// can safely overlay files in the same directory (folder rsync,
-	// container layered tar, etc.).
+	// can safely overlay files in the same directory (folder rsync, etc.).
 	if itemType == "vm" && len(chain) > 1 {
 		stepDirs := make([]string, 0, len(chain))
 		for i, rp := range chain {
@@ -3323,6 +3322,34 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
 		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
+	}
+
+	if itemType == "container" {
+		// Classic container chains must be merged, not flattened: a
+		// differential/incremental step's partial volume_N.tar would
+		// otherwise overwrite the full step's complete archive in the shared
+		// staging dir, dropping base files (issue #320). Stage each step into
+		// its own directory and overlay the volume archives oldest-first.
+		stepDirs := make([]string, 0, len(chain))
+		for i, rp := range chain {
+			log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
+			stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
+			if err := os.MkdirAll(stepDir, 0o755); err != nil {
+				return fmt.Errorf("creating chain step dir: %w", err)
+			}
+			phaseStart := (i * 40) / len(chain)
+			phaseEnd := ((i + 1) * 40) / len(chain)
+			if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+				return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
+			}
+			stepDirs = append(stepDirs, stepDir)
+		}
+
+		mergedDir := filepath.Join(tmpDir, "merged")
+		if err := engine.MergeContainerChainStaging(ctx, stepDirs, mergedDir); err != nil {
+			return fmt.Errorf("merging container chain: %w", err)
+		}
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
 	}
 
 	for i, rp := range chain {

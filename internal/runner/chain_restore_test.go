@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	"github.com/ruaan-deysel/vault/internal/storage"
 	"github.com/ruaan-deysel/vault/internal/ws"
 )
@@ -96,6 +97,53 @@ func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {
 	assertFileContents(t, tmpDir, "config.json", "child-config")
 	assertFileContents(t, tmpDir, "image.tar", "base-image")
 	assertFileContents(t, tmpDir, "volume_0.tar.gz", "child-volume")
+}
+
+// TestContainerChainRestoreMergesSteps verifies the classic container chain
+// restore stages each step separately and overlays the volume archives so the
+// base full's unchanged files survive a differential overlay (issue #320).
+func TestContainerChainRestoreMergesSteps(t *testing.T) {
+	t.Parallel()
+
+	fullStep := t.TempDir()
+	diffStep := t.TempDir()
+
+	fullVol := filepath.Join(fullStep, "volroot")
+	if err := os.MkdirAll(fullVol, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fullVol, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.TarDirectory(context.Background(), fullVol, filepath.Join(fullStep, "volume_0.tar"), nil, engine.CompressionNone); err != nil {
+		t.Fatal(err)
+	}
+
+	diffVol := filepath.Join(diffStep, "volroot")
+	if err := os.MkdirAll(diffVol, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(diffVol, "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.TarDirectory(context.Background(), diffVol, filepath.Join(diffStep, "volume_0.tar"), nil, engine.CompressionNone); err != nil {
+		t.Fatal(err)
+	}
+
+	outDir := t.TempDir()
+	if err := engine.MergeContainerChainStaging(context.Background(), []string{fullStep, diffStep}, outDir); err != nil {
+		t.Fatalf("MergeContainerChainStaging: %v", err)
+	}
+
+	extract := t.TempDir()
+	if err := engine.UntarDirectory(context.Background(), filepath.Join(outDir, "volume_0.tar"), extract); err != nil {
+		t.Fatalf("untar merged volume: %v", err)
+	}
+	for _, name := range []string{"old.txt", "new.txt"} {
+		if _, err := os.Stat(filepath.Join(extract, name)); err != nil {
+			t.Errorf("merged volume missing %s: %v", name, err)
+		}
+	}
 }
 
 func TestProtectedRestorePointIDsKeepsAncestors(t *testing.T) {
