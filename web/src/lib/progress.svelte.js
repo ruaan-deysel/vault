@@ -4,6 +4,13 @@ import { formatBytes } from './utils.js'
 
 // Global progress state – survives component mount/unmount cycles.
 let activeRun = $state(null) // { job_id, run_id, job_name, started_at, run_type }
+// true only while a run is actually executing. Cleared immediately on
+// job_run_completed (unlike activeRun, which lingers for the overlay's grace).
+//
+// Lifecycle: set true in restoreFromStatus, syncFromStatus, and
+// handleProgressMessage (item-message synthesis + job_run_started); cleared
+// only in job_run_completed.
+let running = $state(false)
 let itemProgress = $state({}) // { item_name: { percent, message, item_type, status } }
 let overallDone = $state(0)
 let overallFailed = $state(0)
@@ -22,6 +29,7 @@ function defaultProgressMessage(runType) {
 export function getProgress() {
   return {
     get activeRun() { return activeRun },
+    get running() { return running },
     get itemProgress() { return itemProgress },
     get overallDone() { return overallDone },
     get overallFailed() { return overallFailed },
@@ -48,6 +56,7 @@ export function restoreFromStatus(status) {
     started_at: status.started_at ? Date.parse(status.started_at) : Date.now(),
     run_type: status.run_type || 'backup',
   }
+  running = true
   overallDone = status.items_done || 0
   overallFailed = status.items_failed || 0
   overallTotal = status.items_total || 0
@@ -78,10 +87,14 @@ export function syncFromStatus(status) {
   if (!status?.active) return
 
   if (!activeRun || activeRun.run_id !== status.run_id) {
+    // restoreFromStatus sets `running` itself when it actually restores. Setting
+    // it here would leave running=true while activeRun still points at the old
+    // finished run this branch early-returns on.
     restoreFromStatus(status)
     return
   }
 
+  running = true
   activeRun = {
     ...activeRun,
     job_name: status.job_name || activeRun.job_name,
@@ -143,6 +156,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
       started_at: Date.now(),
       run_type: msg.run_type || (msg.type.startsWith('restore') || msg.type.includes('_restore_') ? 'restore' : 'backup'),
     }
+    running = true
     overallTotal = msg.items_total || 0
     clearInterval(_elapsedInterval)
     _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
@@ -151,6 +165,7 @@ export function handleProgressMessage(msg, jobNameResolver) {
   switch (msg.type) {
     case 'job_run_started': {
       cancelling = false
+      running = true
       // A previous run's delayed cleanup must not wipe this new run's state.
       clearTimeout(_completionTimer)
       _completionTimer = null
@@ -299,6 +314,11 @@ export function handleProgressMessage(msg, jobNameResolver) {
     case 'job_run_completed': {
       phaseMessage = null
       cancelling = false
+      // Clear immediately: the Jobs page's Cancel button keys off this flag and
+      // must disappear the instant the run ends, not after the overlay's 5s grace.
+      // Guard against a stale/out-of-order completion for an older run clearing
+      // the flag while a newer run is already active.
+      if (!activeRun || msg.run_id == null || msg.run_id === activeRun.run_id) running = false
       clearInterval(_elapsedInterval)
       if (activeRun) {
         const completedRunId = activeRun.run_id

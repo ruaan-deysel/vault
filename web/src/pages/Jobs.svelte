@@ -6,6 +6,7 @@
   import { buildApiRequest } from '../lib/runtime-config.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
   import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
+  import { isJobRunningOrQueued } from '../lib/job-active.js'
   import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
   import Toast from '../components/Toast.svelte'
@@ -794,11 +795,6 @@
   }
 
   const progress = getProgress()
-  // A job shows Cancel instead of Run Now while it is the active run or is
-  // waiting in the queue (issues #235/#238).
-  function isRunningOrQueued(jobId) {
-    return progress.activeRun?.job_id === jobId || progress.queue.some(q => q.job_id === jobId)
-  }
 
   async function cancelRun(job) {
     try {
@@ -1241,7 +1237,7 @@
               </div>
             </div>
             <div class="flex items-center gap-1 shrink-0 ml-4">
-              {#if isRunningOrQueued(job.id)}
+              {#if isJobRunningOrQueued(progress, job.id)}
                 <button
                   onclick={() => cancelRun(job)}
                   disabled={progress.cancelling && progress.activeRun?.job_id === job.id}
