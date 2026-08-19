@@ -3374,8 +3374,9 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 // (issue #320).
 //
 // NOTE: the merge is a pure union — a file deleted after the base full is
-// merged back in (classic-container deletion pruning is issue #231, out of
-// scope for #320).
+// merged back in. The folder classic path compensates via pruneChainResurrected
+// (issue #231, folder-scoped and closed); the container path has no equivalent
+// prune yet, so deleted files can reappear on restore. Out of scope for #320.
 func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
 	stepDirs := make([]string, 0, len(chain))
 	for i, rp := range chain {
