@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -647,6 +648,116 @@ func TestFolderChunkedRestoreClearsStaleFiles(t *testing.T) {
 		t.Errorf("keep.txt content mismatch: %q", data)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
+}
+
+// TestFolderChainRestoreClearsOnlyBaseStep encodes "clear exactly once" at the
+// engine level (issue #321, Gap A): a classic incremental folder chain must
+// clear the target only before the base step, then let subsequent overlay
+// steps replay on top. The base restore clears a pre-existing stale file, the
+// increment restore must NOT clear away the base file, and the final target
+// holds both the base file and the increment file with the stale file gone.
+//
+// This models the runner's restoreItemChain loop (base step passes
+// cleanDestination=true, later steps false) by driving FolderHandler.Restore
+// directly, so it covers the handler's clear-once behaviour without a runner
+// harness. It does not exercise the runner's i==0 flag computation itself.
+func TestFolderChainRestoreClearsOnlyBaseStep(t *testing.T) {
+	src := t.TempDir()
+
+	// base.txt is the base-full file, mtime firmly in the past so it is
+	// excluded from the increment archive.
+	basePath := filepath.Join(src, "base.txt")
+	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	baseTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(basePath, baseTime, baseTime); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &FolderHandler{}
+	progress := func(string, int, string) {}
+
+	// Base full backup.
+	baseDest := t.TempDir()
+	baseItem := BackupItem{
+		Name:        "chain",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), baseItem, baseDest, progress); err != nil {
+		t.Fatalf("base backup: %v", err)
+	}
+
+	// Increment: add inc.txt after the changed_since reference.
+	changedSince := time.Now().Add(-time.Hour)
+	incPath := filepath.Join(src, "inc.txt")
+	if err := os.WriteFile(incPath, []byte("inc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	incTime := time.Now()
+	if err := os.Chtimes(incPath, incTime, incTime); err != nil {
+		t.Fatal(err)
+	}
+
+	incDest := t.TempDir()
+	incItem := BackupItem{
+		Name:        "chain",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src, "changed_since": changedSince.Format(time.RFC3339)},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), incItem, incDest, progress); err != nil {
+		t.Fatalf("increment backup: %v", err)
+	}
+
+	// Restore target with a stale file that must be cleared on the base step.
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: base restore — clears (clean_destination=true).
+	baseRestore := BackupItem{
+		Name: "chain",
+		Type: "folder",
+		Settings: map[string]any{
+			"restore_destination": target,
+			"clean_destination":   true,
+		},
+	}
+	if err := h.Restore(context.Background(), baseRestore, baseDest, progress); err != nil {
+		t.Fatalf("base restore: %v", err)
+	}
+
+	// Step 2: increment restore — must NOT clear (clean_destination unset).
+	incRestore := BackupItem{
+		Name: "chain",
+		Type: "folder",
+		Settings: map[string]any{
+			"restore_destination": target,
+		},
+	}
+	if err := h.Restore(context.Background(), incRestore, incDest, progress); err != nil {
+		t.Fatalf("increment restore: %v", err)
+	}
+
+	// Overlay preserved: base file still present after the increment step.
+	if data, err := os.ReadFile(filepath.Join(target, "base.txt")); err != nil {
+		t.Errorf("base.txt missing after chain (increment step must not clear): %v", err)
+	} else if string(data) != "base" {
+		t.Errorf("base.txt content mismatch: %q", data)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "inc.txt")); err != nil {
+		t.Errorf("inc.txt missing after chain: %v", err)
+	} else if string(data) != "inc" {
+		t.Errorf("inc.txt content mismatch: %q", data)
+	}
+	// The pre-existing stale file is gone.
+	if _, err := os.Stat(filepath.Join(target, "stale.txt")); !os.IsNotExist(err) {
 		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
 	}
 }
