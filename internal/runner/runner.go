@@ -3057,16 +3057,18 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		// take the single-point chunked restore path.
 		if _, ok := resolveManifestID(restorePoint, itemName); ok {
 			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
-			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter, true)
 		}
 		if usesMergedRestoreChain(itemType) {
-			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter)
+			return r.restoreMergedChain(ctx, chain, itemName, itemType, destination, passphrase, filePaths, reporter, true)
 		}
 		replayStart := time.Now()
 		for i, rp := range chain {
 			log.Printf("runner: restoring chain step %d/%d (type=%s, id=%d)",
 				i+1, len(chain), rp.BackupType, rp.ID)
-			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, reporter); err != nil {
+			// classic per-step chain: clear only before the base step,
+			// so incremental/differential overlay still replays.
+			if err := r.restoreSinglePoint(ctx, rp, itemName, itemType, destination, passphrase, filePaths, reporter, i == 0); err != nil {
 				return fmt.Errorf("restoring chain step %d (id=%d): %w", i+1, rp.ID, err)
 			}
 		}
@@ -3079,7 +3081,7 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		}
 		return nil
 	}
-	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
+	return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter, true)
 }
 
 // pruneChainResurrected removes files that the classic chain overlay wrote
@@ -3288,7 +3290,7 @@ func usesMergedRestoreChain(itemType string) bool {
 	}
 }
 
-func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter, cleanDestination bool) error {
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
 	tmpDir, cleanup, err := tempdir.CreateRestoreDir(tempdir.StorageConfig{}, stageOverride)
 	if err != nil {
@@ -3322,7 +3324,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		if err := flattenVMChain(ctx, stepDirs, flattenedDir); err != nil {
 			return fmt.Errorf("flattening VM chain: %w", err)
 		}
-		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100)
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, flattenedDir, filePaths, reporter, 40, 100, cleanDestination)
 	}
 
 	for i, rp := range chain {
@@ -3334,15 +3336,15 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		}
 	}
 
-	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100, cleanDestination)
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
 // For dedup restore points (manifest_id set, or item_manifests in metadata),
 // the chunked restore path is taken instead of the classic stage + restore.
-func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, reporter restoreProgressReporter, cleanDestination bool) error {
 	if manifestID, ok := resolveManifestID(restorePoint, itemName); ok {
-		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, reporter)
+		return r.restoreSinglePointChunked(ctx, restorePoint, manifestID, itemName, itemType, destination, filePaths, reporter, cleanDestination)
 	}
 
 	stageOverride, _ := r.db.GetSetting("staging_dir_override", docsmeta.DefaultFor("staging_dir_override"))
@@ -3356,7 +3358,7 @@ func (r *Runner) restoreSinglePoint(ctx context.Context, restorePoint db.Restore
 		return err
 	}
 
-	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+	return r.restoreStagedItem(ctx, restorePoint.JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100, cleanDestination)
 }
 
 // resolveManifestID returns the dedup manifest ID for itemName from a
@@ -3393,7 +3395,7 @@ func resolveManifestID(rp db.RestorePoint, itemName string) (dedup.ID, bool) {
 // manifest_id was persisted for a handler that can't chunk), and invokes
 // RestoreChunked. destPath is passed through to the handler so it can write
 // directly to the target — no local staging required.
-func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, filePaths []string, reporter restoreProgressReporter) error {
+func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoint, manifestID dedup.ID, itemName, itemType, destination string, filePaths []string, reporter restoreProgressReporter, cleanDestination bool) error {
 	job, err := r.db.GetJob(rp.JobID)
 	if err != nil {
 		return fmt.Errorf("getting job: %w", err)
@@ -3456,6 +3458,9 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 	// filters manifest entries by it (whole tree when empty).
 	if len(filePaths) > 0 {
 		item.Settings["restore_file_paths"] = filePaths
+	}
+	if cleanDestination {
+		item.Settings["clean_destination"] = true
 	}
 
 	admit := newBroadcastThrottle()
@@ -3726,7 +3731,7 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int) error {
+func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, itemType, destination, tmpDir string, filePaths []string, reporter restoreProgressReporter, phaseStart, phaseEnd int, cleanDestination bool) error {
 	var handler engine.Handler
 	var err error
 	switch itemType {
@@ -3788,6 +3793,9 @@ func (r *Runner) restoreStagedItem(ctx context.Context, jobID int64, itemName, i
 	// handlers fall back to whole-archive restore.
 	if len(filePaths) > 0 {
 		backupItem.Settings["restore_file_paths"] = filePaths
+	}
+	if cleanDestination {
+		backupItem.Settings["clean_destination"] = true
 	}
 
 	return handler.Restore(ctx, backupItem, tmpDir, progress)
