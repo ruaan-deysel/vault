@@ -3346,26 +3346,10 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		// Classic container chains must be merged, not flattened: a
 		// differential/incremental step's partial volume_N.tar would
 		// otherwise overwrite the full step's complete archive in the shared
-		// staging dir, dropping base files (issue #320). Stage each step into
-		// its own directory and overlay the volume archives oldest-first.
-		stepDirs := make([]string, 0, len(chain))
-		for i, rp := range chain {
-			log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
-			stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
-			if err := os.MkdirAll(stepDir, 0o755); err != nil {
-				return fmt.Errorf("creating chain step dir: %w", err)
-			}
-			phaseStart := (i * 40) / len(chain)
-			phaseEnd := ((i + 1) * 40) / len(chain)
-			if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
-				return fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
-			}
-			stepDirs = append(stepDirs, stepDir)
-		}
-
-		mergedDir := filepath.Join(tmpDir, "merged")
-		if err := engine.MergeContainerChainStaging(ctx, stepDirs, mergedDir); err != nil {
-			return fmt.Errorf("merging container chain: %w", err)
+		// staging dir, dropping base files (issue #320).
+		mergedDir, err := r.stageContainerChainMerged(ctx, chain, itemName, passphrase, reporter, tmpDir)
+		if err != nil {
+			return err
 		}
 		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
 	}
@@ -3380,6 +3364,39 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	}
 
 	return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, tmpDir, filePaths, reporter, 40, 100)
+}
+
+// stageContainerChainMerged stages each restore point in a classic container
+// chain into its own step directory and merges the per-step volume archives
+// oldest-first into a single directory that ContainerHandler.Restore can
+// consume. A differential/incremental step's partial volume_N.tar must not
+// overwrite the full step's complete archive, or base files would be dropped
+// (issue #320).
+//
+// NOTE: the merge is a pure union — a file deleted after the base full is
+// merged back in (classic-container deletion pruning is issue #231, out of
+// scope for #320).
+func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
+	stepDirs := make([]string, 0, len(chain))
+	for i, rp := range chain {
+		log.Printf("runner: staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID)
+		stepDir := filepath.Join(tmpDir, fmt.Sprintf("step_%d", i))
+		if err := os.MkdirAll(stepDir, 0o755); err != nil {
+			return "", fmt.Errorf("creating chain step dir: %w", err)
+		}
+		phaseStart := (i * 40) / len(chain)
+		phaseEnd := ((i + 1) * 40) / len(chain)
+		if err := r.stageRestorePointItem(ctx, rp, itemName, stepDir, passphrase, phaseStart, phaseEnd, reporter); err != nil {
+			return "", fmt.Errorf("staging chain step %d (id=%d): %w", i+1, rp.ID, err)
+		}
+		stepDirs = append(stepDirs, stepDir)
+	}
+
+	mergedDir := filepath.Join(tmpDir, "merged")
+	if err := engine.MergeContainerChainStaging(ctx, stepDirs, mergedDir); err != nil {
+		return "", fmt.Errorf("merging container chain: %w", err)
+	}
+	return mergedDir, nil
 }
 
 // restoreSinglePoint restores a single restore point (without chain logic).
