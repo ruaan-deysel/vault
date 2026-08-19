@@ -57,6 +57,140 @@ func newRunningMock(t *testing.T, running bool) *mockDockerClient {
 // when shouldRestart is true).
 func noopProgress(_ string, _ int, _ string) {}
 
+// TestBackupChunked_DifferentialProducesCompleteManifest is the regression
+// test for issue #320 (dedup path). A differential/incremental chunked
+// container backup must produce a COMPLETE volume sub-manifest — unchanged
+// files must be retained — because the dedup restore path restores the
+// selected manifest alone and assumes it is complete. Before the fix,
+// FolderHandler.BackupChunked honoured changed_since and dropped old.txt,
+// so a differential restore lost the base files.
+func TestBackupChunked_DifferentialProducesCompleteManifest(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+
+	writeOld := func(dir string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "old.txt"), []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(dir, "old.txt"), changedSince.Add(-time.Hour), changedSince.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Full backup: a single volume containing only old.txt.
+	fullVol := t.TempDir()
+	writeOld(fullVol)
+	fullMock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/test",
+				Config: &containertypes.Config{Image: "nginx:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: fullVol, Destination: "/data"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	fh := &ContainerHandler{cli: fullMock}
+	fullID, err := fh.BackupChunked(context.Background(), BackupItem{
+		Name:     "test",
+		Type:     "container",
+		Settings: map[string]any{"id": "abc123"},
+	}, r, nil, noopProgress)
+	if err != nil {
+		t.Fatalf("full BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	parent, err := r.GetManifest(fullID)
+	if err != nil {
+		t.Fatalf("GetManifest(parent) error = %v", err)
+	}
+
+	// Differential backup: the same volume now holds old.txt (unchanged) plus
+	// a freshly-written new.txt.
+	diffVol := t.TempDir()
+	writeOld(diffVol)
+	if err := os.WriteFile(filepath.Join(diffVol, "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffMock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/test",
+				Config: &containertypes.Config{Image: "nginx:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: diffVol, Destination: "/data"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+
+	dh := &ContainerHandler{cli: diffMock}
+	manifestID, err := dh.BackupChunked(context.Background(), BackupItem{
+		Name: "test",
+		Type: "container",
+		Settings: map[string]any{
+			"id":            "abc123",
+			"changed_since": changedSince.UTC().Format(time.RFC3339),
+		},
+	}, r, &parent, noopProgress)
+	if err != nil {
+		t.Fatalf("differential BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	m, err := r.GetManifest(manifestID)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+
+	volEntry, ok := m.Files[containerVolPrefix+"/data"]
+	if !ok {
+		t.Fatalf("manifest missing %s/data entry", containerVolPrefix)
+	}
+	if volEntry.Size == volumeSkippedSize {
+		t.Fatalf("volume was skipped (Size == volumeSkippedSize); expected a complete sub-manifest")
+	}
+	if len(volEntry.Chunks) != 1 {
+		t.Fatalf("volume sub-manifest chunks = %d, want 1", len(volEntry.Chunks))
+	}
+
+	sub, err := r.GetManifest(volEntry.Chunks[0])
+	if err != nil {
+		t.Fatalf("GetManifest(sub) error = %v", err)
+	}
+	if _, ok := sub.Files["old.txt"]; !ok {
+		t.Errorf("sub-manifest missing old.txt — unchanged files must be retained for single-point restore")
+	}
+	if _, ok := sub.Files["new.txt"]; !ok {
+		t.Errorf("sub-manifest missing new.txt")
+	}
+}
+
 // TestBackupChunked_StopRestartBehaviour consolidates the stop/restart
 // lifecycle tests for BackupChunked into a single table-driven test.
 // Each case varies the container running state, no_stop setting, and
@@ -126,7 +260,7 @@ func TestBackupChunked_StopRestartBehaviour(t *testing.T) {
 				progress = nil
 			}
 
-			_, err := h.BackupChunked(context.Background(), item, r, progress)
+			_, err := h.BackupChunked(context.Background(), item, r, nil, progress)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -197,7 +331,7 @@ func TestBackupChunked_RestartsOnBackupError(t *testing.T) {
 
 	// BackupChunked should fail because the mount source doesn't exist,
 	// but the container must still be restarted.
-	_, err := h.BackupChunked(context.Background(), item, r, noopProgress)
+	_, err := h.BackupChunked(context.Background(), item, r, nil, noopProgress)
 	if err == nil {
 		t.Fatal("expected BackupChunked to fail for nonexistent mount source")
 	}
@@ -294,7 +428,7 @@ func TestBackupChunked_DifferentialStopBehaviour(t *testing.T) {
 				},
 			}
 
-			manifestID, err := h.BackupChunked(context.Background(), item, r, noopProgress)
+			manifestID, err := h.BackupChunked(context.Background(), item, r, nil, noopProgress)
 			if err != nil {
 				t.Fatalf("BackupChunked() error = %v", err)
 			}
@@ -317,8 +451,11 @@ func TestBackupChunked_DifferentialStopBehaviour(t *testing.T) {
 				if !ok {
 					t.Fatalf("manifest missing %s/data entry", containerVolPrefix)
 				}
-				if entry.Size != volumeSkippedSize {
-					t.Errorf("volume entry Size = %d, want volumeSkippedSize (%d)", entry.Size, volumeSkippedSize)
+				if entry.Size == volumeSkippedSize {
+					t.Errorf("volume entry was skipped (Size == volumeSkippedSize); expected a complete sub-manifest")
+				}
+				if len(entry.Chunks) != 1 {
+					t.Errorf("volume sub-manifest chunks = %d, want 1", len(entry.Chunks))
 				}
 			}
 		})
@@ -349,7 +486,7 @@ func TestBackupChunked_AllMountsExcluded(t *testing.T) {
 		},
 	}
 
-	_, err := h.BackupChunked(context.Background(), item, r, noopProgress)
+	_, err := h.BackupChunked(context.Background(), item, r, nil, noopProgress)
 	if err == nil {
 		t.Fatal("BackupChunked succeeded with every eligible mount excluded — " +
 			"that commits a restore point holding no volume data")

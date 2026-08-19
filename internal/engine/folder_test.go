@@ -249,7 +249,7 @@ func TestFolderChunkedRoundTrip(t *testing.T) {
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestFolderChunkedRestoresReservedName(t *testing.T) {
 	h := &FolderHandler{}
 	item := BackupItem{Name: "reserved", Type: "folder", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,14 +335,14 @@ func TestFolderChunkedDedupSkipsRepeats(t *testing.T) {
 	defer cleanup()
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
-	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+	if _, err := h.BackupChunked(context.Background(), item, r, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	after1 := r.Stats().TotalChunks
-	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+	if _, err := h.BackupChunked(context.Background(), item, r, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Flush(); err != nil {
@@ -369,7 +369,7 @@ func TestFolderChunkedSkipsNonRegularFiles(t *testing.T) {
 	defer cleanup()
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestFolderChunkedHonoursExclusions(t *testing.T) {
 			"exclude_paths": []string{"*.log", "logs"},
 		},
 	}
-	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 			Type:     "folder",
 			Settings: map[string]any{"path": linkDir},
 		}
-		manifestID, err := h.BackupChunked(ctx, item, r, nil)
+		manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 		if err != nil {
 			t.Fatalf("chunked backup: %v", err)
 		}

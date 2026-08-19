@@ -223,8 +223,8 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 // log line; the run continues. Directories are recorded with their permission
 // bits so Restore can recreate them with the same mode. Empty files produce
 // a manifest entry with zero chunks (not an error).
-func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
-	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, progress)
+func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, err
 	}
@@ -247,7 +247,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 // out-of-tree data (e.g. PluginHandler's .plg installer) to the manifest
 // before the single PutManifest. Returns the manifest, total bytes chunked,
 // and the number of inaccessible paths that were skipped.
-func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
+func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
 	srcPath, _ := item.Settings["path"].(string)
 	if srcPath == "" {
 		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: missing path setting")
@@ -330,7 +330,17 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 		// Skip files whose mtime is not after the changed_since reference.
 		// Consistent with pathChangedSince and tarDirectoryFiltered.
 		// Directory entries are still recorded above for restore structure.
+		// When a parent manifest is supplied (differential/incremental), an
+		// unchanged file is carried forward from the parent instead of being
+		// omitted, so the resulting manifest stays COMPLETE for single-point
+		// restore. Deleted files are never walked, so they are not carried
+		// forward and deletions still take effect (issue #320).
 		if hasChangedSince && !info.ModTime().After(changedSince) {
+			if parent != nil {
+				if pe, ok := parent.Files[rel]; ok {
+					m.Files[rel] = pe
+				}
+			}
 			return nil
 		}
 		warnIfSparse(rel, info)

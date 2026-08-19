@@ -1294,7 +1294,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			continue
 		}
 
-		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, job.EffectiveUploadConcurrency())
+		result, checksums, backupErr := r.backupItem(ctx, backupItem, dest, itemPath, job.VerifyBackup, encryptPassphrase, job.Compression, job.EffectiveUploadConcurrency(), btResult.ParentRP)
 		if backupErr != nil {
 			// If the context was cancelled, stop processing remaining items.
 			if ctx.Err() != nil {
@@ -2209,14 +2209,14 @@ func (r *Runner) collectLiveManifestIDs(repo *dedup.Repo, destID int64) ([]dedup
 // engine.ChunkedHandler, the call is routed to backupItemChunked instead of
 // the classic tar pipeline. Handlers that don't support chunking (vm, zfs)
 // transparently fall through to the classic path even on dedup destinations.
-func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, concurrency int) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, storagePath string, verify bool, passphrase string, compression string, concurrency int, parentRP *db.RestorePoint) (*engine.BackupResult, map[string]string, error) {
 	if dest.DedupEnabled {
 		handler, err := newHandler(item.Type)
 		if err != nil {
 			return nil, nil, err
 		}
 		if chunked, ok := handler.(engine.ChunkedHandler); ok {
-			return r.backupItemChunked(ctx, item, dest, chunked)
+			return r.backupItemChunked(ctx, item, dest, parentRP, chunked)
 		}
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
@@ -2239,7 +2239,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 // handler's BackupChunked, flushes any pending pack, and returns a
 // BackupResult whose Meta carries the manifest ID for the runner to
 // persist on the resulting restore_points row.
-func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
@@ -2258,6 +2258,23 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 	repo, err := r.openDedupRepo(heartbeat, dest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
+	}
+
+	// For differential/incremental backups, load the parent item's manifest
+	// so the handler can carry forward unchanged entries and keep the new
+	// manifest complete for single-point restore (issue #320). A missing or
+	// unreadable parent manifest degrades to a nil parent (the handler still
+	// honours changed_since and produces a partial manifest), so a corrupted
+	// parent can't hard-fail the backup.
+	var parent *dedup.Manifest
+	if parentRP != nil {
+		if pid, ok := resolveManifestID(*parentRP, item.Name); ok {
+			if pm, gErr := repo.GetManifest(pid); gErr == nil {
+				parent = &pm
+			} else {
+				log.Printf("runner: dedup item %q: loading parent manifest: %v (continuing without carry-forward)", item.Name, gErr)
+			}
+		}
 	}
 
 	admit := newBroadcastThrottle()
@@ -2279,7 +2296,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 		})
 	}
 
-	manifestID, err := handler.BackupChunked(ctx, item, repo, progress)
+	manifestID, err := handler.BackupChunked(ctx, item, repo, parent, progress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("backup chunked: %w", err)
 	}
@@ -3048,13 +3065,14 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 			return fmt.Errorf("building restore chain: %w", err)
 		}
 		// Dedup restore points (folder, container, plugin) carry a COMPLETE
-		// manifest — BackupChunked walks the whole item every run, so
-		// increments reuse chunks, not manifest entries. Restoring the
-		// selected point alone reproduces the exact point-in-time state and
-		// cannot resurrect files deleted or excluded after the base full
-		// backup (issue #231). This must run BEFORE the merged-chain dispatch
-		// because containers use merged chains but dedup containers must
-		// take the single-point chunked restore path.
+		// manifest — BackupChunked walks the item and, for differential/
+		// incremental runs, carries unchanged entries forward from the parent
+		// manifest (issue #320). Restoring the selected point alone
+		// reproduces the exact point-in-time state and cannot resurrect files
+		// deleted or excluded after the base full backup (issue #231). This
+		// must run BEFORE the merged-chain dispatch because containers use
+		// merged chains but dedup containers must take the single-point
+		// chunked restore path.
 		if _, ok := resolveManifestID(restorePoint, itemName); ok {
 			log.Printf("runner: dedup restore point %d has a complete manifest — restoring it directly (no chain replay)", restorePoint.ID)
 			return r.restoreSinglePoint(ctx, restorePoint, itemName, itemType, destination, passphrase, filePaths, reporter)
