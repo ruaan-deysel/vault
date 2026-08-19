@@ -250,51 +250,67 @@ func TestRestoreChunkedVolumes_InvalidMountSource(t *testing.T) {
 }
 
 // TestRestoreChunkedVolumes_ClearsStaleFiles verifies a whole-item dedup
-// container volume restore replaces the target directory's contents rather
-// than merging with stale pre-existing files (issue #321).
+// container volume restore clears the target only when cleanDestination is
+// set, and merges (preserves stale files) when it is not (issue #321).
 func TestRestoreChunkedVolumes_ClearsStaleFiles(t *testing.T) {
-	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name             string
+		cleanDestination bool
+		wantStalePresent bool
+	}{
+		{name: "clears stale when clean_destination set", cleanDestination: true, wantStalePresent: false},
+		{name: "merges when clean_destination unset", cleanDestination: false, wantStalePresent: true},
 	}
 
-	r, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := t.TempDir()
+			if err := os.WriteFile(filepath.Join(src, "config.yml"), []byte("foo: bar\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	subID := backupTestVolume(t, r, src)
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
 
-	// With restoreDest="" the bind-mount source IS the restore target, so
-	// seed it with a stale file that the restore must clear.
-	target := t.TempDir()
-	if err := os.WriteFile(filepath.Join(target, "stale.txt"), []byte("stale"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+			subID := backupTestVolume(t, r, src)
 
-	inspect := inspectFromJSON(t, fmt.Sprintf(`{
-		"Name": "/test-container",
-		"Config": {"Image": "nginx:latest"},
-		"Mounts": [{"Type":"bind","Source":%q,"Destination":"/data"}]
-	}`, target))
+			// With restoreDest="" the bind-mount source IS the restore target,
+			// so seed it with a stale file.
+			target := t.TempDir()
+			if err := os.WriteFile(filepath.Join(target, "stale.txt"), []byte("stale"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	m := dedup.Manifest{
-		Files: map[string]dedup.ManifestEntry{
-			containerVolPrefix + "/data": {
-				Size:   100,
-				Chunks: []dedup.ID{subID},
-			},
-		},
-	}
+			inspect := inspectFromJSON(t, fmt.Sprintf(`{
+				"Name": "/test-container",
+				"Config": {"Image": "nginx:latest"},
+				"Mounts": [{"Type":"bind","Source":%q,"Destination":"/data"}]
+			}`, target))
 
-	if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, true); err != nil {
-		t.Fatalf("restoreChunkedVolumes() error = %v", err)
-	}
+			m := dedup.Manifest{
+				Files: map[string]dedup.ManifestEntry{
+					containerVolPrefix + "/data": {
+						Size:   100,
+						Chunks: []dedup.ID{subID},
+					},
+				},
+			}
 
-	if data, err := os.ReadFile(filepath.Join(target, "config.yml")); err != nil {
-		t.Errorf("restored file missing: %v", err)
-	} else if string(data) != "foo: bar\n" {
-		t.Errorf("config.yml content mismatch: %q", data)
-	}
-	if _, err := os.Stat(filepath.Join(target, "stale.txt")); !os.IsNotExist(err) {
-		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+			if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, tt.cleanDestination); err != nil {
+				t.Fatalf("restoreChunkedVolumes() error = %v", err)
+			}
+
+			if data, err := os.ReadFile(filepath.Join(target, "config.yml")); err != nil {
+				t.Errorf("restored file missing: %v", err)
+			} else if string(data) != "foo: bar\n" {
+				t.Errorf("config.yml content mismatch: %q", data)
+			}
+
+			_, statErr := os.Stat(filepath.Join(target, "stale.txt"))
+			if stalePresent := statErr == nil; stalePresent != tt.wantStalePresent {
+				t.Errorf("stale.txt presence = %v, want %v (cleanDestination=%v, stat err=%v)",
+					stalePresent, tt.wantStalePresent, tt.cleanDestination, statErr)
+			}
+		})
 	}
 }

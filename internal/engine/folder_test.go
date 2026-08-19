@@ -558,11 +558,24 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 	})
 }
 
-// TestFolderHandlerRestoreClearsStaleFiles verifies a whole-item classic
-// folder restore replaces the target directory's contents rather than merging
-// with stale pre-existing files (issue #321).
-func TestFolderHandlerRestoreClearsStaleFiles(t *testing.T) {
-	t.Parallel()
+// TestFolderRestoreClearsStaleFiles verifies a whole-item folder restore —
+// both the classic tar path and the dedup chunked path — replaces the target
+// directory's contents rather than merging with stale pre-existing files
+// (issue #321).
+func TestFolderRestoreClearsStaleFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{name: "classic", run: testFolderClassicRestoreClearsStale},
+		{name: "chunked", run: testFolderChunkedRestoreClearsStale},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
+}
+
+func testFolderClassicRestoreClearsStale(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
 		t.Fatal(err)
@@ -609,10 +622,7 @@ func TestFolderHandlerRestoreClearsStaleFiles(t *testing.T) {
 	}
 }
 
-// TestFolderChunkedRestoreClearsStaleFiles verifies a whole-item dedup folder
-// restore replaces the target directory's contents rather than merging with
-// stale pre-existing files (issue #321).
-func TestFolderChunkedRestoreClearsStaleFiles(t *testing.T) {
+func testFolderChunkedRestoreClearsStale(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
 		t.Fatal(err)
@@ -720,29 +730,44 @@ func TestFolderChainRestoreClearsOnlyBaseStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Step 1: base restore — clears (clean_destination=true).
-	baseRestore := BackupItem{
-		Name: "chain",
-		Type: "folder",
-		Settings: map[string]any{
-			"restore_destination": target,
-			"clean_destination":   true,
+	// Restore the chain: the base step clears (clean_destination=true), the
+	// increment step must NOT clear (clean_destination unset) so the overlay
+	// survives.
+	steps := []struct {
+		name      string
+		item      BackupItem
+		sourceDir string
+	}{
+		{
+			name: "base step clears stale",
+			item: BackupItem{
+				Name: "chain",
+				Type: "folder",
+				Settings: map[string]any{
+					"restore_destination": target,
+					"clean_destination":   true,
+				},
+			},
+			sourceDir: baseDest,
+		},
+		{
+			name: "increment step preserves overlay",
+			item: BackupItem{
+				Name: "chain",
+				Type: "folder",
+				Settings: map[string]any{
+					"restore_destination": target,
+				},
+			},
+			sourceDir: incDest,
 		},
 	}
-	if err := h.Restore(context.Background(), baseRestore, baseDest, progress); err != nil {
-		t.Fatalf("base restore: %v", err)
-	}
-
-	// Step 2: increment restore — must NOT clear (clean_destination unset).
-	incRestore := BackupItem{
-		Name: "chain",
-		Type: "folder",
-		Settings: map[string]any{
-			"restore_destination": target,
-		},
-	}
-	if err := h.Restore(context.Background(), incRestore, incDest, progress); err != nil {
-		t.Fatalf("increment restore: %v", err)
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if err := h.Restore(context.Background(), st.item, st.sourceDir, progress); err != nil {
+				t.Fatalf("%s restore: %v", st.name, err)
+			}
+		})
 	}
 
 	// Overlay preserved: base file still present after the increment step.
