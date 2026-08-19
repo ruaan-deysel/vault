@@ -385,6 +385,17 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 // fetched in order and concatenated; mtime is preserved via os.Chtimes.
 // Empty files (zero chunks) are created as zero-byte files.
 func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	// Normalize and validate the destination before the destructive clear
+	// below (and before every safepath.JoinUnderBase) so a whole-item restore
+	// never deletes an un-vetted path — matching the classic FolderHandler.
+	// Restore path. Idempotent on an already-normalized path, so the
+	// container/plugin callers that pre-normalize are unaffected.
+	normalizedDestPath, err := normalizeRestorePath(destPath)
+	if err != nil {
+		return err
+	}
+	destPath = normalizedDestPath
+
 	m, err := repo.GetManifest(manifestID)
 	if err != nil {
 		return err
