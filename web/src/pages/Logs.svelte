@@ -609,7 +609,7 @@
 
       <!-- Scroll container -->
       <div bind:this={box} onscroll={handleScroll} oncopy={handleCopy}
-        class="bg-surface-1 border border-border rounded-xl overflow-y-auto font-mono text-xs leading-tight h-[72vh]"
+        class="console-scroll bg-surface-1 border border-border rounded-xl overflow-y-auto font-mono text-xs leading-tight h-[72vh]"
         style="overflow-anchor: none;"
         role="log"
       >
