@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -88,6 +89,82 @@ func TestFolderHandlerBackupRestoreRoundTrip(t *testing.T) {
 		t.Errorf("restore missing a.txt: %v", err)
 	} else if string(data) != "hello" {
 		t.Errorf("a.txt content mismatch: %q", data)
+	}
+}
+
+// TestFolderHandlerBackupDifferentialIncludesNewFileWithStaleMtime is the
+// classic-path regression test for issue #320: after a full backup, a NEW file
+// added with a stale mtime (e.g. copied in with timestamps preserved) must be
+// present in the differential archive. The runner passes the previous backup's
+// effective-listing paths via "prev_listing_paths"; the engine archives files
+// absent from that set regardless of mtime, while unchanged files stay skipped.
+func TestFolderHandlerBackupDifferentialIncludesNewFileWithStaleMtime(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-1 * time.Hour)
+	stale := time.Now().Add(-3 * time.Hour)
+
+	src := t.TempDir()
+	write := func(name, content string, mtime time.Time) {
+		p := filepath.Join(src, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if !mtime.IsZero() {
+			if err := os.Chtimes(p, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write("old.txt", "old", stale)
+
+	h := &FolderHandler{}
+	progress := func(string, int, string) {}
+
+	// Full backup: only old.txt present.
+	fullDest := t.TempDir()
+	if _, err := h.Backup(context.Background(), BackupItem{
+		Name: "test-folder", Type: "folder", Settings: map[string]any{"path": src},
+	}, fullDest, progress); err != nil {
+		t.Fatalf("full Backup: %v", err)
+	}
+
+	// Add a NEW file with a stale mtime after the full backup.
+	write("added.txt", "added", stale)
+
+	// Differential backup: changed_since plus the previous listing paths.
+	diffDest := t.TempDir()
+	if _, err := h.Backup(context.Background(), BackupItem{
+		Name: "test-folder",
+		Type: "folder",
+		Settings: map[string]any{
+			"path":               src,
+			"changed_since":      changedSince.Format(time.RFC3339),
+			"prev_listing_paths": []string{"old.txt"},
+		},
+	}, diffDest, progress); err != nil {
+		t.Fatalf("differential Backup: %v", err)
+	}
+
+	archive, err := findArchive(diffDest, "data.tar")
+	if err != nil {
+		t.Fatalf("findArchive: %v", err)
+	}
+	extract := t.TempDir()
+	if err := untarDirectory(context.Background(), archive, extract); err != nil {
+		t.Fatalf("untar: %v", err)
+	}
+
+	// The NEW file must be archived (the fix) …
+	if _, err := os.Stat(filepath.Join(extract, "added.txt")); err != nil {
+		t.Errorf("differential archive missing added.txt (new file with stale mtime): %v", err)
+	}
+	// … while the unchanged file is still skipped (present in the full backup).
+	if _, err := os.Stat(filepath.Join(extract, "old.txt")); err == nil {
+		t.Errorf("differential archive should skip unchanged old.txt")
 	}
 }
 

@@ -1204,6 +1204,29 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
 			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
+			// Classic (non-dedup) folder differentials/incrementals: load the
+			// parent's effective listing so the engine can detect NEW files with
+			// stale mtimes (issue #320). The dedup path carries forward via the
+			// parent manifest instead.
+			if !dest.DedupEnabled && item.ItemType == "folder" {
+				if paths := r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase); paths != nil {
+					backupItem.Settings["prev_listing_paths"] = paths
+				} else {
+					log.Printf("runner: warning: parent listing unavailable for %s — falling back to mtime-only differential filtering", item.ItemName)
+				}
+			}
+			// Classic (non-dedup) container differentials/incrementals: load the
+			// parent's per-volume listings keyed by mount source host path, so
+			// the engine detects NEW files with stale mtimes in each volume
+			// (issue #320). Dedup containers carry forward via the parent
+			// manifest instead.
+			if !dest.DedupEnabled && item.ItemType == "container" {
+				if bySource := r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase); bySource != nil {
+					backupItem.Settings["prev_volume_listing_paths"] = bySource
+				} else {
+					log.Printf("runner: warning: parent volume listings unavailable for %s — falling back to mtime-only differential filtering", item.ItemName)
+				}
+			}
 		}
 
 		// Folder items need the path from settings.
@@ -3447,6 +3470,138 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 		return engine.TarIndex{}, false
 	}
 	return idx, true
+}
+
+// loadParentListingPaths returns the item-relative path set recorded in the
+// parent restore point's effective listing, so a differential/incremental
+// classic folder backup can detect NEW files whose mtime predates changed_since
+// (issue #320). Returns nil when no listing is available (pre-listing backups,
+// or a read failure), which degrades the engine to its mtime-only filter.
+func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) []string {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil
+	}
+	defer storage.CloseAdapter(adapter)
+
+	listing, ok := r.readItemSidecar(adapter, *parentRP, itemName, engine.ListingSuffix, passphrase)
+	if !ok {
+		return nil
+	}
+	paths := make([]string, 0, len(listing.Files))
+	for _, f := range listing.Files {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+// loadParentVolumeListingPaths reads the parent restore point's volumes.json
+// manifest and each backed-up volume's effective-listing sidecar, returning a
+// map keyed by mount source host path -> volume-relative paths. Used by classic
+// container differentials/incrementals to detect NEW files whose mtime predates
+// changed_since (issue #320). Returns nil when no listing is available
+// (pre-listing backups or a read failure), which degrades the engine to its
+// mtime-only filter.
+func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) map[string][]string {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return nil
+	}
+	defer storage.CloseAdapter(adapter)
+
+	itemPrefix := path.Join(parentRP.StoragePath, itemName)
+	entries, err := adapter.List(itemPrefix)
+	if err != nil {
+		return nil
+	}
+
+	// Index files by base name so the manifest's archive names resolve to
+	// their listing sidecars (encrypted variants included).
+	byName := make(map[string]storage.FileInfo, len(entries))
+	for _, e := range entries {
+		if !e.IsDir {
+			byName[path.Base(e.Path)] = e
+		}
+	}
+
+	resolvePass := func() string {
+		if passphrase != "" {
+			return passphrase
+		}
+		return r.ResolvePassphrase()
+	}
+
+	// openSidecar locates a file by base name (or its .age variant), opens it,
+	// and decrypts it when needed. ok=false on any failure.
+	openSidecar := func(name string) (io.ReadCloser, bool) {
+		info, ok := byName[name]
+		if !ok {
+			info, ok = byName[name+".age"]
+			if !ok {
+				return nil, false
+			}
+		}
+		rc, err := adapter.Read(info.Path)
+		if err != nil {
+			return nil, false
+		}
+		if !strings.HasSuffix(info.Path, ".age") {
+			return rc, true
+		}
+		pass := resolvePass()
+		if pass == "" {
+			_ = rc.Close()
+			return nil, false
+		}
+		dec, decErr := crypto.DecryptReader(pass, rc)
+		if decErr != nil {
+			_ = rc.Close()
+			return nil, false
+		}
+		return dec, true
+	}
+
+	// volumes.json maps each backed-up volume's source host path to its
+	// archive base name (e.g. volume_0.tar.gz). The mount source is the stable
+	// correlation key — the volume_N index can shift when mounts are reordered.
+	manifestRC, ok := openSidecar("volumes.json")
+	if !ok {
+		return nil
+	}
+	var vols []struct {
+		Source  string `json:"source"`
+		Archive string `json:"archive,omitempty"`
+	}
+	decodeErr := json.NewDecoder(manifestRC).Decode(&vols)
+	_ = manifestRC.Close()
+	if decodeErr != nil {
+		return nil
+	}
+
+	out := make(map[string][]string)
+	for _, v := range vols {
+		if v.Archive == "" {
+			continue
+		}
+		listingRC, ok := openSidecar(v.Archive + engine.ListingSuffix)
+		if !ok {
+			continue
+		}
+		idx, err := engine.ReadTarIndex(listingRC)
+		_ = listingRC.Close()
+		if err != nil {
+			continue
+		}
+		paths := make([]string, 0, len(idx.Files))
+		for _, f := range idx.Files {
+			paths = append(paths, f.Path)
+		}
+		out[v.Source] = paths
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // guardPanic recovers and logs a panic in a fire-and-forget worker goroutine

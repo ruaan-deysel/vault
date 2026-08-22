@@ -109,9 +109,13 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// folder), matching the dedup BackupChunked path (issue #204).
 	exclusions := extractExcludePaths(item.Settings)
 
+	// Previous backup's effective listing (item-relative paths), used to detect
+	// NEW files with stale mtimes in differential/incremental runs (issue #320).
+	prevPaths := prevListingSet(item.Settings)
+
 	if !changedSince.IsZero() {
 		// Incremental/differential: only archive files modified since the reference time.
-		if err := tarDirectoryFiltered(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression); err != nil {
+		if err := tarDirectoryFilteredWithPrev(ctx, srcPath, archivePath, changedSince, exclusions, effectiveCompression, prevPaths); err != nil {
 			return nil, fmt.Errorf("archiving changed files in %s: %w", srcPath, err)
 		}
 	} else {
