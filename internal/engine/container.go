@@ -57,6 +57,15 @@ var appdataPrefixes = []string{
 	"/mnt/user/appdata",
 }
 
+// templateDir returns the Unraid Docker Manager templates-user directory. It
+// derives from the pluginsDir package var (rather than a hardcoded literal) so
+// tests can redirect template reads/writes to a temp dir via the established
+// pluginsDir redirection pattern; production resolves to
+// /boot/config/plugins/dockerMan/templates-user.
+func templateDir() string {
+	return filepath.Join(pluginsDir, "dockerMan", "templates-user")
+}
+
 // volumeManifestEntry describes a single bind mount for the volumes.json manifest.
 type volumeManifestEntry struct {
 	Index         int      `json:"index"`
@@ -1033,7 +1042,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// The template is used by the Unraid Docker Manager (Community Apps) to
 		// recognize and manage the container. Path pattern:
 		//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
-		templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
+		templatePath := filepath.Join(templateDir(), "my-"+item.Name+".xml")
 		if data, err := os.ReadFile(templatePath); err == nil { // #nosec G304 G703 — templatePath is fixed base dir + item.Name from Docker inspect
 			includeTemplate := true
 			if hasChangedSince {
@@ -1564,7 +1573,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		progress(item.Name, 80, "restoring template")
 		templateSrc := filepath.Join(sourceDir, "template.xml")
 		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-			templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
+			templateDest := filepath.Join(templateDir(), "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
 			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
 				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 			}
@@ -1756,6 +1765,11 @@ const (
 	containerInspectKey   = "__inspect"
 	containerImageMetaKey = "__image_meta"
 	containerVolPrefix    = "__vol__"
+	// containerTemplateKey is the manifest key a chunked container backup
+	// stores the Unraid template XML under (the dedup equivalent of the
+	// classic backup's template.xml sidecar). Materialised back to a
+	// template.xml file on restore via writeChunkedRestoreSidecars.
+	containerTemplateKey = "__template"
 	// volumeSkippedSize is the sentinel size stored on a __vol__<dest> entry
 	// when shouldSkipVolume returned true at backup time. Restore uses this
 	// to skip the entry without trying to dereference a missing chunk ID.
@@ -2048,6 +2062,41 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			m.Files[key] = dedup.ManifestEntry{
 				Size:   0,
 				Chunks: []dedup.ID{volManifestID},
+			}
+		}
+		// Step 5 (parity): capture the Unraid template XML if it exists. The
+		// classic Backup path saves it as a template.xml sidecar; the chunked
+		// path records it as a manifest entry so RestoreChunked can
+		// materialise it back into the shared recreateAndStartContainer.
+		templatePath := filepath.Join(templateDir(), "my-"+item.Name+".xml")
+		if data, readErr := os.ReadFile(templatePath); readErr == nil { // #nosec G304 G703 — templatePath is templateDir() + item.Name from Docker inspect
+			includeTemplate := true
+			if hasChangedSince {
+				changed, changeErr := pathChangedSince(ctx, templatePath, changedSince)
+				if changeErr != nil {
+					return fmt.Errorf("checking template changes: %w", changeErr)
+				}
+				includeTemplate = changed
+				// Carry the parent's template entry forward when the file is
+				// unchanged since the reference (differential), keeping the
+				// manifest complete for single-point restore (issue #320).
+				// With no parent entry, re-chunk fully below.
+				if !changed && parent != nil {
+					if pe, ok := parent.Files[containerTemplateKey]; ok {
+						m.Files[containerTemplateKey] = pe
+						includeTemplate = false
+					}
+				}
+			}
+			if includeTemplate {
+				templateID, putErr := repo.Put(data)
+				if putErr != nil {
+					return fmt.Errorf("put template xml: %w", putErr)
+				}
+				m.Files[containerTemplateKey] = dedup.ManifestEntry{
+					Size:   int64(len(data)),
+					Chunks: []dedup.ID{templateID},
+				}
 			}
 		}
 		return nil

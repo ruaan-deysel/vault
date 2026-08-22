@@ -635,3 +635,149 @@ func TestBackupChunked_AllMountsExcluded(t *testing.T) {
 			"the guard must run before the stop")
 	}
 }
+
+// TestBackupChunked_CapturesTemplate is the parity regression test for the
+// dedup path: the classic Backup saves the Unraid template XML as a
+// template.xml sidecar, but BackupChunked never captured it, so a dedup
+// restore could not recreate the Unraid Docker Manager template. The chunked
+// path now records it under the __template manifest key.
+func TestBackupChunked_CapturesTemplate(t *testing.T) {
+	// Redirect pluginsDir (package var) so templateDir() resolves under a
+	// tempdir. Do NOT call t.Parallel — pluginsDir is global.
+	orig := pluginsDir
+	pluginsDir = t.TempDir()
+	t.Cleanup(func() { pluginsDir = orig })
+
+	templateBody := []byte(`<?xml version="1.0"?><Container version="2"/>`)
+	templatePath := filepath.Join(templateDir(), "my-test.xml")
+	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(templatePath, templateBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := newRunningMock(t, false) // Name "/test", bind mount at a temp dir
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	id, err := (&ContainerHandler{cli: mock}).BackupChunked(context.Background(), BackupItem{
+		Name: "test", Type: "container", Settings: map[string]any{"id": "abc123"},
+	}, r, nil, noopProgress)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	m, err := r.GetManifest(id)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+	entry, ok := m.Files[containerTemplateKey]
+	if !ok {
+		t.Fatalf("manifest missing %s entry", containerTemplateKey)
+	}
+	if len(entry.Chunks) != 1 {
+		t.Fatalf("template chunks = %d, want 1", len(entry.Chunks))
+	}
+	got, err := r.Get(entry.Chunks[0])
+	if err != nil {
+		t.Fatalf("Get(template chunk) error = %v", err)
+	}
+	if string(got) != string(templateBody) {
+		t.Errorf("template body = %q, want %q", got, templateBody)
+	}
+}
+
+// TestBackupChunked_TemplateCarryForward verifies the differential template
+// gate: an unchanged template is carried forward from the parent manifest,
+// while a changed template is re-chunked.
+func TestBackupChunked_TemplateCarryForward(t *testing.T) {
+	orig := pluginsDir
+	pluginsDir = t.TempDir()
+	t.Cleanup(func() { pluginsDir = orig })
+
+	changedSince := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	templatePath := filepath.Join(templateDir(), "my-test.xml")
+	writeTemplate := func(body string, mtime time.Time) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(templatePath, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(templatePath, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name      string
+		body      string
+		mtime     time.Time
+		wantCarry bool
+		wantBody  string
+	}{
+		{name: "unchanged template is carried forward", body: "OLD", mtime: changedSince.Add(-time.Hour), wantCarry: true, wantBody: "OLD"},
+		{name: "changed template is re-chunked", body: "NEW", mtime: time.Now(), wantCarry: false, wantBody: "NEW"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Full backup first: template OLD with an old mtime.
+			writeTemplate("OLD", changedSince.Add(-time.Hour))
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			fullID, err := (&ContainerHandler{cli: newRunningMock(t, false)}).BackupChunked(context.Background(), BackupItem{
+				Name: "test", Type: "container", Settings: map[string]any{"id": "abc123"},
+			}, r, nil, noopProgress)
+			if err != nil {
+				t.Fatalf("full BackupChunked() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+			parent, err := r.GetManifest(fullID)
+			if err != nil {
+				t.Fatalf("GetManifest(parent) error = %v", err)
+			}
+
+			// Differential backup with the template now in tc state.
+			writeTemplate(tc.body, tc.mtime)
+			diffID, err := (&ContainerHandler{cli: newRunningMock(t, false)}).BackupChunked(context.Background(), BackupItem{
+				Name: "test", Type: "container",
+				Settings: map[string]any{"id": "abc123", "changed_since": changedSince.UTC().Format(time.RFC3339)},
+			}, r, &parent, noopProgress)
+			if err != nil {
+				t.Fatalf("differential BackupChunked() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+			m, err := r.GetManifest(diffID)
+			if err != nil {
+				t.Fatalf("GetManifest(diff) error = %v", err)
+			}
+			entry, ok := m.Files[containerTemplateKey]
+			if !ok {
+				t.Fatalf("manifest missing %s entry", containerTemplateKey)
+			}
+			if tc.wantCarry {
+				parentEntry := parent.Files[containerTemplateKey]
+				if len(entry.Chunks) != len(parentEntry.Chunks) || (len(entry.Chunks) > 0 && entry.Chunks[0] != parentEntry.Chunks[0]) {
+					t.Errorf("expected carried-forward template chunk %x, got %x", parentEntry.Chunks, entry.Chunks)
+				}
+			}
+			got, err := r.Get(entry.Chunks[0])
+			if err != nil {
+				t.Fatalf("Get(template chunk) error = %v", err)
+			}
+			if string(got) != tc.wantBody {
+				t.Errorf("template body = %q, want %q", got, tc.wantBody)
+			}
+		})
+	}
+}
