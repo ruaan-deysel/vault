@@ -85,3 +85,65 @@ func TestVerifyDedupClosure_MissingChunk(t *testing.T) {
 func osWriteFileForTest(src string) error {
 	return os.WriteFile(src+"/a.txt", []byte("hello"), 0o644)
 }
+
+// TestVerifyDedupClosure_Errors drives the defensive and corruption error
+// paths: a nil repo and a missing top-level manifest must both fail fast.
+func TestVerifyDedupClosure_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		useRepo bool
+	}{
+		{name: "nil_repo", useRepo: false},
+		{name: "missing_top_manifest", useRepo: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var repo *dedup.Repo
+			if tc.useRepo {
+				r, _, cleanup := dedup.NewTestRepoForEngine(t)
+				defer cleanup()
+				repo = r
+			}
+			if err := VerifyDedupClosure(context.Background(), repo, dedup.ID{}); err == nil {
+				t.Fatal("VerifyDedupClosure() expected error, got nil")
+			}
+		})
+	}
+}
+
+// TestVerifyDedupClosure_ContextCancelled verifies the walk short-circuits on
+// a cancelled context before re-reading each data chunk.
+func TestVerifyDedupClosure_ContextCancelled(t *testing.T) {
+	cases := []struct {
+		name string
+	}{
+		{name: "cancelled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			fh := &FolderHandler{}
+			src := t.TempDir()
+			if err := osWriteFileForTest(src); err != nil {
+				t.Fatal(err)
+			}
+			id, err := fh.BackupChunked(context.Background(), BackupItem{
+				Name: "verify-folder", Type: "folder", Settings: map[string]any{"path": src},
+			}, r, nil, nil)
+			if err != nil {
+				t.Fatalf("BackupChunked() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := VerifyDedupClosure(ctx, r, id); err == nil {
+				t.Fatal("VerifyDedupClosure() with cancelled context expected error, got nil")
+			}
+		})
+	}
+}

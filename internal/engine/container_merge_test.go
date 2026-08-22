@@ -105,3 +105,77 @@ func TestMergeCopyFilePreservesMode(t *testing.T) {
 		t.Errorf("dst content = %q, want %q", string(data), `{"a":1}`)
 	}
 }
+
+// TestMergeContainerChainStaging_ImageAndMultipleVolumes covers the image.tar
+// branch (located by compression suffix) and the multi-volume overlay: each
+// distinct volume_N archive is overlaid oldest-first into its own merged
+// archive rather than collapsed into a single volume.
+func TestMergeContainerChainStaging_ImageAndMultipleVolumes(t *testing.T) {
+	cases := []struct {
+		name string
+	}{
+		{name: "image_tar_and_two_volumes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fullDir := t.TempDir()
+			diffDir := t.TempDir()
+
+			mustTar := func(dir, name, file, content string) {
+				t.Helper()
+				root := filepath.Join(dir, "root-"+name)
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, file), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := tarDirectory(context.Background(), root, filepath.Join(dir, name+".tar"), nil, CompressionNone); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Full step: image.tar + volume_0 (old.txt) + volume_1 (base.txt).
+			if err := os.WriteFile(filepath.Join(fullDir, "image.tar"), []byte("dummy-image"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mustTar(fullDir, "volume_0", "old.txt", "old")
+			mustTar(fullDir, "volume_1", "base.txt", "base")
+
+			// Differential step: volume_0 (new.txt) + volume_1 (extra.txt) + config.json.
+			mustTar(diffDir, "volume_0", "new.txt", "new")
+			mustTar(diffDir, "volume_1", "extra.txt", "extra")
+			if err := os.WriteFile(filepath.Join(diffDir, "config.json"), []byte(`{"diff":true}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			outDir := t.TempDir()
+			if err := MergeContainerChainStaging(context.Background(), []string{fullDir, diffDir}, outDir); err != nil {
+				t.Fatalf("MergeContainerChainStaging() error = %v", err)
+			}
+
+			// image.tar is copied verbatim from the newest step that has it.
+			if data, err := os.ReadFile(filepath.Join(outDir, "image.tar")); err != nil {
+				t.Errorf("image.tar not merged: %v", err)
+			} else if string(data) != "dummy-image" {
+				t.Errorf("image.tar content = %q, want %q", data, "dummy-image")
+			}
+
+			// Each volume overlays oldest-first into its own archive.
+			for _, vol := range []struct{ base, first, second string }{
+				{"volume_0", "old.txt", "new.txt"},
+				{"volume_1", "base.txt", "extra.txt"},
+			} {
+				extract := t.TempDir()
+				if err := untarDirectory(context.Background(), filepath.Join(outDir, vol.base+".tar"), extract); err != nil {
+					t.Fatalf("untar %s: %v", vol.base, err)
+				}
+				for _, f := range []string{vol.first, vol.second} {
+					if _, err := os.Stat(filepath.Join(extract, f)); err != nil {
+						t.Errorf("merged %s missing %s: %v", vol.base, f, err)
+					}
+				}
+			}
+		})
+	}
+}

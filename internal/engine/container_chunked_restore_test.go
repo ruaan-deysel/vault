@@ -453,3 +453,201 @@ func TestWriteChunkedRestoreSidecars(t *testing.T) {
 		})
 	}
 }
+
+// TestRestoreChunkedFileMount_ZeroMode verifies a file-mount entry with a zero
+// Mode falls back to 0644 when reconstructing the single file.
+func TestRestoreChunkedFileMount_ZeroMode(t *testing.T) {
+	cases := []struct {
+		name string
+	}{
+		{name: "zero_mode_defaults_to_0644"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			src := filepath.Join(t.TempDir(), "hook.sh")
+			if err := os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entry, err := chunkFileIntoRepo(r, src)
+			if err != nil {
+				t.Fatalf("chunkFileIntoRepo() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+			entry.Mode = 0 // force the default-mode branch
+
+			dest := filepath.Join(t.TempDir(), "out.sh")
+			if err := restoreChunkedFileMount(context.Background(), r, entry, dest); err != nil {
+				t.Fatalf("restoreChunkedFileMount() error = %v", err)
+			}
+			if info, err := os.Stat(dest); err != nil {
+				t.Fatalf("stat restored file: %v", err)
+			} else if info.Mode().Perm() != 0o644 {
+				t.Errorf("restored mode = %o, want 644", info.Mode().Perm())
+			}
+			if data, err := os.ReadFile(dest); err != nil {
+				t.Fatalf("read restored file: %v", err)
+			} else if string(data) != "#!/bin/sh\n" {
+				t.Errorf("restored content = %q, want %q", data, "#!/bin/sh\n")
+			}
+		})
+	}
+}
+
+// TestRestoreChunkedFileMount_MissingChunk verifies a missing chunk fails with
+// a "restore file mount chunk" error.
+func TestRestoreChunkedFileMount_MissingChunk(t *testing.T) {
+	cases := []struct {
+		name string
+	}{
+		{name: "missing_chunk"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			var bogus dedup.ID
+			for i := range bogus {
+				bogus[i] = 0xCD
+			}
+			entry := dedup.ManifestEntry{Mode: 0o644, Chunks: []dedup.ID{bogus}}
+
+			dest := filepath.Join(t.TempDir(), "out.sh")
+			err := restoreChunkedFileMount(context.Background(), r, entry, dest)
+			if err == nil {
+				t.Fatal("restoreChunkedFileMount() expected error for missing chunk, got nil")
+			}
+			if !strings.Contains(err.Error(), "restore file mount chunk") {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), "restore file mount chunk")
+			}
+		})
+	}
+}
+
+// TestWriteChunkedRestoreSidecars_Empty verifies the no-sidecars fast path
+// returns an empty dir and a nil cleanup without touching the filesystem.
+func TestWriteChunkedRestoreSidecars_Empty(t *testing.T) {
+	cases := []struct {
+		name string
+	}{
+		{name: "no_sidecars"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			dir, cleanupDir, err := writeChunkedRestoreSidecars(r, dedup.Manifest{Files: map[string]dedup.ManifestEntry{}})
+			if err != nil {
+				t.Fatalf("writeChunkedRestoreSidecars() error = %v", err)
+			}
+			if dir != "" {
+				t.Errorf("dir = %q, want empty", dir)
+			}
+			if cleanupDir != nil {
+				t.Errorf("cleanupDir = non-nil, want nil")
+			}
+		})
+	}
+}
+
+// TestWriteChunkedRestoreSidecars_MissingChunk verifies a dump or template
+// entry referencing a missing chunk fails the materialisation with the
+// appropriate wrapped error.
+func TestWriteChunkedRestoreSidecars_MissingChunk(t *testing.T) {
+	tests := []struct {
+		name     string
+		dump     bool
+		template bool
+		wantText string
+	}{
+		{name: "dump_missing_chunk", dump: true, wantText: "database dump"},
+		{name: "template_missing_chunk", template: true, wantText: "template xml"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			var bogus dedup.ID
+			for i := range bogus {
+				bogus[i] = 0xEF
+			}
+			files := map[string]dedup.ManifestEntry{}
+			if tc.dump {
+				files[ContainerDBDumpKey] = dedup.ManifestEntry{Size: 4, Chunks: []dedup.ID{bogus}}
+			}
+			if tc.template {
+				files[containerTemplateKey] = dedup.ManifestEntry{Size: 4, Chunks: []dedup.ID{bogus}}
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+
+			dir, cleanupDir, err := writeChunkedRestoreSidecars(r, dedup.Manifest{Files: files})
+			if cleanupDir != nil {
+				cleanupDir()
+			}
+			if err == nil {
+				t.Fatal("writeChunkedRestoreSidecars() expected error for missing chunk, got nil")
+			}
+			if dir != "" {
+				t.Errorf("dir = %q, want empty on error", dir)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantText)
+			}
+		})
+	}
+}
+
+// TestRestoreChunkedVolumes_SkipsEmptyDirAndUnmatched covers the two
+// continue-skips in restoreChunkedVolumes: a malformed empty-chunks directory
+// entry and an __vol__ key with no matching bind mount in the inspect data.
+func TestRestoreChunkedVolumes_SkipsEmptyDirAndUnmatched(t *testing.T) {
+	tests := []struct {
+		name    string
+		volKey  string
+		entry   dedup.ManifestEntry
+		mountTo string
+	}{
+		{
+			name:    "empty_chunks_directory_entry",
+			volKey:  containerVolPrefix + "/data",
+			entry:   dedup.ManifestEntry{Size: 0},
+			mountTo: "/data",
+		},
+		{
+			name:    "unmatched_bind_mount",
+			volKey:  containerVolPrefix + "/ghost",
+			entry:   dedup.ManifestEntry{Size: 100, Chunks: []dedup.ID{{0xEE}}},
+			mountTo: "/other",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			target := t.TempDir()
+			inspect := inspectFromJSON(t, fmt.Sprintf(`{
+				"Name": "/test-container",
+				"Config": {"Image": "nginx:latest"},
+				"Mounts": [{"Type":"bind","Source":%q,"Destination":%q}]
+			}`, target, tc.mountTo))
+
+			m := dedup.Manifest{
+				Files: map[string]dedup.ManifestEntry{tc.volKey: tc.entry},
+			}
+
+			if err := restoreChunkedVolumes(context.Background(), m, r, inspect, t.TempDir(), nil, false); err != nil {
+				t.Fatalf("restoreChunkedVolumes() error = %v", err)
+			}
+		})
+	}
+}

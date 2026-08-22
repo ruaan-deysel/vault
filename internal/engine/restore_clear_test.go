@@ -154,3 +154,56 @@ func TestClearRestoreTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestClearRestoreTarget_ErrorPaths covers the remaining defensive branches of
+// clearRestoreTarget: a read error on a non-directory destination, and
+// cancellation observed while removing entries (issue #321).
+func TestClearRestoreTarget_ErrorPaths(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) string
+		ctx         func() context.Context
+		wantErrText string
+	}{
+		{
+			name: "non-directory destination read error",
+			setup: func(t *testing.T) string {
+				p := filepath.Join(t.TempDir(), "a-file")
+				if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return p
+			},
+			ctx:         context.Background,
+			wantErrText: "reading restore destination",
+		},
+		{
+			name: "context cancelled while removing entries",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return dir
+			},
+			ctx: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			},
+			wantErrText: "context canceled",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dest := tt.setup(t)
+			err := clearRestoreTarget(tt.ctx(), dest)
+			if err == nil {
+				t.Fatal("clearRestoreTarget() expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErrText)
+			}
+		})
+	}
+}
