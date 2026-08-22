@@ -189,10 +189,21 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Step 2: Restore config directory.
 	progress(item.Name, 60, "restoring config")
 	if configArchive, err := findArchive(sourceDir, "config.tar"); err == nil {
+		// Honour a custom restore destination (parity with RestoreChunked and
+		// FolderHandler.Restore): the destination IS the config directory, so
+		// the archive contents land directly inside it. Falls back to the
+		// well-known /boot/config/plugins/<name>/ directory when unset.
 		configDir := pluginPath(pluginName)
+		if rd, _ := item.Settings["restore_destination"].(string); rd != "" {
+			normalized, err := normalizeRestorePath(rd)
+			if err != nil {
+				return err
+			}
+			configDir = normalized
+		}
 		include := extractRestoreFilePaths(item.Settings)
-		// Whole-item restores clear the config directory first (issue #321);
-		// partial (file-picker) restores merge.
+		// Whole-item restores clear the RESOLVED config directory first
+		// (issue #321); partial (file-picker) restores merge.
 		if item.Settings["clean_destination"] == true && len(include) == 0 {
 			if err := clearRestoreTarget(ctx, configDir); err != nil {
 				return err
