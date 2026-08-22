@@ -16,6 +16,14 @@ import (
 // Boundary convention: a file whose mtime equals changed_since is
 // treated as "not changed" (skipped). This matches pathChangedSince
 // and tarDirectoryFiltered in the classic tar path.
+//
+// changed_since filtering only applies when a parent manifest is supplied.
+// Without a parent (a full backup, a newly-added item, or a missing parent
+// manifest), changed_since is ignored and the tree is chunked FULLY, so a
+// brand-new item with old file mtimes is never silently recorded empty
+// (issue #320). With a parent manifest, unchanged files are carried forward
+// from the parent so the resulting manifest stays complete for single-point
+// restore.
 func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 	t.Parallel()
 
@@ -31,7 +39,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 		wantExcluded   []string
 	}{
 		{
-			name: "skips old files, includes new files and directory entries",
+			name: "no parent: changed_since ignored, all files included (new item safety)",
 			settings: map[string]any{
 				"changed_since": changedSince.Format(time.RFC3339),
 			},
@@ -40,8 +48,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				{name: "new.txt", content: "new", offset: +2 * time.Hour},
 				{name: "subdir/sub_old.txt", content: "sub old", offset: -3 * time.Hour},
 			},
-			wantInManifest: []string{"new.txt", "subdir"},
-			wantExcluded:   []string{"old.txt", filepath.Join("subdir", "sub_old.txt")},
+			wantInManifest: []string{"old.txt", "new.txt", "subdir", filepath.Join("subdir", "sub_old.txt")},
 		},
 		{
 			name:     "omitting changed_since produces a full backup",
@@ -62,7 +69,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 			wantInManifest: []string{"b.txt"},
 		},
 		{
-			name: "file with mtime equal to changed_since is excluded",
+			name: "no parent: boundary mtime file included (full walk)",
 			settings: map[string]any{
 				"changed_since": changedSince.Format(time.RFC3339),
 			},
@@ -70,8 +77,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				{name: "boundary.txt", content: "equal", atExact: changedSince},
 				{name: "after.txt", content: "after", offset: +1 * time.Hour},
 			},
-			wantInManifest: []string{"after.txt"},
-			wantExcluded:   []string{"boundary.txt"},
+			wantInManifest: []string{"boundary.txt", "after.txt"},
 		},
 	}
 
@@ -94,7 +100,7 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				Name:     "test-folder",
 				Type:     "folder",
 				Settings: tt.settings,
-			}, repo, func(string, int, string) {})
+			}, repo, nil, func(string, int, string) {})
 			if err != nil {
 				t.Fatalf("BackupChunked: %v", err)
 			}
@@ -116,6 +122,161 @@ func TestFolderBackupChunked_ChangedSince(t *testing.T) {
 				if _, ok := m.Files[name]; ok {
 					t.Errorf("expected %q to be excluded from manifest", name)
 				}
+			}
+		})
+	}
+}
+
+// TestFolderBackupChunked_ChangedSince_CarriesForward is the regression test
+// for the dedup-path half of issue #320. When a parent manifest is supplied,
+// a file skipped by changed_since must be carried forward from the parent so
+// the differential manifest stays complete and single-point restore does not
+// drop base files.
+func TestFolderBackupChunked_ChangedSince_CarriesForward(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	src := t.TempDir()
+
+	old := testFile{name: "old.txt", content: "old", offset: -3 * time.Hour}
+	boundary := testFile{name: "boundary.txt", content: "equal", atExact: changedSince}
+	newFile := testFile{name: "new.txt", content: "new", offset: +2 * time.Hour}
+	old.write(t, src, changedSince)
+	boundary.write(t, src, changedSince)
+	newFile.write(t, src, changedSince)
+
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test-folder", Type: "folder", Settings: map[string]any{"path": src}}
+
+	// Full backup: both files present (no changed_since).
+	fullID, err := h.BackupChunked(context.Background(), item, repo, nil, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("full BackupChunked: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	parent, err := repo.GetManifest(fullID)
+	if err != nil {
+		t.Fatalf("GetManifest(parent): %v", err)
+	}
+
+	// Differential: old.txt is unchanged (mtime predates changed_since), so it
+	// must be carried forward from the parent; new.txt is newly chunked.
+	item.Settings["changed_since"] = changedSince.Format(time.RFC3339)
+	diffID, err := h.BackupChunked(context.Background(), item, repo, &parent, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("differential BackupChunked: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	m, err := repo.GetManifest(diffID)
+	if err != nil {
+		t.Fatalf("GetManifest(diff): %v", err)
+	}
+
+	for _, name := range []string{"old.txt", "boundary.txt", "new.txt"} {
+		if _, ok := m.Files[name]; !ok {
+			t.Errorf("differential manifest missing %q — unchanged files must be carried forward", name)
+		}
+	}
+}
+
+// TestFolderChunkedDifferentialRestoreClearsAndCarriesForward is the
+// end-to-end regression test for the differential dedup restore path: a
+// differential backup carries unchanged files forward from the parent
+// (issue #320, complete manifest) and a whole-item restore with
+// clean_destination clears the target before re-extracting (issue #321), so
+// stale files vanish while both the carried-forward and newly-chunked files
+// land. This mirrors the folder-shaped volume restore a differential docker
+// dedup restore delegates to.
+func TestFolderChunkedDifferentialRestoreClearsAndCarriesForward(t *testing.T) {
+	t.Parallel()
+
+	changedSince := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	src := t.TempDir()
+
+	// a.txt stays untouched (unchanged → carried forward); b.txt is later
+	// modified (changed → re-chunked); c.txt is added (changed).
+	testFile{name: "a.txt", content: "a-v1", offset: -2 * time.Hour}.write(t, src, changedSince)
+	testFile{name: "b.txt", content: "b-v1", offset: -2 * time.Hour}.write(t, src, changedSince)
+
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "diff-folder", Type: "folder", Settings: map[string]any{"path": src}}
+
+	// Full backup.
+	fullID, err := h.BackupChunked(context.Background(), item, repo, nil, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("full BackupChunked: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("flush full: %v", err)
+	}
+	parent, err := repo.GetManifest(fullID)
+	if err != nil {
+		t.Fatalf("GetManifest(parent): %v", err)
+	}
+
+	// Modify b.txt and add c.txt — both have mtimes after changed_since.
+	testFile{name: "b.txt", content: "b-v2", offset: +30 * time.Minute}.write(t, src, changedSince)
+	testFile{name: "c.txt", content: "c-new", offset: +30 * time.Minute}.write(t, src, changedSince)
+
+	// Differential backup with parent + changed_since.
+	item.Settings["changed_since"] = changedSince.Format(time.RFC3339)
+	diffID, err := h.BackupChunked(context.Background(), item, repo, &parent, func(string, int, string) {})
+	if err != nil {
+		t.Fatalf("differential BackupChunked: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("flush diff: %v", err)
+	}
+
+	// Restore target already holds a stale file the whole-item clear must remove.
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreItem := BackupItem{Name: "diff-folder", Type: "folder", Settings: map[string]any{
+		"clean_destination": true,
+	}}
+	if err := h.RestoreChunked(context.Background(), restoreItem, repo, diffID, dst, func(string, int, string) {}); err != nil {
+		t.Fatalf("RestoreChunked: %v", err)
+	}
+
+	checks := []struct {
+		name        string
+		rel         string
+		wantContent string
+		wantExists  bool
+	}{
+		{name: "stale file cleared", rel: "stale.txt", wantExists: false},
+		{name: "unchanged file carried forward and restored", rel: "a.txt", wantContent: "a-v1", wantExists: true},
+		{name: "changed file restored", rel: "b.txt", wantContent: "b-v2", wantExists: true},
+		{name: "new file restored", rel: "c.txt", wantContent: "c-new", wantExists: true},
+	}
+	for _, tc := range checks {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(dst, tc.rel)
+			data, readErr := os.ReadFile(p)
+			if tc.wantExists {
+				if readErr != nil {
+					t.Fatalf("expected %s to exist, got err %v", tc.rel, readErr)
+				}
+				if string(data) != tc.wantContent {
+					t.Errorf("%s = %q, want %q", tc.rel, string(data), tc.wantContent)
+				}
+				return
+			}
+			if !os.IsNotExist(readErr) {
+				t.Errorf("%s should have been cleared, got err %v (data %q)", tc.rel, readErr, string(data))
 			}
 		})
 	}

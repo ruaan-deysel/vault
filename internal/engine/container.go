@@ -57,6 +57,15 @@ var appdataPrefixes = []string{
 	"/mnt/user/appdata",
 }
 
+// templateDir returns the Unraid Docker Manager templates-user directory. It
+// derives from the pluginsDir package var (rather than a hardcoded literal) so
+// tests can redirect template reads/writes to a temp dir via the established
+// pluginsDir redirection pattern; production resolves to
+// /boot/config/plugins/dockerMan/templates-user.
+func templateDir() string {
+	return filepath.Join(pluginsDir, "dockerMan", "templates-user")
+}
+
 // volumeManifestEntry describes a single bind mount for the volumes.json manifest.
 type volumeManifestEntry struct {
 	Index         int      `json:"index"`
@@ -1033,7 +1042,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 		// The template is used by the Unraid Docker Manager (Community Apps) to
 		// recognize and manage the container. Path pattern:
 		//   /boot/config/plugins/dockerMan/templates-user/my-<name>.xml
-		templatePath := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+item.Name+".xml")
+		templatePath := filepath.Join(templateDir(), "my-"+item.Name+".xml")
 		if data, err := os.ReadFile(templatePath); err == nil { // #nosec G304 G703 — templatePath is fixed base dir + item.Name from Docker inspect
 			includeTemplate := true
 			if hasChangedSince {
@@ -1268,6 +1277,11 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
 			}
 		} else {
+			if item.Settings["clean_destination"] == true {
+				if err := clearRestoreTarget(ctx, targetPath); err != nil {
+					return err
+				}
+			}
 			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
@@ -1559,7 +1573,7 @@ func (h *ContainerHandler) recreateAndStartContainer(ctx context.Context, item B
 		progress(item.Name, 80, "restoring template")
 		templateSrc := filepath.Join(sourceDir, "template.xml")
 		if data, readErr := os.ReadFile(templateSrc); readErr == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-			templateDest := filepath.Join("/boot/config/plugins/dockerMan/templates-user", "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
+			templateDest := filepath.Join(templateDir(), "my-"+containerName+".xml") // #nosec G703 //nolint:gosec // path is constructed from trusted container name
 			if mkErr := os.MkdirAll(filepath.Dir(templateDest), 0750); mkErr == nil {
 				_ = os.WriteFile(templateDest, data, 0600) // #nosec G703 //nolint:gosec // best-effort restore of template
 			}
@@ -1751,6 +1765,11 @@ const (
 	containerInspectKey   = "__inspect"
 	containerImageMetaKey = "__image_meta"
 	containerVolPrefix    = "__vol__"
+	// containerTemplateKey is the manifest key a chunked container backup
+	// stores the Unraid template XML under (the dedup equivalent of the
+	// classic backup's template.xml sidecar). Materialised back to a
+	// template.xml file on restore via writeChunkedRestoreSidecars.
+	containerTemplateKey = "__template"
 	// volumeSkippedSize is the sentinel size stored on a __vol__<dest> entry
 	// when shouldSkipVolume returned true at backup time. Restore uses this
 	// to skip the entry without trying to dereference a missing chunk ID.
@@ -1771,7 +1790,7 @@ const (
 //
 // Like FolderHandler.BackupChunked, repo.Flush is NOT called here — the
 // runner flushes once per backup run after all items complete.
-func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	if repo == nil {
 		return dedup.ID{}, fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1962,9 +1981,66 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 				continue
 			}
+			// Detect file-based bind mounts and non-regular inodes (parity with the
+			// classic Backup path, which Lstats mount.Source and branches on the
+			// result). Without this, a file mount is handed to
+			// FolderHandler.BackupChunked → os.OpenRoot, which fails on a
+			// non-directory, and sockets/devices — skipped cleanly by the classic
+			// path — abort a dedup run.
+			srcInfo, lerr := os.Lstat(mnt.Source)
+			if lerr != nil {
+				return fmt.Errorf("stat volume %s: %w", mnt.Source, lerr)
+			}
+			if !srcInfo.IsDir() {
+				// Auto-skip non-regular inodes (sockets, named pipes, devices,
+				// irregular) — matching the classic path's skip at Backup.
+				if srcInfo.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeCharDevice|os.ModeIrregular) != 0 {
+					reason := fmt.Sprintf("unsupported inode type (%s)", srcInfo.Mode().Type().String())
+					log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
+					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					continue
+				}
+				// Regular-file bind mount. Differential runs: skip an unchanged
+				// file (carry the parent entry forward), exactly like the
+				// directory path below. pathChangedSince handles non-directories.
+				if hasChangedSince {
+					changed, cached := volChanges[mnt.Source]
+					if !cached {
+						var cerr error
+						changed, cerr = pathChangedSince(ctx, mnt.Source, changedSince)
+						if cerr != nil {
+							return fmt.Errorf("checking volume %s changes: %w", mnt.Source, cerr)
+						}
+					}
+					if !changed {
+						log.Printf("engine: chunked: file mount %s for %s unchanged since reference — carrying forward parent entry", mnt.Source, item.Name)
+						if parent != nil {
+							if pe, ok := parent.Files[key]; ok {
+								m.Files[key] = pe
+								continue
+							}
+						}
+						// No parent entry to carry forward from (e.g. a full backup
+						// with changed_since set, or a parent missing this volume):
+						// fall through and chunk the file fully (issue #320).
+					}
+				}
+				entry, ferr := chunkFileIntoRepo(repo, mnt.Source)
+				if ferr != nil {
+					return fmt.Errorf("chunking file mount %s: %w", mnt.Source, ferr)
+				}
+				entry.IsFile = true
+				entry.Mode = uint32(srcInfo.Mode().Perm())
+				entry.ModTime = srcInfo.ModTime().UTC().Format(time.RFC3339)
+				m.Files[key] = entry
+				continue
+			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
-			// path. Reuses cached pre-check results when available.
+			// path. Reuses cached pre-check results when available. With a
+			// parent manifest, the unchanged volume's sub-manifest reference is
+			// carried forward so the resulting manifest stays complete for
+			// single-point restore (issue #320).
 			if hasChangedSince {
 				changed, cached := volChanges[mnt.Source]
 				if !cached {
@@ -1975,8 +2051,36 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					}
 				}
 				if !changed {
-					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
-					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					log.Printf("engine: chunked: volume %s for %s unchanged since reference — carrying forward parent entry", mnt.Source, item.Name)
+					if parent != nil {
+						if pe, ok := parent.Files[key]; ok {
+							m.Files[key] = pe
+							continue
+						}
+					}
+					// No parent to carry forward from (e.g. a full backup with a
+					// changed_since set, or a parent whose manifest is missing this
+					// volume). Chunk the unchanged volume FULLY so the manifest stays
+					// complete. changed_since is deliberately NOT propagated here —
+					// with no parent entry there is nothing to carry forward from,
+					// and the per-file filter would otherwise drop every file
+					// (issue #320).
+					volItem := BackupItem{
+						Name: mnt.Destination,
+						Type: "folder",
+						Settings: map[string]any{
+							"path":          mnt.Source,
+							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
+						},
+					}
+					volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, nil, progress)
+					if vErr != nil {
+						return fmt.Errorf("backup unchanged volume %s: %w", mnt.Destination, vErr)
+					}
+					m.Files[key] = dedup.ManifestEntry{
+						Size:   0,
+						Chunks: []dedup.ID{volManifestID},
+					}
 					continue
 				}
 			}
@@ -1988,18 +2092,64 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}
-			// Propagate changed_since for per-file filtering inside
-			// FolderHandler.BackupChunked.
-			if hasChangedSince {
+			// Resolve the parent's matching sub-manifest so unchanged files
+			// within a changed volume are carried forward rather than dropped.
+			// changed_since is only propagated when that parent entry exists:
+			// with no parent entry the volume is new to this backup and must be
+			// chunked FULLY (applying changed_since with a nil parent would
+			// drop every unchanged file — issue #320).
+			var volParent *dedup.Manifest
+			if hasChangedSince && parent != nil {
+				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
+					if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
+						volParent = &sub
+					}
+				}
+			}
+			if volParent != nil {
 				volItem.Settings["changed_since"] = item.Settings["changed_since"]
 			}
-			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, volParent, progress)
 			if vErr != nil {
 				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
 			}
 			m.Files[key] = dedup.ManifestEntry{
 				Size:   0,
 				Chunks: []dedup.ID{volManifestID},
+			}
+		}
+		// Step 5 (parity): capture the Unraid template XML if it exists. The
+		// classic Backup path saves it as a template.xml sidecar; the chunked
+		// path records it as a manifest entry so RestoreChunked can
+		// materialise it back into the shared recreateAndStartContainer.
+		templatePath := filepath.Join(templateDir(), "my-"+item.Name+".xml")
+		if data, readErr := os.ReadFile(templatePath); readErr == nil { // #nosec G304 G703 — templatePath is templateDir() + item.Name from Docker inspect
+			includeTemplate := true
+			if hasChangedSince {
+				changed, changeErr := pathChangedSince(ctx, templatePath, changedSince)
+				if changeErr != nil {
+					return fmt.Errorf("checking template changes: %w", changeErr)
+				}
+				// Carry the parent's template entry forward when the file is
+				// unchanged since the reference (differential), keeping the
+				// manifest complete for single-point restore (issue #320).
+				// With no parent entry, re-chunk fully below.
+				if !changed && parent != nil {
+					if pe, ok := parent.Files[containerTemplateKey]; ok {
+						m.Files[containerTemplateKey] = pe
+						includeTemplate = false
+					}
+				}
+			}
+			if includeTemplate {
+				templateID, putErr := repo.Put(data)
+				if putErr != nil {
+					return fmt.Errorf("put template xml: %w", putErr)
+				}
+				m.Files[containerTemplateKey] = dedup.ManifestEntry{
+					Size:   int64(len(data)),
+					Chunks: []dedup.ID{templateID},
+				}
 			}
 		}
 		return nil
@@ -2120,31 +2270,67 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	if progress != nil {
 		progress(item.Name, 40, "restoring volumes")
 	}
-	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress); err != nil {
+	cleanDestination := item.Settings["clean_destination"] == true
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress, cleanDestination); err != nil {
 		return err
 	}
 
 	// 5. Recreate + start container (shared helper with classic restore).
-	//    Pass sourceDir="" because the chunked format has no template.xml
-	//    or image_meta.json sidecars — image_meta seeding above already
-	//    handled the update-status seeding from the manifest entry.
-	// Reassemble the logical dump, if this backup carried one, so the shared
-	// recreate path reloads it exactly as it does for a classic backup.
-	// Without this a dedup restore would silently ignore a dump the backup
-	// went to the trouble of taking.
-	dumpDir, cleanupDump, err := writeChunkedDatabaseDump(repo, m)
+	//    Pass the materialised sidecar dir (template.xml and/or the logical
+	//    database dump) as sourceDir so the shared helper restores the
+	//    template and reloads the dump exactly as for a classic backup.
+	//    image_meta seeding was already handled from the manifest entry above.
+	sidecarDir, cleanupSidecars, err := writeChunkedRestoreSidecars(repo, m)
 	if err != nil {
 		return err
 	}
-	if cleanupDump != nil {
-		defer cleanupDump()
+	if cleanupSidecars != nil {
+		defer cleanupSidecars()
 	}
 
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, dumpDir, progress); err != nil {
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sidecarDir, progress); err != nil {
 		return err
 	}
 	if progress != nil {
 		progress(item.Name, 100, "container restored")
+	}
+	return nil
+}
+
+// restoreChunkedFileMount reconstructs a single-file volume at destPath by
+// concatenating the entry's chunks in order. Mirrors the per-file write in
+// FolderHandler.RestoreChunked but targets the whole file mount directly (no
+// leaf MkdirAll), and honours the recorded mode + mtime like the classic
+// untarFile path. Used by restoreChunkedVolumes for single-file bind mounts.
+func restoreChunkedFileMount(ctx context.Context, repo *dedup.Repo, entry dedup.ManifestEntry, destPath string) error {
+	mode := os.FileMode(entry.Mode)
+	if mode == 0 {
+		mode = 0o644
+	}
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — destPath is validated by the caller's normalizeRestorePath
+	if err != nil {
+		return err
+	}
+	for _, cid := range entry.Chunks {
+		if err := ctx.Err(); err != nil {
+			_ = out.Close()
+			return err
+		}
+		body, err := repo.Get(cid)
+		if err != nil {
+			_ = out.Close()
+			return fmt.Errorf("restore file mount chunk: %w", err)
+		}
+		if _, err := out.Write(body); err != nil {
+			_ = out.Close()
+			return err
+		}
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if t, err := time.Parse(time.RFC3339, entry.ModTime); err == nil {
+		_ = os.Chtimes(destPath, t, t)
 	}
 	return nil
 }
@@ -2155,7 +2341,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
-func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc, cleanDestination bool) error {
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -2179,7 +2365,9 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
 			continue
 		}
-		if len(v.Chunks) == 0 {
+		// An empty-chunks directory entry is malformed; an empty-chunks FILE
+		// entry is a valid zero-byte file mount, so only skip the former here.
+		if !v.IsFile && len(v.Chunks) == 0 {
 			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
 			continue
 		}
@@ -2197,68 +2385,99 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
-		src = normalizedSrc
-		if err := os.MkdirAll(src, 0o750); err != nil {
-			return fmt.Errorf("mkdir volume %s: %w", src, err)
+		if v.IsFile {
+			// Single-file bind mount: write the chunks to ONE file at the
+			// target (creating the parent dir first), mirroring classic
+			// Restore's untarFile branch. clean_destination does NOT apply —
+			// classic file mounts are not cleared either.
+			if err := os.MkdirAll(filepath.Dir(normalizedSrc), 0o750); err != nil {
+				return fmt.Errorf("mkdir parent for %s: %w", normalizedSrc, err)
+			}
+			if err := restoreChunkedFileMount(ctx, repo, v, normalizedSrc); err != nil {
+				return fmt.Errorf("restore file mount %s: %w", dest, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(normalizedSrc, 0o750); err != nil {
+			return fmt.Errorf("mkdir volume %s: %w", normalizedSrc, err)
 		}
 		proxy := BackupItem{Name: dest, Type: "folder"}
-		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+		if cleanDestination {
+			proxy.Settings = map[string]any{"clean_destination": true}
+		}
+		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], normalizedSrc, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
 	}
 	return nil
 }
 
-// writeChunkedDatabaseDump materialises a manifest's database dump into a
-// temporary directory shaped like a classic backup's source directory, so the
-// shared restore path finds it with no special-casing. Returns an empty path
-// when the manifest carries no dump.
-func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
-	entry, ok := m.Files[ContainerDBDumpKey]
-	if !ok || len(entry.Chunks) == 0 {
+// writeChunkedRestoreSidecars materialises the sidecar files a chunked
+// container backup may carry — the logical database dump (plus its replay
+// marker) and the Unraid template.xml — into a temporary directory shaped
+// like a classic backup's source directory, so the shared restore path
+// (recreateAndStartContainer) finds them with no special-casing. Returns an
+// empty path and a nil cleanup when the manifest carries none of them.
+func writeChunkedRestoreSidecars(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+	dumpEntry, hasDump := m.Files[ContainerDBDumpKey]
+	_, hasReplay := m.Files[ContainerDBReplayKey]
+	templateEntry, hasTemplate := m.Files[containerTemplateKey]
+	if !hasDump && !hasReplay && !hasTemplate {
 		return "", nil, nil
 	}
-	dir, err := os.MkdirTemp("", "vault-dbrestore-*")
+	dir, err := os.MkdirTemp("", "vault-restore-sidecars-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
+		return "", nil, fmt.Errorf("creating restore sidecar directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
 	// Carry the replay marker across into the classic-shaped directory so the
 	// shared restore path applies the same rule on both.
-	if _, replay := m.Files[ContainerDBReplayKey]; replay {
+	if hasReplay {
 		if err := writeDatabaseReplayMarker(dir); err != nil {
 			cleanup()
 			return "", nil, fmt.Errorf("writing database replay marker: %w", err)
 		}
 	}
+	// Stored uncompressed by the chunked backup, so the dump is written back
+	// under the bare name; findDatabaseDump accepts either form.
+	if hasDump && len(dumpEntry.Chunks) > 0 {
+		if err := writeChunkedEntryToFile(repo, dumpEntry, filepath.Join(dir, DatabaseDumpFile)); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing database dump: %w", err)
+		}
+	}
+	// The template is materialised as template.xml so recreateAndStartContainer
+	// (step 5) writes it back to the well-known templates-user location,
+	// exactly as it does for a classic restore.
+	if hasTemplate && len(templateEntry.Chunks) > 0 {
+		if err := writeChunkedEntryToFile(repo, templateEntry, filepath.Join(dir, "template.xml")); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing template xml: %w", err)
+		}
+	}
+	return dir, cleanup, nil
+}
 
-	// Stored uncompressed by the chunked backup, so it is written back under
-	// the bare name; findDatabaseDump accepts either form.
-	path := filepath.Join(dir, DatabaseDumpFile)
+// writeChunkedEntryToFile concatenates an entry's chunks in order into a
+// single file at path. Shared by the dump and template materialisation.
+func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path string) error {
 	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
 	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("creating database dump file: %w", err)
+		return err
 	}
 	for _, id := range entry.Chunks {
 		chunk, err := repo.Get(id)
 		if err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("reading database dump chunk: %w", err)
+			return err
 		}
 		if _, err := f.Write(chunk); err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("writing database dump: %w", err)
+			return err
 		}
 	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("closing database dump: %w", err)
-	}
-	return dir, cleanup, nil
+	return f.Close()
 }
 
 // contextCopy copies from src to dst, checking for context cancellation

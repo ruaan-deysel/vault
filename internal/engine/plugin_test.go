@@ -39,7 +39,7 @@ func TestPluginChunkedRoundTrip(t *testing.T) {
 	// Override source via the "path" Settings key (matches what folder uses).
 	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPluginChunkedRestoreHonoursFilePicker(t *testing.T) {
 	h := &PluginHandler{}
 	item := BackupItem{Name: "test-plugin", Type: "plugin", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestPluginChunkedInstaller(t *testing.T) {
 			h := &PluginHandler{}
 			item := BackupItem{Name: pluginName, Type: "plugin", Settings: map[string]any{"path": src}}
 			ctx := context.Background()
-			manifestID, err := h.BackupChunked(ctx, item, r, nil)
+			manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestPluginChunkedRestoreDestination(t *testing.T) {
 	defer cleanup()
 	h := &PluginHandler{}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"path": src}}, r, nil)
+	manifestID, err := h.BackupChunked(ctx, BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{"path": src}}, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,4 +258,106 @@ func TestPluginChunkedRestoreDestination(t *testing.T) {
 			t.Errorf("config should be restored to restore_destination when destPath is empty: %v", err)
 		}
 	})
+}
+
+// TestPluginRestoreHonoursDestination is a regression test for #321: the
+// classic (non-dedup) PluginHandler.Restore ignored restore_destination and
+// always wrote a plugin's config directory back to the well-known
+// /boot/config/plugins/<name>/ location. It now routes the config directory to
+// the custom destination (the destination IS the config dir), mirroring
+// PluginHandler.RestoreChunked and FolderHandler.Restore, while the .plg
+// installer stays at its well-known location for Unraid to discover.
+func TestPluginRestoreHonoursDestination(t *testing.T) {
+	const pluginName = "test-plugin"
+	plgBody := []byte(`<?xml version="1.0"?><PLUGIN name="test-plugin"></PLUGIN>`)
+	configBody := []byte("x=1")
+
+	cases := []struct {
+		name             string
+		customDest       bool
+		cleanDestination bool
+		seedDestStale    bool
+	}{
+		{name: "custom destination routes config and keeps plg at well-known", customDest: true},
+		{name: "unset destination falls back to well-known dir", customDest: false},
+		{name: "clean_destination clears the custom destination", customDest: true, cleanDestination: true, seedDestStale: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Redirect the well-known plugins dir (package var) so the .plg
+			// installer and default config dir land under a tempdir. Do NOT
+			// call t.Parallel: pluginsDir is a package-level var.
+			base := t.TempDir()
+			orig := pluginsDir
+			pluginsDir = base
+			t.Cleanup(func() { pluginsDir = orig })
+
+			// Stage a classic plugin backup: the installer plus a config.tar
+			// holding the config tree (CompressionNone so findArchive finds a
+			// plain "config.tar").
+			sourceDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(sourceDir, pluginName+".plg"), plgBody, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfgSrc := t.TempDir()
+			if err := os.WriteFile(filepath.Join(cfgSrc, "config.toml"), configBody, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := tarDirectory(context.Background(), cfgSrc, filepath.Join(sourceDir, "config.tar"), nil, CompressionNone); err != nil {
+				t.Fatal(err)
+			}
+
+			// Resolve where the config dir must land and build the item.
+			var wantConfigDir string
+			settings := map[string]any{}
+			if tc.customDest {
+				dest := t.TempDir()
+				wantConfigDir = dest
+				if tc.seedDestStale {
+					if err := os.WriteFile(filepath.Join(dest, "stale.txt"), []byte("stale"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				settings["restore_destination"] = dest
+			} else {
+				wantConfigDir = filepath.Join(base, pluginName)
+			}
+			if tc.cleanDestination {
+				settings["clean_destination"] = true
+			}
+
+			h := &PluginHandler{}
+			item := BackupItem{Name: pluginName, Type: "plugin", Settings: settings}
+			if err := h.Restore(context.Background(), item, sourceDir, func(string, int, string) {}); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
+
+			// Config lands in the resolved config dir.
+			if got, err := os.ReadFile(filepath.Join(wantConfigDir, "config.toml")); err != nil { // #nosec G304 — test-controlled tempdir
+				t.Errorf("config should be restored to %s: %v", wantConfigDir, err)
+			} else if string(got) != string(configBody) {
+				t.Errorf("restored config content mismatch: got %q", got)
+			}
+
+			// The .plg installer always stays at the well-known location
+			// (parity with RestoreChunked / restorePluginInstaller).
+			if got, err := os.ReadFile(filepath.Join(base, pluginName+".plg")); err != nil { // #nosec G304 — test-controlled tempdir
+				t.Errorf(".plg should be restored to the well-known location: %v", err)
+			} else if !bytes.Equal(got, plgBody) {
+				t.Errorf("restored .plg content mismatch: got %q", got)
+			}
+
+			if tc.customDest {
+				// Config must NOT land under the well-known dir.
+				if _, err := os.Stat(filepath.Join(base, pluginName, "config.toml")); !os.IsNotExist(err) {
+					t.Errorf("config must not be written to the well-known dir when restore_destination is set (err=%v)", err)
+				}
+				if tc.seedDestStale {
+					if _, err := os.Stat(filepath.Join(wantConfigDir, "stale.txt")); !os.IsNotExist(err) {
+						t.Errorf("stale.txt should have been cleared from the custom destination (err=%v)", err)
+					}
+				}
+			}
+		})
+	}
 }

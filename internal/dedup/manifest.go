@@ -25,12 +25,17 @@ type Manifest struct {
 
 // ManifestEntry is one path's metadata + chunks. For directories, Chunks is
 // nil and IsDir is true. For regular files, Chunks lists the content chunks
-// in order; concatenating their plaintexts reproduces the file body.
+// in order; concatenating their plaintexts reproduces the file body. IsFile
+// marks a single-file payload recorded directly on the entry (currently a
+// container file-based bind mount): its Chunks are the file's own data
+// chunks, NOT a sub-manifest ID like the directory __vol__ entries, so
+// restore writes them to one file instead of a MkdirAll + tree.
 type ManifestEntry struct {
 	Mode    uint32 `json:"mode"`
 	ModTime string `json:"modtime"` // RFC3339
 	Size    int64  `json:"size"`
 	IsDir   bool   `json:"is_dir,omitempty"`
+	IsFile  bool   `json:"is_file,omitempty"`
 	Chunks  []ID   `json:"chunks,omitempty"`
 }
 

@@ -196,13 +196,21 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := os.MkdirAll(destPath, 0750); err != nil {
-		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
-	}
-
 	// Partial-restore filter from the file-picker. nil = extract everything
 	// (the legacy whole-archive path).
 	include := extractRestoreFilePaths(item.Settings)
+
+	// Whole-item restores land on a clean directory (issue #321): clear
+	// pre-existing contents first. Partial (file-picker) restores merge.
+	if item.Settings["clean_destination"] == true && len(include) == 0 {
+		if err := clearRestoreTarget(ctx, destPath); err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(destPath, 0750); err != nil {
+		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
+	}
 
 	if err := untarDirectoryFiltered(ctx, archivePath, destPath, include); err != nil {
 		return fmt.Errorf("extracting to %s: %w", destPath, err)
@@ -223,8 +231,8 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 // log line; the run continues. Directories are recorded with their permission
 // bits so Restore can recreate them with the same mode. Empty files produce
 // a manifest entry with zero chunks (not an error).
-func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
-	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, progress)
+func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
+	m, totalBytes, skipped, err := h.buildChunkedManifest(ctx, item, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, err
 	}
@@ -247,7 +255,7 @@ func (h *FolderHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 // out-of-tree data (e.g. PluginHandler's .plg installer) to the manifest
 // before the single PutManifest. Returns the manifest, total bytes chunked,
 // and the number of inaccessible paths that were skipped.
-func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
+func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.Manifest, int64, int, error) {
 	srcPath, _ := item.Settings["path"].(string)
 	if srcPath == "" {
 		return dedup.Manifest{}, 0, 0, fmt.Errorf("folder: missing path setting")
@@ -327,10 +335,23 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 			log.Printf("engine: skipping non-regular file %s (mode %v)", rel, info.Mode())
 			return nil
 		}
-		// Skip files whose mtime is not after the changed_since reference.
-		// Consistent with pathChangedSince and tarDirectoryFiltered.
-		// Directory entries are still recorded above for restore structure.
-		if hasChangedSince && !info.ModTime().After(changedSince) {
+		// changed_since filtering is ONLY applied when a parent manifest is
+		// supplied (differential/incremental) so an unchanged file can be
+		// carried forward from the parent instead of being omitted — keeping
+		// the resulting manifest COMPLETE for single-point restore. Deleted
+		// files are never walked, so they are not carried forward and
+		// deletions still take effect (issue #320).
+		//
+		// Without a parent (a full backup, a newly-added item, or a missing
+		// parent manifest), there is nothing to carry forward from, so
+		// changed_since is ignored and the tree is chunked FULLY. Applying the
+		// filter with a nil parent would silently drop every file whose mtime
+		// predates the reference — the literal "new items missing" data loss
+		// class from issue #320.
+		if parent != nil && hasChangedSince && !info.ModTime().After(changedSince) {
+			if pe, ok := parent.Files[rel]; ok {
+				m.Files[rel] = pe
+			}
 			return nil
 		}
 		warnIfSparse(rel, info)
@@ -377,6 +398,17 @@ func (h *FolderHandler) buildChunkedManifest(ctx context.Context, item BackupIte
 // fetched in order and concatenated; mtime is preserved via os.Chtimes.
 // Empty files (zero chunks) are created as zero-byte files.
 func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, manifestID dedup.ID, destPath string, progress ProgressFunc) error {
+	// Normalize and validate the destination before the destructive clear
+	// below (and before every safepath.JoinUnderBase) so a whole-item restore
+	// never deletes an un-vetted path — matching the classic FolderHandler.
+	// Restore path. Idempotent on an already-normalized path, so the
+	// container/plugin callers that pre-normalize are unaffected.
+	normalizedDestPath, err := normalizeRestorePath(destPath)
+	if err != nil {
+		return err
+	}
+	destPath = normalizedDestPath
+
 	m, err := repo.GetManifest(manifestID)
 	if err != nil {
 		return err
@@ -391,7 +423,14 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	// Honour the partial-restore file picker: when restore_file_paths is
 	// set, only reconstruct the selected entries (and descendants of any
 	// selected directory) — mirroring untarDirectoryFiltered's semantics.
-	include := newIncludeSet(extractRestoreFilePaths(item.Settings))
+	restoreFilePaths := extractRestoreFilePaths(item.Settings)
+	include := newIncludeSet(restoreFilePaths)
+
+	if item.Settings["clean_destination"] == true && len(restoreFilePaths) == 0 {
+		if err := clearRestoreTarget(ctx, destPath); err != nil {
+			return err
+		}
+	}
 
 	var dirs, files []string
 	for p, e := range m.Files {

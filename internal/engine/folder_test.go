@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -249,7 +250,7 @@ func TestFolderChunkedRoundTrip(t *testing.T) {
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func TestFolderChunkedRestoresReservedName(t *testing.T) {
 	h := &FolderHandler{}
 	item := BackupItem{Name: "reserved", Type: "folder", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,14 +336,14 @@ func TestFolderChunkedDedupSkipsRepeats(t *testing.T) {
 	defer cleanup()
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
-	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+	if _, err := h.BackupChunked(context.Background(), item, r, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	after1 := r.Stats().TotalChunks
-	if _, err := h.BackupChunked(context.Background(), item, r, nil); err != nil {
+	if _, err := h.BackupChunked(context.Background(), item, r, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Flush(); err != nil {
@@ -369,7 +370,7 @@ func TestFolderChunkedSkipsNonRegularFiles(t *testing.T) {
 	defer cleanup()
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +422,7 @@ func TestFolderChunkedHonoursExclusions(t *testing.T) {
 			"exclude_paths": []string{"*.log", "logs"},
 		},
 	}
-	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +536,7 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 			Type:     "folder",
 			Settings: map[string]any{"path": linkDir},
 		}
-		manifestID, err := h.BackupChunked(ctx, item, r, nil)
+		manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 		if err != nil {
 			t.Fatalf("chunked backup: %v", err)
 		}
@@ -555,4 +556,233 @@ func TestFolderBackupFollowsSymlinkSource(t *testing.T) {
 			t.Errorf("manifest missing subdir/file2.txt")
 		}
 	})
+}
+
+// TestFolderRestoreClearsStaleFiles verifies a whole-item folder restore —
+// both the classic tar path and the dedup chunked path — replaces the target
+// directory's contents rather than merging with stale pre-existing files
+// (issue #321).
+func TestFolderRestoreClearsStaleFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{name: "classic", run: testFolderClassicRestoreClearsStale},
+		{name: "chunked", run: testFolderChunkedRestoreClearsStale},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
+}
+
+func testFolderClassicRestoreClearsStale(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &FolderHandler{}
+	dest := t.TempDir()
+	progress := func(string, int, string) {}
+	item := BackupItem{
+		Name:        "test-folder",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), item, dest, progress); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	// Restore target already holds a stale file that must be cleared.
+	restoreDest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(restoreDest, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreItem := BackupItem{
+		Name: "test-folder",
+		Type: "folder",
+		Settings: map[string]any{
+			"restore_destination": restoreDest,
+			"clean_destination":   true,
+		},
+	}
+	if err := h.Restore(context.Background(), restoreItem, dest, progress); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(restoreDest, "keep.txt")); err != nil {
+		t.Errorf("restore missing keep.txt: %v", err)
+	} else if string(data) != "fresh" {
+		t.Errorf("keep.txt content mismatch: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(restoreDest, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
+}
+
+func testFolderChunkedRestoreClearsStale(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "keep.txt"), []byte("fresh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
+	ctx := context.Background()
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreItem := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"clean_destination": true}}
+	if err := h.RestoreChunked(ctx, restoreItem, r, manifestID, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(dst, "keep.txt")); err != nil {
+		t.Errorf("restore missing keep.txt: %v", err)
+	} else if string(data) != "fresh" {
+		t.Errorf("keep.txt content mismatch: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
+}
+
+// TestFolderChainRestoreClearsOnlyBaseStep encodes "clear exactly once" at the
+// engine level (issue #321, Gap A): a classic incremental folder chain must
+// clear the target only before the base step, then let subsequent overlay
+// steps replay on top. The base restore clears a pre-existing stale file, the
+// increment restore must NOT clear away the base file, and the final target
+// holds both the base file and the increment file with the stale file gone.
+//
+// This models the runner's restoreItemChain loop (base step passes
+// cleanDestination=true, later steps false) by driving FolderHandler.Restore
+// directly, so it covers the handler's clear-once behaviour without a runner
+// harness. It does not exercise the runner's i==0 flag computation itself.
+func TestFolderChainRestoreClearsOnlyBaseStep(t *testing.T) {
+	src := t.TempDir()
+
+	// base.txt is the base-full file, mtime firmly in the past so it is
+	// excluded from the increment archive.
+	basePath := filepath.Join(src, "base.txt")
+	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	baseTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(basePath, baseTime, baseTime); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &FolderHandler{}
+	progress := func(string, int, string) {}
+
+	// Base full backup.
+	baseDest := t.TempDir()
+	baseItem := BackupItem{
+		Name:        "chain",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), baseItem, baseDest, progress); err != nil {
+		t.Fatalf("base backup: %v", err)
+	}
+
+	// Increment: add inc.txt after the changed_since reference.
+	changedSince := time.Now().Add(-time.Hour)
+	incPath := filepath.Join(src, "inc.txt")
+	if err := os.WriteFile(incPath, []byte("inc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	incTime := time.Now()
+	if err := os.Chtimes(incPath, incTime, incTime); err != nil {
+		t.Fatal(err)
+	}
+
+	incDest := t.TempDir()
+	incItem := BackupItem{
+		Name:        "chain",
+		Type:        "folder",
+		Settings:    map[string]any{"path": src, "changed_since": changedSince.Format(time.RFC3339)},
+		Compression: CompressionGzip,
+	}
+	if _, err := h.Backup(context.Background(), incItem, incDest, progress); err != nil {
+		t.Fatalf("increment backup: %v", err)
+	}
+
+	// Restore target with a stale file that must be cleared on the base step.
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "stale.txt"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Restore the chain: the base step clears (clean_destination=true), the
+	// increment step must NOT clear (clean_destination unset) so the overlay
+	// survives.
+	steps := []struct {
+		name      string
+		item      BackupItem
+		sourceDir string
+	}{
+		{
+			name: "base step clears stale",
+			item: BackupItem{
+				Name: "chain",
+				Type: "folder",
+				Settings: map[string]any{
+					"restore_destination": target,
+					"clean_destination":   true,
+				},
+			},
+			sourceDir: baseDest,
+		},
+		{
+			name: "increment step preserves overlay",
+			item: BackupItem{
+				Name: "chain",
+				Type: "folder",
+				Settings: map[string]any{
+					"restore_destination": target,
+				},
+			},
+			sourceDir: incDest,
+		},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			if err := h.Restore(context.Background(), st.item, st.sourceDir, progress); err != nil {
+				t.Fatalf("%s restore: %v", st.name, err)
+			}
+		})
+	}
+
+	// Overlay preserved: base file still present after the increment step.
+	if data, err := os.ReadFile(filepath.Join(target, "base.txt")); err != nil {
+		t.Errorf("base.txt missing after chain (increment step must not clear): %v", err)
+	} else if string(data) != "base" {
+		t.Errorf("base.txt content mismatch: %q", data)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "inc.txt")); err != nil {
+		t.Errorf("inc.txt missing after chain: %v", err)
+	} else if string(data) != "inc" {
+		t.Errorf("inc.txt content mismatch: %q", data)
+	}
+	// The pre-existing stale file is gone.
+	if _, err := os.Stat(filepath.Join(target, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been cleared, stat err = %v", err)
+	}
 }

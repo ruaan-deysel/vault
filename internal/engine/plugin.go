@@ -189,11 +189,29 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	// Step 2: Restore config directory.
 	progress(item.Name, 60, "restoring config")
 	if configArchive, err := findArchive(sourceDir, "config.tar"); err == nil {
+		// Honour a custom restore destination (parity with RestoreChunked and
+		// FolderHandler.Restore): the destination IS the config directory, so
+		// the archive contents land directly inside it. Falls back to the
+		// well-known /boot/config/plugins/<name>/ directory when unset.
 		configDir := pluginPath(pluginName)
+		if rd, _ := item.Settings["restore_destination"].(string); rd != "" {
+			normalized, err := normalizeRestorePath(rd)
+			if err != nil {
+				return err
+			}
+			configDir = normalized
+		}
+		include := extractRestoreFilePaths(item.Settings)
+		// Whole-item restores clear the RESOLVED config directory first
+		// (issue #321); partial (file-picker) restores merge.
+		if item.Settings["clean_destination"] == true && len(include) == 0 {
+			if err := clearRestoreTarget(ctx, configDir); err != nil {
+				return err
+			}
+		}
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
-		include := extractRestoreFilePaths(item.Settings)
 		if err := untarDirectoryFiltered(ctx, configArchive, configDir, include); err != nil { // untarDirectoryFiltered inherits Zip Slip (CWE-22) protection via joinArchiveTarget + resolveWithinBase
 			return fmt.Errorf("restoring plugin config: %w", err)
 		}
@@ -225,7 +243,7 @@ func pluginPlgFilePath(name string) string {
 // When no .plg file is present (a plugin without an installer, or tests) the
 // manifest holds only the config files, exactly as the folder backup produced
 // before this change, so existing restore points are unaffected.
-func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	src, _ := item.Settings["path"].(string)
 	if src == "" {
 		src = pluginPath(item.Name)
@@ -235,7 +253,7 @@ func (h *PluginHandler) BackupChunked(ctx context.Context, item BackupItem, repo
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: map[string]any{"path": src}}
 	fh := &FolderHandler{}
-	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, progress)
+	m, _, _, err := fh.buildChunkedManifest(ctx, proxy, repo, parent, progress)
 	if err != nil {
 		return dedup.ID{}, fmt.Errorf("plugin: chunking config for %q: %w", item.Name, err)
 	}
@@ -285,6 +303,12 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	proxySettings := map[string]any{"path": destPath}
 	if rfp := extractRestoreFilePaths(item.Settings); rfp != nil {
 		proxySettings["restore_file_paths"] = rfp
+	}
+	// Propagate the whole-item clean-destination signal (issue #321) so a
+	// full restore wipes the plugin's config directory before re-extracting,
+	// matching ContainerHandler.RestoreChunked's volume clearing.
+	if item.Settings["clean_destination"] == true {
+		proxySettings["clean_destination"] = true
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
