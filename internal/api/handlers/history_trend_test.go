@@ -292,3 +292,119 @@ func TestTrendMetricDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestTrendInvalidPeriod(t *testing.T) {
+	cases := []struct {
+		name   string
+		period string
+		want   int
+	}{
+		{name: "rejects unknown period", period: "bogus", want: http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newTestDB(t)
+			h := NewHistoryHandler(d)
+			w := httptest.NewRecorder()
+			h.Trend(w, newReq(http.MethodGet, "/api/v1/history/trend?period="+tc.period, nil))
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+// seedTrendRun inserts a run for jobID and pins its status, size, start and
+// completion so the trend handler sees deterministic input. A non-positive
+// duration leaves completed_at NULL (an imported/zero-duration run).
+func seedTrendRun(t *testing.T, d *db.DB, jobID int64, status string, sizeBytes int64, durSec int) {
+	t.Helper()
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: status, BackupType: "full"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	start := time.Now().Add(-1 * time.Hour).UTC()
+	startStr := start.Format("2006-01-02 15:04:05")
+	if durSec > 0 {
+		end := start.Add(time.Duration(durSec) * time.Second).Format("2006-01-02 15:04:05")
+		if _, err := d.Exec(`UPDATE job_runs SET status = ?, started_at = ?, completed_at = ?, size_bytes = ? WHERE id = ?`,
+			status, startStr, end, sizeBytes, runID); err != nil {
+			t.Fatalf("seed run: %v", err)
+		}
+		return
+	}
+	if _, err := d.Exec(`UPDATE job_runs SET status = ?, started_at = ?, completed_at = NULL, size_bytes = ? WHERE id = ?`,
+		status, startStr, sizeBytes, runID); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+}
+
+// TestTrendExcludesIneligibleRuns pins the handler's filtering of runs that
+// must not shape a trend: non-success statuses, zero-size runs on the size
+// metric, and zero-duration runs on the duration metric.
+func TestTrendExcludesIneligibleRuns(t *testing.T) {
+	cases := []struct {
+		name       string
+		metric     string
+		seed       func(t *testing.T, d *db.DB, jobID int64)
+		wantPoints int
+	}{
+		{
+			name:   "size metric skips non-success runs",
+			metric: "size",
+			seed: func(t *testing.T, d *db.DB, jobID int64) {
+				seedTrendRun(t, d, jobID, "failed", 2048, 60)
+				seedTrendRun(t, d, jobID, "success", 2048, 60)
+			},
+			wantPoints: 1,
+		},
+		{
+			name:   "size metric skips zero-size runs",
+			metric: "size",
+			seed: func(t *testing.T, d *db.DB, jobID int64) {
+				seedTrendRun(t, d, jobID, "success", 0, 60)
+				seedTrendRun(t, d, jobID, "success", 2048, 60)
+			},
+			wantPoints: 1,
+		},
+		{
+			name:   "duration metric skips zero-duration runs",
+			metric: "duration",
+			seed: func(t *testing.T, d *db.DB, jobID int64) {
+				seedTrendRun(t, d, jobID, "success", 2048, 0)
+				seedTrendRun(t, d, jobID, "success", 2048, 60)
+			},
+			wantPoints: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newTestDB(t)
+			destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "trend-filter-" + tc.name, Type: "local", Config: `{}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			jobID, err := d.CreateJob(db.Job{Name: "trend-filter-job-" + tc.name, StorageDestID: destID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.seed(t, d, jobID)
+
+			h := NewHistoryHandler(d)
+			w := httptest.NewRecorder()
+			h.Trend(w, newReq(http.MethodGet, "/api/v1/history/trend?period=7d&metric="+tc.metric, nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Points []json.RawMessage `json:"points"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Points) != tc.wantPoints {
+				t.Fatalf("points = %d, want %d", len(body.Points), tc.wantPoints)
+			}
+		})
+	}
+}
