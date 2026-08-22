@@ -2222,22 +2222,19 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	}
 
 	// 5. Recreate + start container (shared helper with classic restore).
-	//    Pass sourceDir="" because the chunked format has no template.xml
-	//    or image_meta.json sidecars — image_meta seeding above already
-	//    handled the update-status seeding from the manifest entry.
-	// Reassemble the logical dump, if this backup carried one, so the shared
-	// recreate path reloads it exactly as it does for a classic backup.
-	// Without this a dedup restore would silently ignore a dump the backup
-	// went to the trouble of taking.
-	dumpDir, cleanupDump, err := writeChunkedDatabaseDump(repo, m)
+	//    Pass the materialised sidecar dir (template.xml and/or the logical
+	//    database dump) as sourceDir so the shared helper restores the
+	//    template and reloads the dump exactly as for a classic backup.
+	//    image_meta seeding was already handled from the manifest entry above.
+	sidecarDir, cleanupSidecars, err := writeChunkedRestoreSidecars(repo, m)
 	if err != nil {
 		return err
 	}
-	if cleanupDump != nil {
-		defer cleanupDump()
+	if cleanupSidecars != nil {
+		defer cleanupSidecars()
 	}
 
-	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, dumpDir, progress); err != nil {
+	if err := h.recreateAndStartContainer(ctx, item, inspect, restoreDest, sidecarDir, progress); err != nil {
 		return err
 	}
 	if progress != nil {
@@ -2309,56 +2306,72 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 	return nil
 }
 
-// writeChunkedDatabaseDump materialises a manifest's database dump into a
-// temporary directory shaped like a classic backup's source directory, so the
-// shared restore path finds it with no special-casing. Returns an empty path
-// when the manifest carries no dump.
-func writeChunkedDatabaseDump(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
-	entry, ok := m.Files[ContainerDBDumpKey]
-	if !ok || len(entry.Chunks) == 0 {
+// writeChunkedRestoreSidecars materialises the sidecar files a chunked
+// container backup may carry — the logical database dump (plus its replay
+// marker) and the Unraid template.xml — into a temporary directory shaped
+// like a classic backup's source directory, so the shared restore path
+// (recreateAndStartContainer) finds them with no special-casing. Returns an
+// empty path and a nil cleanup when the manifest carries none of them.
+func writeChunkedRestoreSidecars(repo *dedup.Repo, m dedup.Manifest) (string, func(), error) {
+	dumpEntry, hasDump := m.Files[ContainerDBDumpKey]
+	_, hasReplay := m.Files[ContainerDBReplayKey]
+	templateEntry, hasTemplate := m.Files[containerTemplateKey]
+	if !hasDump && !hasReplay && !hasTemplate {
 		return "", nil, nil
 	}
-	dir, err := os.MkdirTemp("", "vault-dbrestore-*")
+	dir, err := os.MkdirTemp("", "vault-restore-sidecars-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("creating database dump directory: %w", err)
+		return "", nil, fmt.Errorf("creating restore sidecar directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
 	// Carry the replay marker across into the classic-shaped directory so the
 	// shared restore path applies the same rule on both.
-	if _, replay := m.Files[ContainerDBReplayKey]; replay {
+	if hasReplay {
 		if err := writeDatabaseReplayMarker(dir); err != nil {
 			cleanup()
 			return "", nil, fmt.Errorf("writing database replay marker: %w", err)
 		}
 	}
+	// Stored uncompressed by the chunked backup, so the dump is written back
+	// under the bare name; findDatabaseDump accepts either form.
+	if hasDump && len(dumpEntry.Chunks) > 0 {
+		if err := writeChunkedEntryToFile(repo, dumpEntry, filepath.Join(dir, DatabaseDumpFile)); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing database dump: %w", err)
+		}
+	}
+	// The template is materialised as template.xml so recreateAndStartContainer
+	// (step 5) writes it back to the well-known templates-user location,
+	// exactly as it does for a classic restore.
+	if hasTemplate && len(templateEntry.Chunks) > 0 {
+		if err := writeChunkedEntryToFile(repo, templateEntry, filepath.Join(dir, "template.xml")); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("writing template xml: %w", err)
+		}
+	}
+	return dir, cleanup, nil
+}
 
-	// Stored uncompressed by the chunked backup, so it is written back under
-	// the bare name; findDatabaseDump accepts either form.
-	path := filepath.Join(dir, DatabaseDumpFile)
+// writeChunkedEntryToFile concatenates an entry's chunks in order into a
+// single file at path. Shared by the dump and template materialisation.
+func writeChunkedEntryToFile(repo *dedup.Repo, entry dedup.ManifestEntry, path string) error {
 	f, err := os.Create(path) // #nosec G304 — path is inside a vault-created temp directory
 	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("creating database dump file: %w", err)
+		return err
 	}
 	for _, id := range entry.Chunks {
 		chunk, err := repo.Get(id)
 		if err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("reading database dump chunk: %w", err)
+			return err
 		}
 		if _, err := f.Write(chunk); err != nil {
 			_ = f.Close()
-			cleanup()
-			return "", nil, fmt.Errorf("writing database dump: %w", err)
+			return err
 		}
 	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("closing database dump: %w", err)
-	}
-	return dir, cleanup, nil
+	return f.Close()
 }
 
 // contextCopy copies from src to dst, checking for context cancellation

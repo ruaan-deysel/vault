@@ -314,3 +314,78 @@ func TestRestoreChunkedVolumes_ClearsStaleFiles(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteChunkedRestoreSidecars verifies the chunked restore sidecar
+// materialisation: a __template entry becomes a template.xml file and a
+// __dbdump__ entry becomes database.sql in a classic-shaped temp dir, so the
+// shared recreateAndStartContainer finds them with no special-casing.
+func TestWriteChunkedRestoreSidecars(t *testing.T) {
+	cases := []struct {
+		name         string
+		template     bool
+		dump         bool
+		replay       bool
+		wantTemplate string
+		wantDump     string
+	}{
+		{name: "template only", template: true, wantTemplate: "<xml/>"},
+		{name: "dump only", dump: true, wantDump: "CREATE TABLE t(x);"},
+		{name: "template and dump and replay marker", template: true, dump: true, replay: true, wantTemplate: "<xml/>", wantDump: "SELECT 1;"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			files := map[string]dedup.ManifestEntry{}
+			if tc.template {
+				id, err := r.Put([]byte(tc.wantTemplate))
+				if err != nil {
+					t.Fatal(err)
+				}
+				files[containerTemplateKey] = dedup.ManifestEntry{Size: int64(len(tc.wantTemplate)), Chunks: []dedup.ID{id}}
+			}
+			if tc.dump {
+				id, err := r.Put([]byte(tc.wantDump))
+				if err != nil {
+					t.Fatal(err)
+				}
+				files[ContainerDBDumpKey] = dedup.ManifestEntry{Size: int64(len(tc.wantDump)), Chunks: []dedup.ID{id}}
+			}
+			if tc.replay {
+				files[ContainerDBReplayKey] = dedup.ManifestEntry{}
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+
+			dir, cleanupDir, err := writeChunkedRestoreSidecars(r, dedup.Manifest{Files: files})
+			if err != nil {
+				t.Fatalf("writeChunkedRestoreSidecars() error = %v", err)
+			}
+			defer cleanupDir()
+
+			if tc.template {
+				got, err := os.ReadFile(filepath.Join(dir, "template.xml"))
+				if err != nil {
+					t.Errorf("template.xml not materialised: %v", err)
+				} else if string(got) != tc.wantTemplate {
+					t.Errorf("template.xml = %q, want %q", got, tc.wantTemplate)
+				}
+			}
+			if tc.dump {
+				got, err := os.ReadFile(filepath.Join(dir, DatabaseDumpFile))
+				if err != nil {
+					t.Errorf("database.sql not materialised: %v", err)
+				} else if string(got) != tc.wantDump {
+					t.Errorf("database.sql = %q, want %q", got, tc.wantDump)
+				}
+			}
+			if tc.replay {
+				if _, err := os.Stat(filepath.Join(dir, DatabaseReplayMarker)); err != nil {
+					t.Errorf("replay marker not materialised: %v", err)
+				}
+			}
+		})
+	}
+}
