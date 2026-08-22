@@ -367,9 +367,9 @@
         </div>
       </div>
       {#if trendMetric === 'duration'}
-        <DurationChart buckets={trendData.points} bucket={trendData.bucket} anomalies={anomalyState.openList} />
+        <DurationChart buckets={trendData.points} bucket={trendData.bucket} />
       {:else}
-        <SizeChart buckets={trendData.points} bucket={trendData.bucket} anomalies={anomalyState.openList} />
+        <SizeChart buckets={trendData.points} bucket={trendData.bucket} />
       {/if}
 
       <!-- Date-grouped timeline -->
