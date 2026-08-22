@@ -97,3 +97,42 @@ func TestBackupItem_FolderHappyPath(t *testing.T) {
 		t.Errorf("expected at least one checksum, got 0")
 	}
 }
+
+// TestBackupItem_ChunkedVerify verifies job.VerifyBackup is honoured on dedup
+// destinations instead of being silently dropped: with verify=true the chunked
+// path records a non-empty checksum (so the restore point is marked verified),
+// and with verify=false it records none.
+func TestBackupItem_ChunkedVerify(t *testing.T) {
+	cases := []struct {
+		name          string
+		verify        bool
+		wantChecksums bool
+	}{
+		{name: "verify enabled records a checksum", verify: true, wantChecksums: true},
+		{name: "verify disabled records none", verify: false, wantChecksums: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, database, storageDir := setupTestRunner(t)
+			r.serverKey = testServerKey()
+			dest := makeDedupDest(t, database, storageDir)
+
+			srcDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(srcDir, "a.txt"), []byte("hello"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			item := engine.BackupItem{Name: "folder1", Type: "folder", Settings: map[string]any{"path": srcDir}}
+
+			_, checksums, err := r.backupItem(context.Background(), item, dest, "rp", tc.verify, "", "none", 1, nil)
+			if err != nil {
+				t.Fatalf("backupItem: %v", err)
+			}
+			if tc.wantChecksums && len(checksums) == 0 {
+				t.Errorf("verify=true should record a checksum, got none")
+			}
+			if !tc.wantChecksums && len(checksums) != 0 {
+				t.Errorf("verify=false should record no checksums, got %d", len(checksums))
+			}
+		})
+	}
+}

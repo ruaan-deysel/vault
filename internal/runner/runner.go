@@ -2216,7 +2216,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 			return nil, nil, err
 		}
 		if chunked, ok := handler.(engine.ChunkedHandler); ok {
-			return r.backupItemChunked(ctx, item, dest, parentRP, chunked)
+			return r.backupItemChunked(ctx, item, dest, parentRP, chunked, verify)
 		}
 		// Fall through to classic tar for non-chunked handlers (VM, ZFS).
 	}
@@ -2239,7 +2239,7 @@ func (r *Runner) backupItem(ctx context.Context, item engine.BackupItem, dest db
 // handler's BackupChunked, flushes any pending pack, and returns a
 // BackupResult whose Meta carries the manifest ID for the runner to
 // persist on the resulting restore_points row.
-func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler) (*engine.BackupResult, map[string]string, error) {
+func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler, verify bool) (*engine.BackupResult, map[string]string, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
@@ -2304,6 +2304,18 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 		return nil, nil, fmt.Errorf("repo flush: %w", err)
 	}
 
+	// Honour job.VerifyBackup on dedup destinations (parity with the classic
+	// upload path, which re-reads every uploaded file and re-checks SHA-256).
+	// The chunk store is content-addressed + GCM-authenticated, so re-reading
+	// the manifest closure catches truncation/corruption immediately after
+	// write — the same guarantee the classic path provides. A failure fails
+	// the item rather than being silently dropped.
+	if verify {
+		if err := engine.VerifyDedupClosure(ctx, repo, manifestID); err != nil {
+			return nil, nil, fmt.Errorf("verify dedup: %w", err)
+		}
+	}
+
 	stats := repo.Stats()
 	itemLogical := repo.SessionLogicalBytes()
 	log.Printf("runner: dedup item=%q manifest=%x chunks_total=%d packs_total=%d session_logical=%dB physical=%dB",
@@ -2333,7 +2345,14 @@ func (r *Runner) backupItemChunked(ctx context.Context, item engine.BackupItem, 
 			"dedup_packs":    stats.TotalPacks,
 		},
 	}
-	return result, nil, nil
+	// Report a synthetic checksum so the restore-point metadata records
+	// verified=true (the classic path stores per-file SHA-256 hex; dedup has
+	// no files, so the manifest ID stands in as the item's content reference).
+	var checksums map[string]string
+	if verify {
+		checksums = map[string]string{"__manifest:" + item.Name: hex.EncodeToString(manifestID[:])}
+	}
+	return result, checksums, nil
 }
 
 // stageItemLocally creates a temp directory and runs the appropriate engine
