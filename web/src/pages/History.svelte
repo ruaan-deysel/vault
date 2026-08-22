@@ -51,8 +51,16 @@
   let trendMetric = $state('size')
   const TREND_PERIODS = [['7d', '7d'], ['30d', '30d'], ['90d', '90d'], ['6m', '6m'], ['1y', '1y']]
 
+  let trendRequestGeneration = $state(0)
+
   async function loadTrend() {
-    try { trendData = await api.getHistoryTrend(trendPeriod, trendMetric) } catch { /* keep last */ }
+    const generation = ++trendRequestGeneration
+    const period = trendPeriod
+    const metric = trendMetric
+    try {
+      const result = await api.getHistoryTrend(period, metric)
+      if (generation === trendRequestGeneration) trendData = result
+    } catch { /* keep last */ }
   }
 
   function selectTrendPeriod(val) {

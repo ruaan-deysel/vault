@@ -130,8 +130,7 @@
     </div>
 
     <div class="relative"
-      onmouseleave={() => hoveredIndex = -1}
-      role="img" aria-label="Job duration trend chart">
+      onmouseleave={() => hoveredIndex = -1}>
       <svg aria-hidden="true" viewBox="0 0 {width} {height}" class="w-full h-auto" preserveAspectRatio="xMidYMid meet">
         <g transform="translate({padding.left},{padding.top})">
           <!-- Horizontal grid lines + y-axis value labels, staggered at round
@@ -147,12 +146,16 @@
           <!-- One bar per bucket; height is proportional to the bucket's
                average run duration. -->
           {#each dataPoints as p, i (i)}
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
             <g
               role="img"
               aria-label="{formatDateShort(p.date)}: {formatDuration(p.duration)}"
+              tabindex="0"
               opacity={hoveredIndex === i ? 1 : 0.85}
               class="transition-opacity duration-150 cursor-pointer"
               onmouseenter={() => hoveredIndex = i}
+              onfocus={() => hoveredIndex = i}
+              onblur={() => hoveredIndex = -1}
             >
               <!-- Invisible full-height hit area so hovering anywhere along
                    the bar's column works. -->
@@ -197,6 +200,26 @@
         </div>
       {/if}
     </div>
+
+    <table class="sr-only">
+      <caption>Job duration trend by date</caption>
+      <thead>
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Average duration</th>
+          <th scope="col">Runs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each dataPoints as p, i (i)}
+          <tr>
+            <td>{formatDateShort(p.date)}</td>
+            <td>{formatDuration(p.duration)}</td>
+            <td>{p.runCount}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
 
     <div class="flex items-center justify-between mt-2 text-xs text-text-dim">
       <span>{dataPoints.length} data points</span>
