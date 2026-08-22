@@ -1,11 +1,14 @@
 package runner
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,6 +99,140 @@ func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {
 	assertFileContents(t, tmpDir, "config.json", "child-config")
 	assertFileContents(t, tmpDir, "image.tar", "base-image")
 	assertFileContents(t, tmpDir, "volume_0.tar.gz", "child-volume")
+}
+
+// TestStageContainerChainMerged exercises the container branch of
+// restoreMergedChain's per-step staging + merge (the new code path for
+// issue #320) without requiring a Docker daemon. The full step's volume_0.tar
+// holds old.txt; the differential step's volume_0.tar holds only new.txt. The
+// merged staging dir must contain a single volume_0.tar with BOTH files, so a
+// later ContainerHandler.Restore would restore the complete volume.
+func TestStageContainerChainMerged(t *testing.T) {
+	t.Parallel()
+
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	storageRoot := t.TempDir()
+	storageConfig := fmt.Sprintf(`{"path":%q}`, storageRoot)
+	storageID, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "local",
+		Type:   "local",
+		Config: storageConfig,
+	})
+	if err != nil {
+		t.Fatalf("CreateStorageDestination: %v", err)
+	}
+
+	jobID, err := database.CreateJob(db.Job{
+		Name:            "chain-test",
+		Enabled:         true,
+		BackupTypeChain: "incremental",
+		Compression:     "none",
+		StorageDestID:   storageID,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	adapter, err := storage.NewAdapter("local", storageConfig)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	t.Cleanup(func() { storage.CloseAdapter(adapter) })
+
+	fullTar := tarArchive(t, map[string]string{"old.txt": "old"})
+	diffTar := tarArchive(t, map[string]string{"new.txt": "new"})
+
+	baseChecksums := writeStorageFiles(t, adapter, map[string]string{
+		"chain-test/1_full/my-item/volume_0.tar": string(fullTar),
+	})
+	childChecksums := writeStorageFiles(t, adapter, map[string]string{
+		"chain-test/2_inc/my-item/volume_0.tar": string(diffTar),
+	})
+
+	baseRP := db.RestorePoint{
+		ID:          1,
+		JobID:       jobID,
+		BackupType:  "full",
+		StoragePath: "chain-test/1_full",
+		Metadata:    restorePointMetadata("my-item", baseChecksums),
+		CreatedAt:   time.Now().Add(-time.Hour),
+	}
+	childRP := db.RestorePoint{
+		ID:                   2,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          "chain-test/2_inc",
+		Metadata:             restorePointMetadata("my-item", childChecksums),
+		ParentRestorePointID: 1,
+		CreatedAt:            time.Now(),
+	}
+
+	r := New(database, ws.NewHub(), nil)
+	tmpDir := t.TempDir()
+	reporter := restoreProgressReporter{ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
+
+	mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir)
+	if err != nil {
+		t.Fatalf("stageContainerChainMerged: %v", err)
+	}
+
+	names := tarEntryNames(t, filepath.Join(mergedDir, "volume_0.tar"))
+	for _, want := range []string{"old.txt", "new.txt"} {
+		if !names[want] {
+			t.Errorf("merged volume missing %s", want)
+		}
+	}
+}
+
+// tarArchive builds an uncompressed tar archive from a name→content map.
+func tarArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, content := range files {
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// tarEntryNames returns the set of regular-file entry names in an
+// uncompressed tar archive.
+func tarEntryNames(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	names := map[string]bool{}
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading tar %s: %v", path, err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			names[hdr.Name] = true
+		}
+	}
+	return names
 }
 
 func TestProtectedRestorePointIDsKeepsAncestors(t *testing.T) {

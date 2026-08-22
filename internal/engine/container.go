@@ -1776,7 +1776,7 @@ const (
 //
 // Like FolderHandler.BackupChunked, repo.Flush is NOT called here — the
 // runner flushes once per backup run after all items complete.
-func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	if repo == nil {
 		return dedup.ID{}, fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1969,7 +1969,10 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
-			// path. Reuses cached pre-check results when available.
+			// path. Reuses cached pre-check results when available. With a
+			// parent manifest, the unchanged volume's sub-manifest reference is
+			// carried forward so the resulting manifest stays complete for
+			// single-point restore (issue #320).
 			if hasChangedSince {
 				changed, cached := volChanges[mnt.Source]
 				if !cached {
@@ -1980,8 +1983,36 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					}
 				}
 				if !changed {
-					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
-					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					log.Printf("engine: chunked: volume %s for %s unchanged since reference — carrying forward parent entry", mnt.Source, item.Name)
+					if parent != nil {
+						if pe, ok := parent.Files[key]; ok {
+							m.Files[key] = pe
+							continue
+						}
+					}
+					// No parent to carry forward from (e.g. a full backup with a
+					// changed_since set, or a parent whose manifest is missing this
+					// volume). Chunk the unchanged volume FULLY so the manifest stays
+					// complete. changed_since is deliberately NOT propagated here —
+					// with no parent entry there is nothing to carry forward from,
+					// and the per-file filter would otherwise drop every file
+					// (issue #320).
+					volItem := BackupItem{
+						Name: mnt.Destination,
+						Type: "folder",
+						Settings: map[string]any{
+							"path":          mnt.Source,
+							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
+						},
+					}
+					volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, nil, progress)
+					if vErr != nil {
+						return fmt.Errorf("backup unchanged volume %s: %w", mnt.Destination, vErr)
+					}
+					m.Files[key] = dedup.ManifestEntry{
+						Size:   0,
+						Chunks: []dedup.ID{volManifestID},
+					}
 					continue
 				}
 			}
@@ -1993,12 +2024,24 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}
-			// Propagate changed_since for per-file filtering inside
-			// FolderHandler.BackupChunked.
-			if hasChangedSince {
+			// Resolve the parent's matching sub-manifest so unchanged files
+			// within a changed volume are carried forward rather than dropped.
+			// changed_since is only propagated when that parent entry exists:
+			// with no parent entry the volume is new to this backup and must be
+			// chunked FULLY (applying changed_since with a nil parent would
+			// drop every unchanged file — issue #320).
+			var volParent *dedup.Manifest
+			if hasChangedSince && parent != nil {
+				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
+					if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
+						volParent = &sub
+					}
+				}
+			}
+			if volParent != nil {
 				volItem.Settings["changed_since"] = item.Settings["changed_since"]
 			}
-			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, volParent, progress)
 			if vErr != nil {
 				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
 			}
