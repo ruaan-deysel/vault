@@ -2297,6 +2297,44 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	return nil
 }
 
+// restoreChunkedFileMount reconstructs a single-file volume at destPath by
+// concatenating the entry's chunks in order. Mirrors the per-file write in
+// FolderHandler.RestoreChunked but targets the whole file mount directly (no
+// leaf MkdirAll), and honours the recorded mode + mtime like the classic
+// untarFile path. Used by restoreChunkedVolumes for single-file bind mounts.
+func restoreChunkedFileMount(ctx context.Context, repo *dedup.Repo, entry dedup.ManifestEntry, destPath string) error {
+	mode := os.FileMode(entry.Mode)
+	if mode == 0 {
+		mode = 0o644
+	}
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — destPath is validated by the caller's normalizeRestorePath
+	if err != nil {
+		return err
+	}
+	for _, cid := range entry.Chunks {
+		if err := ctx.Err(); err != nil {
+			_ = out.Close()
+			return err
+		}
+		body, err := repo.Get(cid)
+		if err != nil {
+			_ = out.Close()
+			return fmt.Errorf("restore file mount chunk: %w", err)
+		}
+		if _, err := out.Write(body); err != nil {
+			_ = out.Close()
+			return err
+		}
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if t, err := time.Parse(time.RFC3339, entry.ModTime); err == nil {
+		_ = os.Chtimes(destPath, t, t)
+	}
+	return nil
+}
+
 // restoreChunkedVolumes restores each __vol__<dest> sub-manifest entry in m
 // to its target directory: the original bind/volume source when restoreDest
 // is empty, or restoreDest/<volume-name> when a custom destination is set
@@ -2327,7 +2365,9 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			log.Printf("engine: chunked restore: %s was skipped at backup time, nothing to restore", k)
 			continue
 		}
-		if len(v.Chunks) == 0 {
+		// An empty-chunks directory entry is malformed; an empty-chunks FILE
+		// entry is a valid zero-byte file mount, so only skip the former here.
+		if !v.IsFile && len(v.Chunks) == 0 {
 			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
 			continue
 		}
@@ -2345,15 +2385,27 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
-		src = normalizedSrc
-		if err := os.MkdirAll(src, 0o750); err != nil {
-			return fmt.Errorf("mkdir volume %s: %w", src, err)
+		if v.IsFile {
+			// Single-file bind mount: write the chunks to ONE file at the
+			// target (creating the parent dir first), mirroring classic
+			// Restore's untarFile branch. clean_destination does NOT apply —
+			// classic file mounts are not cleared either.
+			if err := os.MkdirAll(filepath.Dir(normalizedSrc), 0o750); err != nil {
+				return fmt.Errorf("mkdir parent for %s: %w", normalizedSrc, err)
+			}
+			if err := restoreChunkedFileMount(ctx, repo, v, normalizedSrc); err != nil {
+				return fmt.Errorf("restore file mount %s: %w", dest, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(normalizedSrc, 0o750); err != nil {
+			return fmt.Errorf("mkdir volume %s: %w", normalizedSrc, err)
 		}
 		proxy := BackupItem{Name: dest, Type: "folder"}
 		if cleanDestination {
 			proxy.Settings = map[string]any{"clean_destination": true}
 		}
-		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
+		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], normalizedSrc, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
 	}

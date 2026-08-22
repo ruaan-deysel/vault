@@ -315,6 +315,70 @@ func TestRestoreChunkedVolumes_ClearsStaleFiles(t *testing.T) {
 	}
 }
 
+// TestRestoreChunkedVolumes_FileMount verifies the file-mount restore branch:
+// an __vol__ entry with IsFile: true is written back as a single file at the
+// target path (the bind source when no custom destination), not as a directory
+// tree.
+func TestRestoreChunkedVolumes_FileMount(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileBody string
+	}{
+		{name: "restores file mount as a single file", fileBody: "#!/bin/sh\necho hi\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "hook.sh")
+			if err := os.WriteFile(src, []byte(tt.fileBody), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			entry, err := chunkFileIntoRepo(r, src)
+			if err != nil {
+				t.Fatalf("chunkFileIntoRepo() error = %v", err)
+			}
+			entry.IsFile = true
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+
+			// The bind-mount source IS the restore target when no custom
+			// destination is set.
+			target := filepath.Join(t.TempDir(), "restored-hook.sh")
+			inspect := inspectFromJSON(t, fmt.Sprintf(`{
+				"Name": "/test-container",
+				"Config": {"Image": "nginx:latest"},
+				"Mounts": [{"Type":"bind","Source":%q,"Destination":"/hook"}]
+			}`, target))
+
+			m := dedup.Manifest{
+				Files: map[string]dedup.ManifestEntry{
+					containerVolPrefix + "/hook": entry,
+				},
+			}
+
+			if err := restoreChunkedVolumes(context.Background(), m, r, inspect, "", nil, false); err != nil {
+				t.Fatalf("restoreChunkedVolumes() error = %v", err)
+			}
+
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("expected restored file at %s: %v", target, err)
+			}
+			if string(got) != tt.fileBody {
+				t.Errorf("restored file content = %q, want %q", got, tt.fileBody)
+			}
+			if info, err := os.Stat(target); err != nil || info.IsDir() {
+				t.Errorf("restored target should be a regular file, not a directory (stat err=%v)", err)
+			}
+		})
+	}
+}
+
 // TestWriteChunkedRestoreSidecars verifies the chunked restore sidecar
 // materialisation: a __template entry becomes a template.xml file and a
 // __dbdump__ entry becomes database.sql in a classic-shaped temp dir, so the
