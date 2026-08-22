@@ -2076,7 +2076,6 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				if changeErr != nil {
 					return fmt.Errorf("checking template changes: %w", changeErr)
 				}
-				includeTemplate = changed
 				// Carry the parent's template entry forward when the file is
 				// unchanged since the reference (differential), keeping the
 				// manifest complete for single-point restore (issue #320).

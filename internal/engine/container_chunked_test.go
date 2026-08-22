@@ -650,44 +650,55 @@ func TestBackupChunked_CapturesTemplate(t *testing.T) {
 
 	templateBody := []byte(`<?xml version="1.0"?><Container version="2"/>`)
 	templatePath := filepath.Join(templateDir(), "my-test.xml")
-	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(templatePath, templateBody, 0o600); err != nil {
-		t.Fatal(err)
-	}
 
-	mock := newRunningMock(t, false) // Name "/test", bind mount at a temp dir
-	r, _, cleanup := dedup.NewTestRepoForEngine(t)
-	defer cleanup()
+	cases := []struct {
+		name string
+		body []byte
+	}{
+		{name: "template xml is captured", body: templateBody},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(templatePath, tc.body, 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	id, err := (&ContainerHandler{cli: mock}).BackupChunked(context.Background(), BackupItem{
-		Name: "test", Type: "container", Settings: map[string]any{"id": "abc123"},
-	}, r, nil, noopProgress)
-	if err != nil {
-		t.Fatalf("BackupChunked() error = %v", err)
-	}
-	if err := r.Flush(); err != nil {
-		t.Fatalf("Flush() error = %v", err)
-	}
+			mock := newRunningMock(t, false) // Name "/test", bind mount at a temp dir
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
 
-	m, err := r.GetManifest(id)
-	if err != nil {
-		t.Fatalf("GetManifest() error = %v", err)
-	}
-	entry, ok := m.Files[containerTemplateKey]
-	if !ok {
-		t.Fatalf("manifest missing %s entry", containerTemplateKey)
-	}
-	if len(entry.Chunks) != 1 {
-		t.Fatalf("template chunks = %d, want 1", len(entry.Chunks))
-	}
-	got, err := r.Get(entry.Chunks[0])
-	if err != nil {
-		t.Fatalf("Get(template chunk) error = %v", err)
-	}
-	if string(got) != string(templateBody) {
-		t.Errorf("template body = %q, want %q", got, templateBody)
+			id, err := (&ContainerHandler{cli: mock}).BackupChunked(context.Background(), BackupItem{
+				Name: "test", Type: "container", Settings: map[string]any{"id": "abc123"},
+			}, r, nil, noopProgress)
+			if err != nil {
+				t.Fatalf("BackupChunked() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+
+			m, err := r.GetManifest(id)
+			if err != nil {
+				t.Fatalf("GetManifest() error = %v", err)
+			}
+			entry, ok := m.Files[containerTemplateKey]
+			if !ok {
+				t.Fatalf("manifest missing %s entry", containerTemplateKey)
+			}
+			if len(entry.Chunks) != 1 {
+				t.Fatalf("template chunks = %d, want 1", len(entry.Chunks))
+			}
+			got, err := r.Get(entry.Chunks[0])
+			if err != nil {
+				t.Fatalf("Get(template chunk) error = %v", err)
+			}
+			if string(got) != string(tc.body) {
+				t.Errorf("template body = %q, want %q", got, tc.body)
+			}
+		})
 	}
 }
 
@@ -715,19 +726,27 @@ func TestBackupChunked_TemplateCarryForward(t *testing.T) {
 	}
 
 	cases := []struct {
-		name      string
-		body      string
-		mtime     time.Time
-		wantCarry bool
-		wantBody  string
+		name              string
+		body              string
+		mtime             time.Time
+		parentHasTemplate bool
+		wantCarry         bool
+		wantBody          string
 	}{
-		{name: "unchanged template is carried forward", body: "OLD", mtime: changedSince.Add(-time.Hour), wantCarry: true, wantBody: "OLD"},
-		{name: "changed template is re-chunked", body: "NEW", mtime: time.Now(), wantCarry: false, wantBody: "NEW"},
+		{name: "unchanged template is carried forward", body: "OLD", mtime: changedSince.Add(-time.Hour), parentHasTemplate: true, wantCarry: true, wantBody: "OLD"},
+		{name: "changed template is re-chunked", body: "NEW", mtime: time.Now(), parentHasTemplate: true, wantCarry: false, wantBody: "NEW"},
+		{name: "unchanged template with no parent entry is re-chunked", body: "OLD", mtime: changedSince.Add(-time.Hour), parentHasTemplate: false, wantCarry: false, wantBody: "OLD"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Full backup first: template OLD with an old mtime.
-			writeTemplate("OLD", changedSince.Add(-time.Hour))
+			// Full backup first: template OLD with an old mtime (unless the
+			// case models a parent with no __template entry, in which case no
+			// template is written so the parent manifest omits it).
+			if tc.parentHasTemplate {
+				writeTemplate("OLD", changedSince.Add(-time.Hour))
+			} else if err := os.Remove(templatePath); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			r, _, cleanup := dedup.NewTestRepoForEngine(t)
 			defer cleanup()
 
