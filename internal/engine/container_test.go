@@ -693,7 +693,7 @@ func TestContainerChunkedBackupCapturesVolumesAndMeta(t *testing.T) {
 		Settings: map[string]any{"id": "deadbeef"},
 	}
 
-	manifestID, err := h.BackupChunked(context.Background(), item, r, nil)
+	manifestID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -796,7 +796,7 @@ func TestContainerChunkedBackupIncludesVolumesSkipsTmpfs(t *testing.T) {
 	defer cleanup()
 	h := &ContainerHandler{cli: mock}
 	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -872,7 +872,7 @@ func TestContainerChunkedHonoursExclusions(t *testing.T) {
 		},
 	}
 
-	mID, err := h.BackupChunked(context.Background(), item, r, nil)
+	mID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}
@@ -961,7 +961,7 @@ func TestContainerChunkedGCKeepsNestedVolumeData(t *testing.T) {
 	defer cleanup()
 	h := &ContainerHandler{cli: mock}
 	item := BackupItem{Name: "svc", Type: "container", Settings: map[string]any{"id": "deadbeef"}}
-	topID, err := h.BackupChunked(context.Background(), item, r, nil)
+	topID, err := h.BackupChunked(context.Background(), item, r, nil, nil)
 	if err != nil {
 		t.Fatalf("BackupChunked() error = %v", err)
 	}

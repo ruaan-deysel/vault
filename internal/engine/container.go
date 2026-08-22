@@ -1771,7 +1771,7 @@ const (
 //
 // Like FolderHandler.BackupChunked, repo.Flush is NOT called here — the
 // runner flushes once per backup run after all items complete.
-func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, progress ProgressFunc) (dedup.ID, error) {
+func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, repo *dedup.Repo, parent *dedup.Manifest, progress ProgressFunc) (dedup.ID, error) {
 	if repo == nil {
 		return dedup.ID{}, fmt.Errorf("container: dedup repo is nil")
 	}
@@ -1964,7 +1964,28 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
-			// path. Reuses cached pre-check results when available.
+			// path. Reuses cached pre-check results when available. With a
+			// parent manifest, the unchanged volume's sub-manifest reference is
+			// carried forward so the resulting manifest stays complete for
+			// single-point restore (issue #320).
+			// Resolve the parent's matching sub-manifest up front so the
+			// unchanged-volume short-circuit below can route through it
+			// (per-file carry-forward with the stale-mtime fall-through)
+			// instead of copying the parent entry verbatim — the latter
+			// silently drops a NEW file whose mtime predates changed_since
+			// (e.g. cp -a), the literal issue #320 data-loss class. The
+			// len(pe.Chunks) > 0 guard also rejects a pre-PR parent entry
+			// that recorded the volume as the -1 skip sentinel, which must
+			// be re-chunked rather than carried forward.
+			var volParent *dedup.Manifest
+			if hasChangedSince && parent != nil {
+				if pe, ok := parent.Files[key]; ok && len(pe.Chunks) > 0 {
+					if sub, gErr := repo.GetManifest(pe.Chunks[0]); gErr == nil {
+						volParent = &sub
+					}
+				}
+			}
+
 			if hasChangedSince {
 				changed, cached := volChanges[mnt.Source]
 				if !cached {
@@ -1974,11 +1995,39 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 						return fmt.Errorf("checking volume %s changes: %w", mnt.Source, err)
 					}
 				}
-				if !changed {
-					log.Printf("engine: chunked: skipping volume %s for %s: unchanged since reference", mnt.Source, item.Name)
-					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				if !changed && volParent == nil {
+					// The volume looks unchanged AND there is no parent
+					// sub-manifest to carry forward from (a full backup with a
+					// changed_since set, a parent whose manifest is missing
+					// this volume, or a pre-PR parent that recorded it as the
+					// -1 skip sentinel). Chunk FULLY so the manifest stays
+					// complete. changed_since is deliberately NOT propagated
+					// here — with no parent entry there is nothing to carry
+					// forward from, and the per-file filter would otherwise
+					// drop every file (issue #320).
+					log.Printf("engine: chunked: volume %s for %s unchanged since reference — no parent entry to carry forward, chunking fully", mnt.Source, item.Name)
+					volItem := BackupItem{
+						Name: mnt.Destination,
+						Type: "folder",
+						Settings: map[string]any{
+							"path":          mnt.Source,
+							"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
+						},
+					}
+					volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, nil, progress)
+					if vErr != nil {
+						return fmt.Errorf("backup unchanged volume %s: %w", mnt.Destination, vErr)
+					}
+					m.Files[key] = dedup.ManifestEntry{
+						Size:   0,
+						Chunks: []dedup.ID{volManifestID},
+					}
 					continue
 				}
+				// A volume that is unchanged by mtime but still has a parent
+				// sub-manifest falls through: it is re-chunked with volParent
+				// below, which carries forward unchanged files AND chunks any
+				// new stale-mtime file (issue #320).
 			}
 			volItem := BackupItem{
 				Name: mnt.Destination,
@@ -1988,12 +2037,10 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 					"exclude_paths": mapExclusionsToVolume(exclusions, mnt.Destination),
 				},
 			}
-			// Propagate changed_since for per-file filtering inside
-			// FolderHandler.BackupChunked.
-			if hasChangedSince {
+			if volParent != nil {
 				volItem.Settings["changed_since"] = item.Settings["changed_since"]
 			}
-			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, progress)
+			volManifestID, vErr := fh.BackupChunked(ctx, volItem, repo, volParent, progress)
 			if vErr != nil {
 				return fmt.Errorf("backup volume %s: %w", mnt.Destination, vErr)
 			}
