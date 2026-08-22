@@ -190,10 +190,17 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	progress(item.Name, 60, "restoring config")
 	if configArchive, err := findArchive(sourceDir, "config.tar"); err == nil {
 		configDir := pluginPath(pluginName)
+		include := extractRestoreFilePaths(item.Settings)
+		// Whole-item restores clear the config directory first (issue #321);
+		// partial (file-picker) restores merge.
+		if item.Settings["clean_destination"] == true && len(include) == 0 {
+			if err := clearRestoreTarget(ctx, configDir); err != nil {
+				return err
+			}
+		}
 		if err := os.MkdirAll(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
-		include := extractRestoreFilePaths(item.Settings)
 		if err := untarDirectoryFiltered(ctx, configArchive, configDir, include); err != nil { // untarDirectoryFiltered inherits Zip Slip (CWE-22) protection via joinArchiveTarget + resolveWithinBase
 			return fmt.Errorf("restoring plugin config: %w", err)
 		}
@@ -285,6 +292,12 @@ func (h *PluginHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 	proxySettings := map[string]any{"path": destPath}
 	if rfp := extractRestoreFilePaths(item.Settings); rfp != nil {
 		proxySettings["restore_file_paths"] = rfp
+	}
+	// Propagate the whole-item clean-destination signal (issue #321) so a
+	// full restore wipes the plugin's config directory before re-extracting,
+	// matching ContainerHandler.RestoreChunked's volume clearing.
+	if item.Settings["clean_destination"] == true {
+		proxySettings["clean_destination"] = true
 	}
 	proxy := BackupItem{Name: item.Name, Type: "folder", Settings: proxySettings}
 	fh := &FolderHandler{}
