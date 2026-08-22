@@ -3353,7 +3353,7 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 		if err != nil {
 			return err
 		}
-		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100)
+		return r.restoreStagedItem(ctx, chain[len(chain)-1].JobID, itemName, itemType, destination, mergedDir, filePaths, reporter, 40, 100, cleanDestination)
 	}
 
 	for i, rp := range chain {
