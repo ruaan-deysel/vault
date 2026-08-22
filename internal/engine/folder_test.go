@@ -634,7 +634,7 @@ func testFolderChunkedRestoreClearsStale(t *testing.T) {
 	h := &FolderHandler{}
 	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": src}}
 	ctx := context.Background()
-	manifestID, err := h.BackupChunked(ctx, item, r, nil)
+	manifestID, err := h.BackupChunked(ctx, item, r, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
