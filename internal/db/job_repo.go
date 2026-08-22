@@ -620,7 +620,7 @@ func (d *DB) GetJobRunsSince(jobID int64, since time.Time) ([]JobRun, error) {
 	for rows.Next() {
 		var run JobRun
 		if err := rows.Scan(&run.ID, &run.JobID, &run.Status, &run.StartedAt, &run.CompletedAt, &run.SizeBytes); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scanning job run for job %d: %w", jobID, err)
 		}
 		runs = append(runs, run)
 	}

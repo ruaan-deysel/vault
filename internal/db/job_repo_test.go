@@ -733,37 +733,62 @@ func TestUpdateJobItemSettings(t *testing.T) {
 
 func TestGetJobRunsSince_PopulatesCompletedAt(t *testing.T) {
 	t.Parallel()
-	d, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
+	cases := []struct {
+		name    string
+		setNull bool
+		wantDur time.Duration
+	}{
+		{name: "populated completed_at", wantDur: 90 * time.Second},
+		{name: "null completed_at", setNull: true},
 	}
-	defer d.Close() //nolint:errcheck
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, err := Open(":memory:")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			defer d.Close() //nolint:errcheck
 
-	destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: `{"path":"/tmp"}`})
-	jobID, _ := d.CreateJob(Job{Name: "j", Schedule: "@daily", Compression: "none", Encryption: "none", StorageDestID: destID})
+			destID, _ := d.CreateStorageDestination(StorageDestination{Name: "d", Type: "local", Config: `{"path":"/tmp"}`})
+			jobID, _ := d.CreateJob(Job{Name: "j", Schedule: "@daily", Compression: "none", Encryption: "none", StorageDestID: destID})
 
-	runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "success", BackupType: "full"})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	start := time.Now().Add(-2 * time.Hour).UTC()
-	end := start.Add(90 * time.Second)
-	if _, err := d.Exec(`UPDATE job_runs SET started_at = ?, completed_at = ?, size_bytes = 100 WHERE id = ?`,
-		start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"), runID); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+			runID, err := d.CreateJobRun(JobRun{JobID: jobID, Status: "success", BackupType: "full"})
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			start := time.Now().Add(-2 * time.Hour).UTC()
+			if tc.setNull {
+				if _, err := d.Exec(`UPDATE job_runs SET started_at = ? WHERE id = ?`,
+					start.Format("2006-01-02 15:04:05"), runID); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			} else {
+				end := start.Add(tc.wantDur)
+				if _, err := d.Exec(`UPDATE job_runs SET started_at = ?, completed_at = ?, size_bytes = 100 WHERE id = ?`,
+					start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"), runID); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
 
-	got, err := d.GetJobRunsSince(jobID, time.Now().AddDate(0, 0, -30))
-	if err != nil {
-		t.Fatalf("since: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d runs, want 1", len(got))
-	}
-	if got[0].CompletedAt == nil {
-		t.Fatalf("completed_at not populated")
-	}
-	if got[0].CompletedAt.Sub(got[0].StartedAt) != 90*time.Second {
-		t.Errorf("duration = %s, want 90s", got[0].CompletedAt.Sub(got[0].StartedAt))
+			got, err := d.GetJobRunsSince(jobID, time.Now().AddDate(0, 0, -30))
+			if err != nil {
+				t.Fatalf("since: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("got %d runs, want 1", len(got))
+			}
+			if tc.setNull {
+				if got[0].CompletedAt != nil {
+					t.Fatalf("completed_at = %v, want nil", got[0].CompletedAt)
+				}
+			} else {
+				if got[0].CompletedAt == nil {
+					t.Fatalf("completed_at not populated")
+				}
+				if got[0].CompletedAt.Sub(got[0].StartedAt) != tc.wantDur {
+					t.Errorf("duration = %s, want %s", got[0].CompletedAt.Sub(got[0].StartedAt), tc.wantDur)
+				}
+			}
+		})
 	}
 }
