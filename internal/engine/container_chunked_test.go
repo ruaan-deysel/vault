@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -798,5 +799,130 @@ func TestBackupChunked_TemplateCarryForward(t *testing.T) {
 				t.Errorf("template body = %q, want %q", got, tc.wantBody)
 			}
 		})
+	}
+}
+
+// TestBackupChunked_FileBindMount is the parity regression test for file-based
+// bind mounts: the classic path detects a regular-file mount source via
+// os.Lstat and archives it as a single file, while BackupChunked handed every
+// volume to FolderHandler.BackupChunked → os.OpenRoot, which fails on a
+// non-directory. The chunked path now chunks the single file and records it
+// with IsFile: true so restore writes it back as one file.
+func TestBackupChunked_FileBindMount(t *testing.T) {
+	fileSrc := filepath.Join(t.TempDir(), "hook.sh")
+	const fileBody = "#!/bin/sh\necho hi\n"
+	if err := os.WriteFile(fileSrc, []byte(fileBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/file-mount",
+				Config: &containertypes.Config{Image: "nginx:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: fileSrc, Destination: "/hook"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	id, err := (&ContainerHandler{cli: mock}).BackupChunked(context.Background(), BackupItem{
+		Name: "file-mount", Type: "container", Settings: map[string]any{"id": "abc123"},
+	}, r, nil, noopProgress)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	m, err := r.GetManifest(id)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+	entry, ok := m.Files[containerVolPrefix+"/hook"]
+	if !ok {
+		t.Fatalf("manifest missing %s/hook entry", containerVolPrefix)
+	}
+	if entry.Size == volumeSkippedSize {
+		t.Fatalf("file mount was skipped (Size == volumeSkippedSize)")
+	}
+	if !entry.IsFile {
+		t.Fatalf("entry.IsFile = false, want true for a file-based bind mount")
+	}
+	if len(entry.Chunks) == 0 {
+		t.Fatalf("file mount entry has no chunks")
+	}
+	got, err := r.Get(entry.Chunks[0])
+	if err != nil {
+		t.Fatalf("Get(file chunk) error = %v", err)
+	}
+	if string(got) != fileBody {
+		t.Errorf("file mount content = %q, want %q", got, fileBody)
+	}
+}
+
+// TestBackupChunked_SkipsSocketMount verifies the chunked path skips a
+// socket/pipe/device mount with a skipped-entry sentinel instead of aborting,
+// mirroring the classic path's os.Lstat inode-type skip.
+func TestBackupChunked_SkipsSocketMount(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "docker.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	mock := &mockDockerClient{
+		inspectResp: client.ContainerInspectResult{
+			Container: containertypes.InspectResponse{
+				ID:     "abc123",
+				Name:   "/sock-mount",
+				Config: &containertypes.Config{Image: "nginx:latest"},
+				State:  &containertypes.State{Running: false},
+				Mounts: []containertypes.MountPoint{
+					{Type: mounttypes.TypeBind, Source: sockPath, Destination: "/run/docker.sock"},
+				},
+			},
+		},
+		imageResp: client.ImageInspectResult{
+			InspectResponse: imagetypes.InspectResponse{
+				RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			},
+		},
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	id, err := (&ContainerHandler{cli: mock}).BackupChunked(context.Background(), BackupItem{
+		Name: "sock-mount", Type: "container", Settings: map[string]any{"id": "abc123"},
+	}, r, nil, noopProgress)
+	if err != nil {
+		t.Fatalf("BackupChunked() error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	m, err := r.GetManifest(id)
+	if err != nil {
+		t.Fatalf("GetManifest() error = %v", err)
+	}
+	entry, ok := m.Files[containerVolPrefix+"/run/docker.sock"]
+	if !ok {
+		t.Fatalf("manifest missing %s/run/docker.sock entry", containerVolPrefix)
+	}
+	if entry.Size != volumeSkippedSize {
+		t.Fatalf("socket mount entry Size = %d, want %d (skipped sentinel)", entry.Size, volumeSkippedSize)
 	}
 }

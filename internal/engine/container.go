@@ -1981,6 +1981,60 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
 				continue
 			}
+			// Detect file-based bind mounts and non-regular inodes (parity with the
+			// classic Backup path, which Lstats mount.Source and branches on the
+			// result). Without this, a file mount is handed to
+			// FolderHandler.BackupChunked → os.OpenRoot, which fails on a
+			// non-directory, and sockets/devices — skipped cleanly by the classic
+			// path — abort a dedup run.
+			srcInfo, lerr := os.Lstat(mnt.Source)
+			if lerr != nil {
+				return fmt.Errorf("stat volume %s: %w", mnt.Source, lerr)
+			}
+			if !srcInfo.IsDir() {
+				// Auto-skip non-regular inodes (sockets, named pipes, devices,
+				// irregular) — matching the classic path's skip at Backup.
+				if srcInfo.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeCharDevice|os.ModeIrregular) != 0 {
+					reason := fmt.Sprintf("unsupported inode type (%s)", srcInfo.Mode().Type().String())
+					log.Printf("engine: chunked: skipping volume %s for %s: %s", mnt.Source, item.Name, reason)
+					m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+					continue
+				}
+				// Regular-file bind mount. Differential runs: skip an unchanged
+				// file (carry the parent entry forward), exactly like the
+				// directory path below. pathChangedSince handles non-directories.
+				if hasChangedSince {
+					changed, cached := volChanges[mnt.Source]
+					if !cached {
+						var cerr error
+						changed, cerr = pathChangedSince(ctx, mnt.Source, changedSince)
+						if cerr != nil {
+							return fmt.Errorf("checking volume %s changes: %w", mnt.Source, cerr)
+						}
+					}
+					if !changed {
+						log.Printf("engine: chunked: file mount %s for %s unchanged since reference — carrying forward parent entry", mnt.Source, item.Name)
+						if parent != nil {
+							if pe, ok := parent.Files[key]; ok {
+								m.Files[key] = pe
+								continue
+							}
+						}
+						// No parent entry to carry forward from (e.g. a full backup
+						// with changed_since set, or a parent missing this volume):
+						// fall through and chunk the file fully (issue #320).
+					}
+				}
+				entry, ferr := chunkFileIntoRepo(repo, mnt.Source)
+				if ferr != nil {
+					return fmt.Errorf("chunking file mount %s: %w", mnt.Source, ferr)
+				}
+				entry.IsFile = true
+				entry.Mode = uint32(srcInfo.Mode().Perm())
+				entry.ModTime = srcInfo.ModTime().UTC().Format(time.RFC3339)
+				m.Files[key] = entry
+				continue
+			}
 			// For differential backups, skip volumes whose entire tree is
 			// unchanged since the reference time. Mirrors the classic Backup
 			// path. Reuses cached pre-check results when available. With a
