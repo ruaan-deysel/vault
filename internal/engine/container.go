@@ -1164,6 +1164,43 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 	return changes, anyChanged, nil
 }
 
+// chunkedPrevBySource derives the per-volume previous listing (mount source
+// host path -> volume-relative path set) from the parent manifest's volume
+// sub-manifests, mirroring the classic path's prev_volume_listing_paths. Used
+// by the chunked (dedup) stop decision so a NEW stale-mtime file flips an
+// otherwise-unchanged volume to changed (issue #320) — the same semantics the
+// classic Backup path's prev-aware stop check already has. A nil parent, a
+// missing/empty volume entry, or an unreadable sub-manifest simply omits that
+// volume, and a nil map degrades to mtime-only.
+func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, repo *dedup.Repo) map[string]map[string]struct{} {
+	if parent == nil || repo == nil {
+		return nil
+	}
+	out := make(map[string]map[string]struct{})
+	for _, mnt := range mounts {
+		if !backupableMount(string(mnt.Type)) || mnt.Source == "" || mnt.Destination == "" {
+			continue
+		}
+		pe, ok := parent.Files[containerVolPrefix+mnt.Destination]
+		if !ok || len(pe.Chunks) == 0 {
+			continue
+		}
+		sub, err := repo.GetManifest(pe.Chunks[0])
+		if err != nil {
+			continue
+		}
+		set := make(map[string]struct{}, len(sub.Files))
+		for p := range sub.Files {
+			set[p] = struct{}{}
+		}
+		out[mnt.Source] = set
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Restore restores a Docker container from a backup directory:
 //  1. Loads the image from image.tar.
 //  2. Reads the saved config (full docker inspect JSON).
@@ -1927,9 +1964,14 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 		// Per-volume results are cached so the archiving loop reuses them.
 		var anyChanged bool
 		var err error
-		// The chunked (dedup) path carries forward via the parent manifest, not
-		// per-volume listings, so prevBySource stays nil (mtime-only).
-		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, nil)
+		// Derive the per-volume previous listing from the parent manifest's
+		// volume sub-manifests (the same resolution the archiving loop uses
+		// for carry-forward) so a NEW stale-mtime file flips the volume to
+		// changed (issue #320) — matching the classic Backup path's
+		// prev-aware stop check. Without it, a running container whose only
+		// change is such a file is not stopped and is backed up live.
+		prevBySource := chunkedPrevBySource(parent, inspect.Mounts, repo)
+		volChanges, anyChanged, err = anyVolumeChangedSince(ctx, inspect.Mounts, exclusions, changedSince, prevBySource)
 		if err != nil {
 			return dedup.ID{}, err
 		}

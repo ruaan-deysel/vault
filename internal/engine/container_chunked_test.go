@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -791,5 +792,204 @@ func TestBackupChunked_AllMountsExcluded(t *testing.T) {
 	if mock.stopCalled {
 		t.Error("container was stopped for a run that cannot produce a backup — " +
 			"the guard must run before the stop")
+	}
+}
+
+// TestBackupChunkedStopDecisionPrevAware is the regression test for the dedup
+// stop-decision half of issue #320. A running container whose only change
+// since the parent restore point is a NEW file with a stale mtime must still
+// be stopped for a consistent backup. The chunked stop pre-check derives the
+// per-volume previous listing from the parent manifest's sub-manifest
+// (chunkedPrevBySource), so an otherwise-unchanged volume that gained a
+// stale-mtime file flips to changed — mirroring the classic Backup path.
+func TestBackupChunkedStopDecisionPrevAware(t *testing.T) {
+	changedSince := time.Now().Add(-1 * time.Hour).Truncate(time.Second)
+	old := changedSince.Add(-time.Hour)
+
+	writePinned := func(t *testing.T, path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		mutateDiff func(t *testing.T, diffVol string)
+		wantStop   bool
+	}{
+		{
+			name: "stale-mtime new file stops a running container",
+			mutateDiff: func(t *testing.T, diffVol string) {
+				writePinned(t, filepath.Join(diffVol, "new.txt"), "new")
+			},
+			wantStop: true,
+		},
+		{
+			name:       "unchanged volume does not stop a running container",
+			mutateDiff: func(t *testing.T, diffVol string) {},
+			wantStop:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _, cleanup := dedup.NewTestRepoForEngine(t)
+			defer cleanup()
+
+			// Parent (full) backup: not running, single /data volume holding
+			// only old.txt.
+			fullVol := t.TempDir()
+			writePinned(t, filepath.Join(fullVol, "old.txt"), "old")
+			fullMock := &mockDockerClient{
+				inspectResp: client.ContainerInspectResult{
+					Container: containertypes.InspectResponse{
+						ID:     "abc123",
+						Name:   "/test",
+						Config: &containertypes.Config{Image: "nginx:latest"},
+						State:  &containertypes.State{Running: false},
+						Mounts: []containertypes.MountPoint{
+							{Type: mounttypes.TypeBind, Source: fullVol, Destination: "/data"},
+						},
+					},
+				},
+				imageResp: client.ImageInspectResult{
+					InspectResponse: imagetypes.InspectResponse{
+						RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+					},
+				},
+			}
+			fullID, err := (&ContainerHandler{cli: fullMock}).BackupChunked(context.Background(), BackupItem{
+				Name:     "test",
+				Type:     "container",
+				Settings: map[string]any{"id": "abc123"},
+			}, r, nil, noopProgress)
+			if err != nil {
+				t.Fatalf("full BackupChunked() error = %v", err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatalf("Flush() error = %v", err)
+			}
+			parent, err := r.GetManifest(fullID)
+			if err != nil {
+				t.Fatalf("GetManifest(parent) error = %v", err)
+			}
+
+			// Differential backup: running container, same volume plus the
+			// scenario's mutation. The dir mtime is pinned back to `old` so the
+			// prev-aware check (not a bumped dir mtime) is the only change
+			// signal.
+			diffVol := t.TempDir()
+			writePinned(t, filepath.Join(diffVol, "old.txt"), "old")
+			tt.mutateDiff(t, diffVol)
+			if err := os.Chtimes(diffVol, old, old); err != nil {
+				t.Fatal(err)
+			}
+			diffMock := &mockDockerClient{
+				inspectResp: client.ContainerInspectResult{
+					Container: containertypes.InspectResponse{
+						ID:     "abc123",
+						Name:   "/test",
+						Config: &containertypes.Config{Image: "nginx:latest"},
+						State:  &containertypes.State{Running: true},
+						Mounts: []containertypes.MountPoint{
+							{Type: mounttypes.TypeBind, Source: diffVol, Destination: "/data"},
+						},
+					},
+				},
+				imageResp: client.ImageInspectResult{
+					InspectResponse: imagetypes.InspectResponse{
+						RepoDigests: []string{"nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+					},
+				},
+			}
+			if _, err := (&ContainerHandler{cli: diffMock}).BackupChunked(context.Background(), BackupItem{
+				Name: "test",
+				Type: "container",
+				Settings: map[string]any{
+					"id":            "abc123",
+					"changed_since": changedSince.UTC().Format(time.RFC3339),
+				},
+			}, r, &parent, noopProgress); err != nil {
+				t.Fatalf("differential BackupChunked() error = %v", err)
+			}
+
+			if diffMock.stopCalled != tt.wantStop {
+				t.Errorf("stopCalled = %v, want %v", diffMock.stopCalled, tt.wantStop)
+			}
+		})
+	}
+}
+
+// TestChunkedPrevBySource verifies the per-volume previous-listing derivation
+// used by the chunked stop decision: it resolves each mount's parent
+// sub-manifest (via the containerVolPrefix+destination key) into a
+// volume-relative path set keyed by mount source, and degrades gracefully (nil
+// or omitted volume) when the parent has nothing to carry forward from.
+func TestChunkedPrevBySource(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	subID, err := r.PutManifest("sub", dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"old.txt":       {},
+			"sub/nested.txt": {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PutManifest(sub) error = %v", err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	dataMount := containertypes.MountPoint{Type: mounttypes.TypeBind, Source: "/s", Destination: "/data"}
+
+	tests := []struct {
+		name   string
+		parent *dedup.Manifest
+		mounts []containertypes.MountPoint
+		want   map[string]map[string]struct{}
+	}{
+		{
+			name:   "nil parent returns nil",
+			parent: nil,
+			mounts: []containertypes.MountPoint{dataMount},
+			want:   nil,
+		},
+		{
+			name: "sub-manifest resolves to per-volume paths keyed by source",
+			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+				containerVolPrefix + "/data": {Chunks: []dedup.ID{subID}},
+			}},
+			mounts: []containertypes.MountPoint{dataMount},
+			want:   map[string]map[string]struct{}{"/s": {"old.txt": {}, "sub/nested.txt": {}}},
+		},
+		{
+			name:   "mount destination absent from parent is omitted",
+			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{}},
+			mounts: []containertypes.MountPoint{dataMount},
+			want:   nil,
+		},
+		{
+			name: "skipped volume (empty chunks sentinel) is omitted",
+			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+				containerVolPrefix + "/data": {Size: volumeSkippedSize},
+			}},
+			mounts: []containertypes.MountPoint{dataMount},
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := chunkedPrevBySource(tt.parent, tt.mounts, r)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("chunkedPrevBySource() = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
