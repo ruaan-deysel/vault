@@ -819,6 +819,7 @@ func TestBackupChunkedStopDecisionPrevAware(t *testing.T) {
 	tests := []struct {
 		name       string
 		mutateDiff func(t *testing.T, diffVol string)
+		mutatePar  func(t *testing.T, parent *dedup.Manifest)
 		wantStop   bool
 	}{
 		{
@@ -832,6 +833,21 @@ func TestBackupChunkedStopDecisionPrevAware(t *testing.T) {
 			name:       "unchanged volume does not stop a running container",
 			mutateDiff: func(t *testing.T, diffVol string) {},
 			wantStop:   false,
+		},
+		{
+			// Regression (issue #320 review follow-up): a parent manifest
+			// without an entry for the current volume must still stop the
+			// container. chunkedPrevBySource maps such a volume to an EMPTY
+			// set, so old.txt reports as absent-from-parent (changed) and
+			// needsStop stays set — the archiving loop will take the
+			// full-chunk fallback, which must not run against a live
+			// container.
+			name:       "parent manifest missing the volume entry stops a running container",
+			mutateDiff: func(t *testing.T, diffVol string) {},
+			mutatePar: func(t *testing.T, parent *dedup.Manifest) {
+				delete(parent.Files, containerVolPrefix+"/data")
+			},
+			wantStop: true,
 		},
 	}
 
@@ -876,6 +892,9 @@ func TestBackupChunkedStopDecisionPrevAware(t *testing.T) {
 			parent, err := r.GetManifest(fullID)
 			if err != nil {
 				t.Fatalf("GetManifest(parent) error = %v", err)
+			}
+			if tt.mutatePar != nil {
+				tt.mutatePar(t, &parent)
 			}
 
 			// Differential backup: running container, same volume plus the
@@ -927,8 +946,11 @@ func TestBackupChunkedStopDecisionPrevAware(t *testing.T) {
 // TestChunkedPrevBySource verifies the per-volume previous-listing derivation
 // used by the chunked stop decision: it resolves each mount's parent
 // sub-manifest (via the containerVolPrefix+destination key) into a
-// volume-relative path set keyed by mount source, and degrades gracefully (nil
-// or omitted volume) when the parent has nothing to carry forward from.
+// volume-relative path set keyed by mount source. A volume with no usable
+// parent entry (absent key, skip sentinel, or unreadable sub-manifest) gets an
+// EMPTY set rather than being omitted — every pre-existing file then reports
+// as changed, which keeps needsStop set for the archiving loop's full-chunk
+// fallback (issue #320 review follow-up). Only a nil parent/repo returns nil.
 func TestChunkedPrevBySource(t *testing.T) {
 	r, _, cleanup := dedup.NewTestRepoForEngine(t)
 	defer cleanup()
@@ -944,6 +966,11 @@ func TestChunkedPrevBySource(t *testing.T) {
 	}
 	if err := r.Flush(); err != nil {
 		t.Fatalf("Flush() error = %v", err)
+	}
+	// An ID that was never written: GetManifest must fail on it.
+	var missingID dedup.ID
+	for i := range missingID {
+		missingID[i] = 0xFF
 	}
 
 	dataMount := containertypes.MountPoint{Type: mounttypes.TypeBind, Source: "/s", Destination: "/data"}
@@ -969,18 +996,26 @@ func TestChunkedPrevBySource(t *testing.T) {
 			want:   map[string]map[string]struct{}{"/s": {"old.txt": {}, "sub/nested.txt": {}}},
 		},
 		{
-			name:   "mount destination absent from parent is omitted",
+			name:   "mount destination absent from parent yields an empty set",
 			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{}},
 			mounts: []containertypes.MountPoint{dataMount},
-			want:   nil,
+			want:   map[string]map[string]struct{}{"/s": {}},
 		},
 		{
-			name: "skipped volume (empty chunks sentinel) is omitted",
+			name: "skipped volume (empty chunks sentinel) yields an empty set",
 			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{
 				containerVolPrefix + "/data": {Size: volumeSkippedSize},
 			}},
 			mounts: []containertypes.MountPoint{dataMount},
-			want:   nil,
+			want:   map[string]map[string]struct{}{"/s": {}},
+		},
+		{
+			name: "unreadable sub-manifest yields an empty set",
+			parent: &dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+				containerVolPrefix + "/data": {Chunks: []dedup.ID{missingID}},
+			}},
+			mounts: []containertypes.MountPoint{dataMount},
+			want:   map[string]map[string]struct{}{"/s": {}},
 		},
 	}
 

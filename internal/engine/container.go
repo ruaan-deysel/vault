@@ -1169,9 +1169,14 @@ func anyVolumeChangedSince(ctx context.Context, mounts []container.MountPoint, e
 // sub-manifests, mirroring the classic path's prev_volume_listing_paths. Used
 // by the chunked (dedup) stop decision so a NEW stale-mtime file flips an
 // otherwise-unchanged volume to changed (issue #320) — the same semantics the
-// classic Backup path's prev-aware stop check already has. A nil parent, a
-// missing/empty volume entry, or an unreadable sub-manifest simply omits that
-// volume, and a nil map degrades to mtime-only.
+// classic Backup path's prev-aware stop check already has. A nil parent or a
+// nil repo omits every volume. A volume whose parent entry is missing, holds
+// the skip sentinel, or whose sub-manifest is unreadable gets an EMPTY set:
+// every pre-existing file then reports as absent-from-parent (changed), which
+// forces the stop decision to keep needsStop set. Omitting the volume instead
+// would let the pre-check report the volume unchanged (mtime-only) and skip
+// the stop, while the archiving loop below later takes the full-chunk
+// fallback on a still-running container — an inconsistent live backup.
 func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, repo *dedup.Repo) map[string]map[string]struct{} {
 	if parent == nil || repo == nil {
 		return nil
@@ -1183,10 +1188,12 @@ func chunkedPrevBySource(parent *dedup.Manifest, mounts []container.MountPoint, 
 		}
 		pe, ok := parent.Files[containerVolPrefix+mnt.Destination]
 		if !ok || len(pe.Chunks) == 0 {
+			out[mnt.Source] = map[string]struct{}{}
 			continue
 		}
 		sub, err := repo.GetManifest(pe.Chunks[0])
 		if err != nil {
+			out[mnt.Source] = map[string]struct{}{}
 			continue
 		}
 		set := make(map[string]struct{}, len(sub.Files))
