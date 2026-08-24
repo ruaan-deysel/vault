@@ -935,7 +935,7 @@ func TestChunkedPrevBySource(t *testing.T) {
 
 	subID, err := r.PutManifest("sub", dedup.Manifest{
 		Files: map[string]dedup.ManifestEntry{
-			"old.txt":       {},
+			"old.txt":        {},
 			"sub/nested.txt": {},
 		},
 	})

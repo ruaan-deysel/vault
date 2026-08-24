@@ -333,7 +333,7 @@ func TestMergeCopyFileErrors(t *testing.T) {
 			wantErr: "no such file",
 		},
 		{
-			name: "unwritable destination",
+			name: "missing parent directory",
 			setup: func(t *testing.T) (string, string) {
 				src := filepath.Join(t.TempDir(), "src")
 				if err := os.WriteFile(src, []byte("data"), 0o600); err != nil {
