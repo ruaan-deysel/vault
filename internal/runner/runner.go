@@ -2368,9 +2368,9 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 	// For differential/incremental backups, load the parent item's manifest
 	// so the handler can carry forward unchanged entries and keep the new
 	// manifest complete for single-point restore (issue #320). A missing or
-	// unreadable parent manifest degrades to a nil parent (the handler still
-	// honours changed_since and produces a partial manifest), so a corrupted
-	// parent can't hard-fail the backup.
+	// unreadable parent manifest degrades to a nil parent, in which case the
+	// handler ignores changed_since and chunks the item FULLY, so a corrupted
+	// parent costs extra work but never drops files or fails the backup.
 	var parent *dedup.Manifest
 	if parentRP != nil {
 		if pid, ok := resolveManifestID(*parentRP, item.Name); ok {
@@ -3516,9 +3516,12 @@ func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.Stora
 // manifest and each backed-up volume's effective-listing sidecar, returning a
 // map keyed by mount source host path -> volume-relative paths. Used by classic
 // container differentials/incrementals to detect NEW files whose mtime predates
-// changed_since (issue #320). Returns nil when no listing is available
-// (pre-listing backups or a read failure); the caller then clears changed_since
-// to degrade to a full archive (see applyClassicDiffListing).
+// changed_since (issue #320). Resolution is all-or-nothing: nil is returned
+// when ANY backed-up volume's listing is missing or unreadable (pre-listing
+// backups, a partial write, or a read failure); the caller then clears
+// changed_since to degrade to a full archive (see applyClassicDiffListing) —
+// never a partial map that would leave the unresolved volume on mtime-only
+// filtering.
 func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) map[string][]string {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -3602,12 +3605,17 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 		}
 		listingRC, ok := openSidecar(v.Archive + engine.ListingSuffix)
 		if !ok {
-			continue
+			// All-or-nothing (issue #320 review follow-up): a single
+			// missing listing would leave that volume on mtime-only
+			// filtering in the engine — silently dropping a NEW
+			// stale-mtime file. Returning nil makes the caller clear
+			// changed_since and degrade to a full archive instead.
+			return nil
 		}
 		idx, err := engine.ReadTarIndex(listingRC)
 		_ = listingRC.Close()
 		if err != nil {
-			continue
+			return nil
 		}
 		paths := make([]string, 0, len(idx.Files))
 		for _, f := range idx.Files {

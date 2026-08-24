@@ -69,6 +69,23 @@ func TestLoadParentVolumeListingPaths(t *testing.T) {
 			},
 			want: nil,
 		},
+		{
+			// All-or-nothing (issue #320 review follow-up): one backed-up
+			// volume's listing resolving while another's is missing must
+			// return nil — a partial map would keep changed_since set and
+			// leave the unresolved volume on mtime-only filtering, silently
+			// dropping a NEW stale-mtime file. The caller degrades to a full
+			// archive instead.
+			name: "partial listing resolution returns nil",
+			files: map[string]string{
+				itemPrefix + "/volumes.json": `[
+					{"index":0,"source":"` + sourcePath + `","destination":"/data","backed_up":true,"archive":"volume_0.tar"},
+					{"index":1,"source":"/mnt/cache/appdata/bar","destination":"/config","backed_up":true,"archive":"volume_1.tar"}
+				]`,
+				itemPrefix + "/volume_0.tar.listing.json": `{"version":1,"archive":"volume_0.tar","files":[{"path":"old.txt"}]}`,
+			},
+			want: nil,
+		},
 	}
 
 	for _, tc := range cases {
