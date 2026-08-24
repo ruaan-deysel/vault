@@ -175,3 +175,80 @@ func TestLoadParentVolumeListingPaths_Encrypted(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyClassicDiffListing is the regression test for the classic-path
+// degradation of issue #320. When the parent's effective listing is
+// unavailable for a classic differential/incremental folder or container item,
+// changed_since must be CLEARED so the engine degrades to a full archive
+// instead of silently mtime-only filtering (which drops NEW stale-mtime files).
+func TestApplyClassicDiffListing(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name               string
+		itemType           string
+		listingPaths       []string
+		volumeListingPaths map[string][]string
+		wantChangedSince   bool
+		wantPrevKey        string
+		wantPrevValue      any
+	}{
+		{
+			name:             "folder with listing keeps changed_since and attaches prev_listing_paths",
+			itemType:         "folder",
+			listingPaths:     []string{"old.txt", "sub/new.txt"},
+			wantChangedSince: true,
+			wantPrevKey:      "prev_listing_paths",
+			wantPrevValue:    []string{"old.txt", "sub/new.txt"},
+		},
+		{
+			name:             "folder with nil listing clears changed_since (full archive)",
+			itemType:         "folder",
+			listingPaths:     nil,
+			wantChangedSince: false,
+		},
+		{
+			name:               "container with listing keeps changed_since and attaches prev_volume_listing_paths",
+			itemType:           "container",
+			volumeListingPaths: map[string][]string{"/mnt/appdata": {"old.txt"}},
+			wantChangedSince:   true,
+			wantPrevKey:        "prev_volume_listing_paths",
+			wantPrevValue:      map[string][]string{"/mnt/appdata": {"old.txt"}},
+		},
+		{
+			name:               "container with nil listing clears changed_since (full archive)",
+			itemType:           "container",
+			volumeListingPaths: nil,
+			wantChangedSince:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := map[string]any{"changed_since": "2026-08-24T00:00:00Z"}
+			applyClassicDiffListing(settings, tc.itemType, tc.listingPaths, tc.volumeListingPaths)
+
+			_, hasChangedSince := settings["changed_since"]
+			if hasChangedSince != tc.wantChangedSince {
+				t.Fatalf("changed_since present = %v, want %v (settings = %#v)", hasChangedSince, tc.wantChangedSince, settings)
+			}
+
+			if tc.wantPrevKey != "" {
+				got, ok := settings[tc.wantPrevKey]
+				if !ok {
+					t.Fatalf("settings missing %q: %#v", tc.wantPrevKey, settings)
+				}
+				if !reflect.DeepEqual(got, tc.wantPrevValue) {
+					t.Fatalf("%s = %#v, want %#v", tc.wantPrevKey, got, tc.wantPrevValue)
+				}
+			} else {
+				if _, ok := settings["prev_listing_paths"]; ok {
+					t.Fatalf("unexpected prev_listing_paths set: %#v", settings)
+				}
+				if _, ok := settings["prev_volume_listing_paths"]; ok {
+					t.Fatalf("unexpected prev_volume_listing_paths set: %#v", settings)
+				}
+			}
+		})
+	}
+}

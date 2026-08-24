@@ -1204,27 +1204,26 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 
 		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
 			backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
-			// Classic (non-dedup) folder differentials/incrementals: load the
-			// parent's effective listing so the engine can detect NEW files with
-			// stale mtimes (issue #320). The dedup path carries forward via the
-			// parent manifest instead.
-			if !dest.DedupEnabled && item.ItemType == "folder" {
-				if paths := r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase); paths != nil {
-					backupItem.Settings["prev_listing_paths"] = paths
+			// Classic (non-dedup) differentials/incrementals load the parent's
+			// effective listing (folder: item-relative paths; container:
+			// per-volume paths keyed by mount source) so the engine can detect
+			// NEW files with stale mtimes (issue #320). When the listing is
+			// unavailable the engine degrades to a FULL archive instead of
+			// silently mtime-only filtering — which would drop a NEW stale-mtime
+			// file (e.g. cp -a), the literal issue #320 data-loss class. The
+			// dedup path carries forward via the parent manifest in the engine,
+			// so it never takes this branch.
+			if !dest.DedupEnabled {
+				var listingPaths []string
+				var volumeListingPaths map[string][]string
+				if item.ItemType == "folder" {
+					listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
 				} else {
-					log.Printf("runner: warning: parent listing unavailable for %s — falling back to mtime-only differential filtering", item.ItemName)
+					volumeListingPaths = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
 				}
-			}
-			// Classic (non-dedup) container differentials/incrementals: load the
-			// parent's per-volume listings keyed by mount source host path, so
-			// the engine detects NEW files with stale mtimes in each volume
-			// (issue #320). Dedup containers carry forward via the parent
-			// manifest instead.
-			if !dest.DedupEnabled && item.ItemType == "container" {
-				if bySource := r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase); bySource != nil {
-					backupItem.Settings["prev_volume_listing_paths"] = bySource
-				} else {
-					log.Printf("runner: warning: parent volume listings unavailable for %s — falling back to mtime-only differential filtering", item.ItemName)
+				applyClassicDiffListing(backupItem.Settings, item.ItemType, listingPaths, volumeListingPaths)
+				if _, hasChangedSince := backupItem.Settings["changed_since"]; !hasChangedSince {
+					log.Printf("runner: parent listing unavailable for %s — degrading %s backup to a full archive (mtime-only filtering would drop stale-mtime new files)", item.ItemName, btResult.BackupType)
 				}
 			}
 		}
@@ -3476,7 +3475,8 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 // parent restore point's effective listing, so a differential/incremental
 // classic folder backup can detect NEW files whose mtime predates changed_since
 // (issue #320). Returns nil when no listing is available (pre-listing backups,
-// or a read failure), which degrades the engine to its mtime-only filter.
+// or a read failure); the caller then clears changed_since to degrade to a
+// full archive (see applyClassicDiffListing).
 func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) []string {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -3500,8 +3500,8 @@ func (r *Runner) loadParentListingPaths(parentRP *db.RestorePoint, dest db.Stora
 // map keyed by mount source host path -> volume-relative paths. Used by classic
 // container differentials/incrementals to detect NEW files whose mtime predates
 // changed_since (issue #320). Returns nil when no listing is available
-// (pre-listing backups or a read failure), which degrades the engine to its
-// mtime-only filter.
+// (pre-listing backups or a read failure); the caller then clears changed_since
+// to degrade to a full archive (see applyClassicDiffListing).
 func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db.StorageDestination, itemName, passphrase string) map[string][]string {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -3602,6 +3602,31 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 		return nil
 	}
 	return out
+}
+
+// applyClassicDiffListing resolves the changed_since / prev-listing settings
+// for a classic (non-dedup) differential/incremental folder or container item.
+// When the parent's effective listing is available it is attached so the engine
+// detects NEW files with stale mtimes (issue #320); when it is unavailable the
+// changed_since gate is CLEARED so the engine degrades to a FULL archive —
+// never silent mtime-only filtering, which would drop a NEW stale-mtime file
+// (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
+// forward via the parent manifest in the engine and never reach this helper.
+func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string) {
+	switch itemType {
+	case "folder":
+		if listingPaths != nil {
+			settings["prev_listing_paths"] = listingPaths
+		} else {
+			delete(settings, "changed_since")
+		}
+	case "container":
+		if volumeListingPaths != nil {
+			settings["prev_volume_listing_paths"] = volumeListingPaths
+		} else {
+			delete(settings, "changed_since")
+		}
+	}
 }
 
 // guardPanic recovers and logs a panic in a fire-and-forget worker goroutine
