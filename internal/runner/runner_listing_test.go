@@ -48,6 +48,16 @@ func TestLoadParentVolumeListingPaths(t *testing.T) {
 			},
 		},
 		{
+			name: "compressed archive name resolves via manifest",
+			files: map[string]string{
+				itemPrefix + "/volumes.json":                 `[{"index":0,"source":"` + sourcePath + `","destination":"/data","backed_up":true,"archive":"volume_0.tar.gz"}]`,
+				itemPrefix + "/volume_0.tar.gz.listing.json": `{"version":1,"archive":"volume_0.tar.gz","files":[{"path":"old.txt"},{"path":"sub/nested.txt"}]}`,
+			},
+			want: map[string][]string{
+				sourcePath: {"old.txt", "sub/nested.txt"},
+			},
+		},
+		{
 			name:  "missing manifest returns nil",
 			files: map[string]string{},
 			want:  nil,
@@ -248,6 +258,45 @@ func TestApplyClassicDiffListing(t *testing.T) {
 				if _, ok := settings["prev_volume_listing_paths"]; ok {
 					t.Fatalf("unexpected prev_volume_listing_paths set: %#v", settings)
 				}
+			}
+		})
+	}
+}
+
+// TestIsSidecarBase verifies the tightened sidecar-name match (issue #320
+// review feedback): only a real <archive>.{listing,index}.json name — one whose
+// prefix carries ".tar" — is accepted, while unrelated files that merely end in
+// the suffix are rejected.
+func TestIsSidecarBase(t *testing.T) {
+	t.Parallel()
+
+	const (
+		listing = ".listing.json"
+		index   = ".index.json"
+	)
+
+	cases := []struct {
+		name   string
+		base   string
+		suffix string
+		want   bool
+	}{
+		{name: "plain listing", base: "data.tar.listing.json", suffix: listing, want: true},
+		{name: "gzip listing", base: "data.tar.gz.listing.json", suffix: listing, want: true},
+		{name: "zstd listing", base: "data.tar.zst.listing.json", suffix: listing, want: true},
+		{name: "encrypted listing", base: "data.tar.zst.listing.json.age", suffix: listing, want: true},
+		{name: "volume listing", base: "volume_0.tar.listing.json", suffix: listing, want: true},
+		{name: "compressed volume listing", base: "volume_0.tar.gz.listing.json", suffix: listing, want: true},
+		{name: "index sidecar", base: "data.tar.zst.index.json", suffix: index, want: true},
+		{name: "unrelated file ending in suffix is rejected", base: "unrelated.listing.json", suffix: listing, want: false},
+		{name: "unrelated encrypted file ending in suffix is rejected", base: "unrelated.listing.json.age", suffix: listing, want: false},
+		{name: "bare suffix is rejected", base: ".listing.json", suffix: listing, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSidecarBase(tc.base, tc.suffix); got != tc.want {
+				t.Errorf("isSidecarBase(%q, %q) = %v, want %v", tc.base, tc.suffix, got, tc.want)
 			}
 		})
 	}

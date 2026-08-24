@@ -3420,6 +3420,24 @@ func (r *Runner) ReadItemSidecar(dest db.StorageDestination, rp db.RestorePoint,
 	return r.readItemSidecar(adapter, rp, itemName, suffix, "")
 }
 
+// isSidecarBase reports whether base is a valid per-item sidecar name for the
+// given suffix: it must end in suffix (or suffix+".age") AND the part before
+// the suffix must itself be an archive base name — every engine archive
+// (data.tar[.gz|.zst], volume_N.tar[.gz|.zst], image.tar, config.tar) carries
+// ".tar". This rejects unrelated files that merely end in the suffix, which
+// the previous bare HasSuffix match would have accepted (issue #320 review
+// feedback).
+func isSidecarBase(base, suffix string) bool {
+	rest, ok := strings.CutSuffix(base, suffix+".age")
+	if !ok {
+		rest, ok = strings.CutSuffix(base, suffix)
+		if !ok {
+			return false
+		}
+	}
+	return strings.Contains(rest, ".tar")
+}
+
 // readItemSidecar reads a per-item JSON sidecar (tar index or effective
 // listing) for a restore point, decrypting .age variants with the supplied
 // passphrase (falling back to the configured one when empty).
@@ -3434,8 +3452,7 @@ func (r *Runner) readItemSidecar(adapter storage.Adapter, rp db.RestorePoint, it
 		if e.IsDir {
 			continue
 		}
-		base := path.Base(e.Path)
-		if strings.HasSuffix(base, suffix) || strings.HasSuffix(base, suffix+".age") {
+		if isSidecarBase(path.Base(e.Path), suffix) {
 			candidate = e.Path
 			break
 		}
