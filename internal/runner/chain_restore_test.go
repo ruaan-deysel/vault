@@ -110,82 +110,95 @@ func TestStageRestorePointItemOverlaysChainFiles(t *testing.T) {
 func TestStageContainerChainMerged(t *testing.T) {
 	t.Parallel()
 
-	database, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
+	tests := []struct {
+		name        string
+		wantInMerged []string
+	}{
+		{
+			name:        "differential step's partial volume overlays the full step's",
+			wantInMerged: []string{"old.txt", "new.txt"},
+		},
 	}
-	t.Cleanup(func() { _ = database.Close() })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, err := db.Open(":memory:")
+			if err != nil {
+				t.Fatalf("db.Open: %v", err)
+			}
+			t.Cleanup(func() { _ = database.Close() })
 
-	storageRoot := t.TempDir()
-	storageConfig := fmt.Sprintf(`{"path":%q}`, storageRoot)
-	storageID, err := database.CreateStorageDestination(db.StorageDestination{
-		Name:   "local",
-		Type:   "local",
-		Config: storageConfig,
-	})
-	if err != nil {
-		t.Fatalf("CreateStorageDestination: %v", err)
-	}
+			storageRoot := t.TempDir()
+			storageConfig := fmt.Sprintf(`{"path":%q}`, storageRoot)
+			storageID, err := database.CreateStorageDestination(db.StorageDestination{
+				Name:   "local",
+				Type:   "local",
+				Config: storageConfig,
+			})
+			if err != nil {
+				t.Fatalf("CreateStorageDestination: %v", err)
+			}
 
-	jobID, err := database.CreateJob(db.Job{
-		Name:            "chain-test",
-		Enabled:         true,
-		BackupTypeChain: "incremental",
-		Compression:     "none",
-		StorageDestID:   storageID,
-	})
-	if err != nil {
-		t.Fatalf("CreateJob: %v", err)
-	}
+			jobID, err := database.CreateJob(db.Job{
+				Name:            "chain-test",
+				Enabled:         true,
+				BackupTypeChain: "incremental",
+				Compression:     "none",
+				StorageDestID:   storageID,
+			})
+			if err != nil {
+				t.Fatalf("CreateJob: %v", err)
+			}
 
-	adapter, err := storage.NewAdapter("local", storageConfig)
-	if err != nil {
-		t.Fatalf("NewAdapter: %v", err)
-	}
-	t.Cleanup(func() { storage.CloseAdapter(adapter) })
+			adapter, err := storage.NewAdapter("local", storageConfig)
+			if err != nil {
+				t.Fatalf("NewAdapter: %v", err)
+			}
+			t.Cleanup(func() { storage.CloseAdapter(adapter) })
 
-	fullTar := tarArchive(t, map[string]string{"old.txt": "old"})
-	diffTar := tarArchive(t, map[string]string{"new.txt": "new"})
+			fullTar := tarArchive(t, map[string]string{"old.txt": "old"})
+			diffTar := tarArchive(t, map[string]string{"new.txt": "new"})
 
-	baseChecksums := writeStorageFiles(t, adapter, map[string]string{
-		"chain-test/1_full/my-item/volume_0.tar": string(fullTar),
-	})
-	childChecksums := writeStorageFiles(t, adapter, map[string]string{
-		"chain-test/2_inc/my-item/volume_0.tar": string(diffTar),
-	})
+			baseChecksums := writeStorageFiles(t, adapter, map[string]string{
+				"chain-test/1_full/my-item/volume_0.tar": string(fullTar),
+			})
+			childChecksums := writeStorageFiles(t, adapter, map[string]string{
+				"chain-test/2_inc/my-item/volume_0.tar": string(diffTar),
+			})
 
-	baseRP := db.RestorePoint{
-		ID:          1,
-		JobID:       jobID,
-		BackupType:  "full",
-		StoragePath: "chain-test/1_full",
-		Metadata:    restorePointMetadata("my-item", baseChecksums),
-		CreatedAt:   time.Now().Add(-time.Hour),
-	}
-	childRP := db.RestorePoint{
-		ID:                   2,
-		JobID:                jobID,
-		BackupType:           "incremental",
-		StoragePath:          "chain-test/2_inc",
-		Metadata:             restorePointMetadata("my-item", childChecksums),
-		ParentRestorePointID: 1,
-		CreatedAt:            time.Now(),
-	}
+			baseRP := db.RestorePoint{
+				ID:          1,
+				JobID:       jobID,
+				BackupType:  "full",
+				StoragePath: "chain-test/1_full",
+				Metadata:    restorePointMetadata("my-item", baseChecksums),
+				CreatedAt:   time.Now().Add(-time.Hour),
+			}
+			childRP := db.RestorePoint{
+				ID:                   2,
+				JobID:                jobID,
+				BackupType:           "incremental",
+				StoragePath:          "chain-test/2_inc",
+				Metadata:             restorePointMetadata("my-item", childChecksums),
+				ParentRestorePointID: 1,
+				CreatedAt:            time.Now(),
+			}
 
-	r := New(database, ws.NewHub(), nil)
-	tmpDir := t.TempDir()
-	reporter := restoreProgressReporter{ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
+			r := New(database, ws.NewHub(), nil)
+			tmpDir := t.TempDir()
+			reporter := restoreProgressReporter{ItemName: "my-item", ItemType: "container", ItemsTotal: 1}
 
-	mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir)
-	if err != nil {
-		t.Fatalf("stageContainerChainMerged: %v", err)
-	}
+			mergedDir, err := r.stageContainerChainMerged(context.Background(), []db.RestorePoint{baseRP, childRP}, "my-item", "", reporter, tmpDir)
+			if err != nil {
+				t.Fatalf("stageContainerChainMerged: %v", err)
+			}
 
-	names := tarEntryNames(t, filepath.Join(mergedDir, "volume_0.tar"))
-	for _, want := range []string{"old.txt", "new.txt"} {
-		if !names[want] {
-			t.Errorf("merged volume missing %s", want)
-		}
+			names := tarEntryNames(t, filepath.Join(mergedDir, "volume_0.tar"))
+			for _, want := range tt.wantInMerged {
+				if !names[want] {
+					t.Errorf("merged volume missing %s", want)
+				}
+			}
+		})
 	}
 }
 

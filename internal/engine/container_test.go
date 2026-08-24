@@ -1120,6 +1120,13 @@ func TestAnyVolumeChangedSince(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(staleSrc, "new.txt"), old, old); err != nil {
 		t.Fatal(err)
 	}
+	// Writing new.txt bumped the volume dir's mtime to now; re-pin it so the
+	// dir-mtime check in pathChangedSinceWithPrev does not fire and the
+	// prev-listing check is the ONLY change signal (mirrors
+	// TestBackupChunkedStopDecisionPrevAware).
+	if err := os.Chtimes(staleSrc, old, old); err != nil {
+		t.Fatal(err)
+	}
 	cases = append(cases, volCase{
 		name: "new file with stale mtime flips unchanged volume to changed",
 		mounts: []containertypes.MountPoint{

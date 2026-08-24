@@ -16,62 +16,61 @@ import (
 func TestMergeContainerChainStagingOverlaysVolumes(t *testing.T) {
 	t.Parallel()
 
-	fullDir := t.TempDir()
-	diffDir := t.TempDir()
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T) (stepDirs []string, wantConfig string)
+		wantVolume []string
+	}{
+		{
+			name: "differential step's partial volume overlays the full step's",
+			setup: func(t *testing.T) ([]string, string) {
+				// Full step: old.txt only.
+				fullDir := t.TempDir()
+				fullVol := filepath.Join(fullDir, "volroot")
+				if err := os.MkdirAll(fullVol, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(fullVol, "old.txt"), []byte("old"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := tarDirectory(context.Background(), fullVol, filepath.Join(fullDir, "volume_0.tar"), nil, CompressionNone); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(fullDir, "config.json"), []byte(`{"full":true}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
 
-	// Full step: old.txt only.
-	fullVol := filepath.Join(fullDir, "volroot")
-	if err := os.MkdirAll(fullVol, 0o755); err != nil {
-		t.Fatal(err)
+				// Differential step: new.txt only.
+				diffDir := t.TempDir()
+				diffVol := filepath.Join(diffDir, "volroot")
+				if err := os.MkdirAll(diffVol, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(diffVol, "new.txt"), []byte("new"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := tarDirectory(context.Background(), diffVol, filepath.Join(diffDir, "volume_0.tar"), nil, CompressionNone); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(diffDir, "config.json"), []byte(`{"diff":true}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return []string{fullDir, diffDir}, `{"diff":true}`
+			},
+			wantVolume: []string{"old.txt", "new.txt"},
+		},
 	}
-	if err := os.WriteFile(filepath.Join(fullVol, "old.txt"), []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := tarDirectory(context.Background(), fullVol, filepath.Join(fullDir, "volume_0.tar"), nil, CompressionNone); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fullDir, "config.json"), []byte(`{"full":true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Differential step: new.txt only.
-	diffVol := filepath.Join(diffDir, "volroot")
-	if err := os.MkdirAll(diffVol, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(diffVol, "new.txt"), []byte("new"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := tarDirectory(context.Background(), diffVol, filepath.Join(diffDir, "volume_0.tar"), nil, CompressionNone); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(diffDir, "config.json"), []byte(`{"diff":true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	outDir := t.TempDir()
-	if err := MergeContainerChainStaging(context.Background(), []string{fullDir, diffDir}, outDir); err != nil {
-		t.Fatalf("MergeContainerChainStaging() error = %v", err)
-	}
-
-	// config.json comes from the newest step.
-	cfg, err := os.ReadFile(filepath.Join(outDir, "config.json"))
-	if err != nil {
-		t.Fatalf("read merged config.json: %v", err)
-	}
-	if string(cfg) != `{"diff":true}` {
-		t.Fatalf("merged config.json = %s, want the newest step's", string(cfg))
-	}
-
-	// Extract the merged volume archive and assert both files are present.
-	extract := t.TempDir()
-	if err := untarDirectory(context.Background(), filepath.Join(outDir, "volume_0.tar"), extract); err != nil {
-		t.Fatalf("untar merged volume: %v", err)
-	}
-	for _, name := range []string{"old.txt", "new.txt"} {
-		if _, err := os.Stat(filepath.Join(extract, name)); err != nil {
-			t.Errorf("merged volume missing %s: %v", name, err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stepDirs, wantConfig := tt.setup(t)
+			outDir := t.TempDir()
+			if err := MergeContainerChainStaging(context.Background(), stepDirs, outDir); err != nil {
+				t.Fatalf("MergeContainerChainStaging() error = %v", err)
+			}
+			// config.json comes from the newest step.
+			assertMergedFile(t, outDir, "config.json", wantConfig)
+			assertMergedVolumeHas(t, outDir, tt.wantVolume...)
+		})
 	}
 }
 
@@ -80,30 +79,45 @@ func TestMergeContainerChainStagingOverlaysVolumes(t *testing.T) {
 func TestMergeCopyFilePreservesMode(t *testing.T) {
 	t.Parallel()
 
-	src := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(src, []byte(`{"a":1}`), 0o600); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		mode    os.FileMode
+		content string
+	}{
+		{
+			name:    "0600 source mode and content are copied",
+			mode:    0o600,
+			content: `{"a":1}`,
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(src, []byte(tt.content), tt.mode); err != nil {
+				t.Fatal(err)
+			}
 
-	dst := filepath.Join(t.TempDir(), "config.json")
-	if err := mergeCopyFile(src, dst); err != nil {
-		t.Fatalf("mergeCopyFile: %v", err)
-	}
+			dst := filepath.Join(t.TempDir(), "config.json")
+			if err := mergeCopyFile(src, dst); err != nil {
+				t.Fatalf("mergeCopyFile: %v", err)
+			}
 
-	info, err := os.Stat(dst)
-	if err != nil {
-		t.Fatalf("stat dst: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("dst mode = %o, want 600", info.Mode().Perm())
-	}
+			info, err := os.Stat(dst)
+			if err != nil {
+				t.Fatalf("stat dst: %v", err)
+			}
+			if info.Mode().Perm() != tt.mode {
+				t.Errorf("dst mode = %o, want %o", info.Mode().Perm(), tt.mode)
+			}
 
-	data, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read dst: %v", err)
-	}
-	if string(data) != `{"a":1}` {
-		t.Errorf("dst content = %q, want %q", string(data), `{"a":1}`)
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			if string(data) != tt.content {
+				t.Errorf("dst content = %q, want %q", string(data), tt.content)
+			}
+		})
 	}
 }
 
@@ -305,15 +319,26 @@ func TestMergeContainerChainStagingErrors(t *testing.T) {
 // directory that cannot be read is skipped (continue) rather than aborting the
 // merge, while still merging the readable steps.
 func TestMergeContainerChainStagingUnreadableStepDir(t *testing.T) {
-	full := t.TempDir()
-	writeTestVolume(t, full, "volume_0.tar", CompressionNone, map[string]string{"old.txt": "old"})
-
-	outDir := t.TempDir()
-	err := MergeContainerChainStaging(context.Background(), []string{full, filepath.Join(t.TempDir(), "does-not-exist")}, outDir)
-	if err != nil {
-		t.Fatalf("MergeContainerChainStaging() error = %v", err)
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "unreadable step dir is skipped and readable steps still merge",
+		},
 	}
-	assertMergedVolumeHas(t, outDir, "old.txt")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			full := t.TempDir()
+			writeTestVolume(t, full, "volume_0.tar", CompressionNone, map[string]string{"old.txt": "old"})
+
+			outDir := t.TempDir()
+			err := MergeContainerChainStaging(context.Background(), []string{full, filepath.Join(t.TempDir(), "does-not-exist")}, outDir)
+			if err != nil {
+				t.Fatalf("MergeContainerChainStaging() error = %v", err)
+			}
+			assertMergedVolumeHas(t, outDir, "old.txt")
+		})
+	}
 }
 
 // TestMergeCopyFileErrors exercises the error branches of mergeCopyFile:
