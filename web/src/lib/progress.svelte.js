@@ -137,6 +137,35 @@ export function syncFromStatus(status) {
   elapsedSec = Math.max(0, Math.round((Date.now() - startMs) / 1000))
 }
 
+/** Optimistically mark a job as active the moment its Run Now click
+ *  succeeds, so the row flips to Cancel immediately instead of waiting for
+ *  the job_run_started WebSocket event. Mirrors the job_run_started state
+ *  writes, but never clobbers a run that is already live: if another run is
+ *  active the guard short-circuits and leaves state untouched — the row keeps
+ *  showing Run Now until the server's queue_update event reflects the click.
+ */
+export function markJobActiveOptimistically(jobId, jobName) {
+  if (running && activeRun?.job_id != null) return
+  cancelling = false
+  running = true
+  clearTimeout(_completionTimer)
+  _completionTimer = null
+  activeRun = {
+    job_id: jobId,
+    run_id: null, // unknown until job_run_started arrives
+    job_name: jobName || `Job #${jobId}`,
+    started_at: Date.now(),
+    run_type: 'backup',
+  }
+  itemProgress = {}
+  overallDone = 0
+  overallFailed = 0
+  overallTotal = 0
+  elapsedSec = 0
+  clearInterval(_elapsedInterval)
+  _elapsedInterval = setInterval(() => { elapsedSec++ }, 1000)
+}
+
 /** Handle an incoming WebSocket message – update progress state.
  *  Returns true if this message was a progress event (handled).
  */

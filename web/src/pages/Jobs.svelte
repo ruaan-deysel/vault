@@ -5,7 +5,7 @@
   import { api } from '../lib/api.js'
   import { buildApiRequest } from '../lib/runtime-config.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { getProgress, handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
+  import { getProgress, handleProgressMessage, restoreFromStatus, markJobActiveOptimistically } from '../lib/progress.svelte.js'
   import { isJobRunningOrQueued } from '../lib/job-active.js'
   import { describeSchedule, relTimeUntil } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
@@ -507,9 +507,13 @@
     return () => { unsubWs(); unsubBaseline() }
   })
 
+  // Silent refresh: keep the existing table on screen while data reloads in
+  // the background. Only the very first load (empty table) shows skeletons —
+  // every later refresh updates the keyed rows in place, so a Run Now click
+  // never blanks the page into a skeleton flash.
   async function loadData() {
 	const loadId = ++dataLoadId
-    loading = true
+    loading = jobs.length === 0
     try {
       const [details, s, nr] = await Promise.all([api.listJobs(true), api.listStorage(), api.getNextRuns()])
 	  if (loadId !== dataLoadId) return
@@ -528,7 +532,7 @@
 	  if (loadId === dataLoadId) showToast(e.message, 'error')
     } finally {
 	  if (loadId === dataLoadId) loading = false
-    }
+	}
   }
 
   function openRemediate(job) {
@@ -786,6 +790,9 @@
     runningJob = job.id
     try {
       await api.runJob(job.id)
+      // Flip the row to Cancel immediately — don't wait for the
+      // job_run_started WebSocket event to make the round trip.
+      markJobActiveOptimistically(job.id, job.name)
       showToast(`"${job.name}" queued for execution`, 'success')
     } catch (e) {
       showToast(e.message, 'error')
