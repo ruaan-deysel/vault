@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { getProgress, markJobActiveOptimistically, handleProgressMessage } from './progress.svelte.js'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { getProgress, markJobActiveOptimistically, handleProgressMessage, restoreFromStatus, verifyRun, clearActiveRun } from './progress.svelte.js'
+
+afterEach(() => { clearActiveRun(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 // The store keeps module-level $state; tests share one instance, so each case
 // drives the store into the precondition it needs before asserting.
@@ -38,12 +40,104 @@ describe('markJobActiveOptimistically', () => {
       act: () => handleProgressMessage({ type: 'job_run_completed', job_id: 5, run_id: 42 }),
       assert: (p) => p.running === false,
     },
+    {
+      // The v003 regression: a completion whose run_id was never learned
+      // (job_run_started dropped by the lossy hub) must still clear the flag —
+      // matching on job_id when the placeholder has no run_id.
+      name: 'completion with unknown run_id still clears a placeholder for the same job',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      act: () => handleProgressMessage({ type: 'job_run_completed', job_id: 5, run_id: 42 }),
+      assert: (p) => p.running === false,
+    },
+    {
+      name: 'completion for a different job does not clear a real run',
+      pre: () => { handleProgressMessage({ type: 'job_run_started', job_id: 5, run_id: 42, job_name: 'plex' }) },
+      act: () => handleProgressMessage({ type: 'job_run_completed', job_id: 9, run_id: 77 }),
+      assert: (p) => p.running === true,
+    },
+    {
+      name: 'completion with a stale run_id does not clear a newer real run',
+      pre: () => { handleProgressMessage({ type: 'job_run_started', job_id: 5, run_id: 100, job_name: 'plex' }) },
+      act: () => handleProgressMessage({ type: 'job_run_completed', job_id: 5, run_id: 42 }),
+      assert: (p) => p.running === true,
+    },
   ]
 
   for (const c of cases) {
     it(c.name, () => {
       c.pre()
       c.act(getProgress())
+      expect(c.assert(getProgress())).toBe(true)
+    })
+  }
+})
+
+describe('restoreFromStatus adopts an optimistic placeholder', () => {
+  const cases = [
+    {
+      name: 'overwrites a placeholder (run_id null) with the real run',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      act: () => restoreFromStatus({ active: true, job_id: 5, run_id: 42, job_name: 'plex', items_total: 3 }),
+      assert: (p) => p.activeRun?.run_id === 42 && p.activeRun?.job_id === 5 && p.overallTotal === 3 && p.running === true,
+    },
+    {
+      name: 'does not overwrite a real run (run_id set) with a stale snapshot',
+      pre: () => { handleProgressMessage({ type: 'job_run_started', job_id: 5, run_id: 100, job_name: 'plex' }) },
+      act: () => restoreFromStatus({ active: true, job_id: 5, run_id: 42, job_name: 'plex' }),
+      assert: (p) => p.activeRun?.run_id === 100,
+    },
+    {
+      name: 'ignores an inactive status',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      act: () => restoreFromStatus({ active: false }),
+      assert: (p) => p.activeRun?.run_id === null && p.running === true,
+    },
+  ]
+
+  for (const c of cases) {
+    it(c.name, () => {
+      c.pre()
+      c.act()
+      expect(c.assert(getProgress())).toBe(true)
+    })
+  }
+})
+
+describe('verifyRun (watchdog)', () => {
+  const cases = [
+    {
+      name: 'clears state when the server reports nothing active',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      fetchResult: { ok: true, json: async () => ({ active: false }) },
+      assert: (p) => p.running === false && p.activeRun === null,
+    },
+    {
+      name: 'adopts the real run when still active but placeholder is unresolved',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      fetchResult: { ok: true, json: async () => ({ active: true, job_id: 5, run_id: 42, job_name: 'plex' }) },
+      assert: (p) => p.activeRun?.run_id === 42 && p.running === true,
+    },
+    {
+      // R1 regression: a different job active on the server must NOT be
+      // misattributed to the unresolved placeholder — clear it instead.
+      name: 'clears the placeholder when the active run belongs to a different job',
+      pre: () => { markJobActiveOptimistically(5, 'plex') },
+      fetchResult: { ok: true, json: async () => ({ active: true, job_id: 9, run_id: 77, job_name: 'other' }) },
+      assert: (p) => p.running === false && p.activeRun === null,
+    },
+    {
+      name: 'does nothing when already idle',
+      pre: () => {},
+      fetchResult: { ok: true, json: async () => ({ active: false }) },
+      assert: (p) => p.running === false && p.activeRun === null,
+    },
+  ]
+
+  for (const c of cases) {
+    it(c.name, async () => {
+      c.pre()
+      vi.stubGlobal('fetch', async () => c.fetchResult)
+      await verifyRun()
       expect(c.assert(getProgress())).toBe(true)
     })
   }

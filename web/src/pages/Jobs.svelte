@@ -791,7 +791,9 @@
     try {
       await api.runJob(job.id)
       // Flip the row to Cancel immediately — don't wait for the
-      // job_run_started WebSocket event to make the round trip.
+      // job_run_started WebSocket event to make the round trip. The run
+      // watchdog (started inside) reconciles against /runner/status if that
+      // event is ever dropped.
       markJobActiveOptimistically(job.id, job.name)
       showToast(`"${job.name}" queued for execution`, 'success')
     } catch (e) {
