@@ -3266,10 +3266,8 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		for i, rp := range chain {
 			// Skip steps that conclusively did not capture this item (e.g. the
 			// item was added to the job after this step's backup ran).
-			if members, known := rp.BackedUpItems(); known {
-				if _, ok := members[itemName]; !ok {
-					continue
-				}
+			if !rpContainsItem(rp, itemName) {
+				continue
 			}
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Restore chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
@@ -3341,10 +3339,8 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	}
 	written := make(map[string]writtenEntry)
 	for _, step := range chain[:len(chain)-1] {
-		if members, known := step.BackedUpItems(); known {
-			if _, ok := members[itemName]; !ok {
-				continue
-			}
+		if !rpContainsItem(step, itemName) {
+			continue
 		}
 		idx, ok := r.readItemSidecar(adapter, step, itemName, engine.IndexSuffix, passphrase)
 		if !ok {
@@ -3708,10 +3704,8 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 	if itemType == "vm" && len(chain) > 1 {
 		stepDirs := make([]string, 0, len(chain))
 		for i, rp := range chain {
-			if members, known := rp.BackedUpItems(); known {
-				if _, ok := members[itemName]; !ok {
-					continue
-				}
+			if !rpContainsItem(rp, itemName) {
+				continue
 			}
 			r.runLog(reporter.RunID, runLogLevelInfo,
 				fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
@@ -3755,10 +3749,8 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 
 	stagedSteps := 0
 	for i, rp := range chain {
-		if members, known := rp.BackedUpItems(); known {
-			if _, ok := members[itemName]; !ok {
-				continue
-			}
+		if !rpContainsItem(rp, itemName) {
+			continue
 		}
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
@@ -3792,10 +3784,8 @@ func (r *Runner) restoreMergedChain(ctx context.Context, chain []db.RestorePoint
 func (r *Runner) stageContainerChainMerged(ctx context.Context, chain []db.RestorePoint, itemName, passphrase string, reporter restoreProgressReporter, tmpDir string) (string, error) {
 	stepDirs := make([]string, 0, len(chain))
 	for i, rp := range chain {
-		if members, known := rp.BackedUpItems(); known {
-			if _, ok := members[itemName]; !ok {
-				continue
-			}
+		if !rpContainsItem(rp, itemName) {
+			continue
 		}
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Staging chain step %d/%d (type=%s, id=%d)", i+1, len(chain), rp.BackupType, rp.ID),
@@ -5661,20 +5651,25 @@ func vmCheckpointFromRPMeta(metadata, itemName string) string {
 	return cp
 }
 
-// itemCapturedInParentRP reports whether the item was captured in the parent
-// restore point. If membership cannot be determined (e.g. legacy restore points
-// without per-item metadata), it fails open (returns true) so existing restore
-// chains continue without disruption.
-func itemCapturedInParentRP(parentRP *db.RestorePoint, itemName string) bool {
-	if parentRP == nil {
-		return false
-	}
-	members, known := parentRP.BackedUpItems()
+// rpContainsItem reports whether rp captured itemName. If membership cannot be
+// determined (e.g. legacy restore points without per-item metadata), it fails
+// open (returns true) so existing restore chains continue without disruption.
+func rpContainsItem(rp db.RestorePoint, itemName string) bool {
+	members, known := rp.BackedUpItems()
 	if !known {
 		return true
 	}
 	_, ok := members[itemName]
 	return ok
+}
+
+// itemCapturedInParentRP reports whether the item was captured in the parent
+// restore point.
+func itemCapturedInParentRP(parentRP *db.RestorePoint, itemName string) bool {
+	if parentRP == nil {
+		return false
+	}
+	return rpContainsItem(*parentRP, itemName)
 }
 
 // parseItemChecksums extracts the SHA-256 checksums for a specific item from

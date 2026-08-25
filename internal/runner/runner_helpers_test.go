@@ -231,6 +231,59 @@ func TestVMCheckpointFromRPMetaPresent(t *testing.T) {
 	}
 }
 
+// TestRPContainsItem tests restore point membership checking and fail-open paths.
+func TestRPContainsItem(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		rp   db.RestorePoint
+		item string
+		want bool
+	}{
+		{
+			name: "item present in item_sizes",
+			rp: db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "plex",
+			want: true,
+		},
+		{
+			name: "item absent from item_sizes",
+			rp: db.RestorePoint{
+				Metadata: `{"item_sizes":{"plex":1024,"sonarr":2048}}`,
+			},
+			item: "radarr",
+			want: false,
+		},
+		{
+			name: "legacy metadata without item maps fails open",
+			rp: db.RestorePoint{
+				Metadata: `{"size_bytes":1234}`,
+			},
+			item: "new-item",
+			want: true,
+		},
+		{
+			name: "empty metadata fails open",
+			rp:   db.RestorePoint{Metadata: ""},
+			item: "new-item",
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := rpContainsItem(tc.rp, tc.item)
+			if got != tc.want {
+				t.Errorf("rpContainsItem(..., %q) = %v, want %v", tc.item, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestItemCapturedInParentRP tests membership checking and the fail-open path.
 func TestItemCapturedInParentRP(t *testing.T) {
 	t.Parallel()
