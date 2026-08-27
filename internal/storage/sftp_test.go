@@ -3,6 +3,9 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"testing"
 	"time"
 
@@ -73,5 +76,35 @@ func TestSFTPGetCapacityContextCancelled(t *testing.T) {
 	// The early ctx.Err() path returns context.Canceled directly (no wrap).
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestIsSFTPNotFound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"fs.ErrNotExist", fs.ErrNotExist, true},
+		{"os.ErrNotExist", os.ErrNotExist, true},
+		{"wrapped fs.ErrNotExist", fmt.Errorf("read: %w", fs.ErrNotExist), true},
+		{"wrapped os.ErrNotExist", &os.PathError{Op: "open", Path: "/missing", Err: os.ErrNotExist}, true},
+		{"sftp.ErrSSHFxNoSuchFile fxerr", sftp.ErrSSHFxNoSuchFile, true},
+		{"sftp.StatusError with Code 2", &sftp.StatusError{Code: 2}, true},
+		{"other sftp status error", sftp.ErrSSHFxPermissionDenied, false},
+		{"other generic error", errors.New("connection failed"), false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isSFTPNotFound(tt.err); got != tt.want {
+				t.Errorf("isSFTPNotFound(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

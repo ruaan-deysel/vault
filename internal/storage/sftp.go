@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -388,6 +390,20 @@ func (s *SFTPAdapter) Delete(path string) (retErr error) {
 	return client.Remove(fullPath)
 }
 
+func isSFTPNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errors.Is(err, sftp.ErrSSHFxNoSuchFile) {
+		return true
+	}
+	var statusErr *sftp.StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.FxCode() == sftp.ErrSSHFxNoSuchFile || statusErr.Code == 2 // 2 is SSH_FX_NO_SUCH_FILE
+	}
+	return false
+}
+
 func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
 	conn, err := s.pool.get()
 	if err != nil {
@@ -405,7 +421,10 @@ func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
 	}
 	entries, err := client.ReadDir(fullPath)
 	if err != nil {
-		return nil, err
+		if isSFTPNotFound(err) {
+			return nil, fmt.Errorf("sftp: list %s: %w: %w", fullPath, fs.ErrNotExist, err)
+		}
+		return nil, fmt.Errorf("sftp: list %s: %w", fullPath, err)
 	}
 
 	var files []FileInfo
