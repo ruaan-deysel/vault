@@ -42,9 +42,10 @@ type bridgedHandler struct {
 }
 
 func (b *bridgedHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	// If active level is Warn or Error, stdlib log messages (entering at LevelInfo)
-	// must pass Enabled check so Handle can inspect message prefixes.
-	if level == slog.LevelInfo && (levelVar.Level() == slog.LevelWarn || levelVar.Level() == slog.LevelError) {
+	// If active level is above Info (e.g. Warn, Error, or custom levels in-between),
+	// stdlib log messages (entering at LevelInfo) must pass Enabled check so Handle
+	// can inspect message prefixes and promote warnings/errors appropriately.
+	if level == slog.LevelInfo && levelVar.Level() > slog.LevelInfo && levelVar.Level() <= slog.LevelError {
 		return true
 	}
 	return level >= levelVar.Level()

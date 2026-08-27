@@ -240,3 +240,34 @@ func TestSetLevelAndLevelStringUnknown(t *testing.T) {
 	}
 	logx.SetLevel(slog.LevelInfo)
 }
+
+func TestCustomLevelBetweenWarnAndError(t *testing.T) {
+	buf := new(bytes.Buffer)
+	logx.Setup(buf)
+
+	customLevel := slog.LevelWarn + 1
+	logx.SetLevel(customLevel)
+
+	// A normal standard log message (unprefixed) should be filtered out
+	buf.Reset()
+	log.Printf("normal status message")
+	if buf.Len() > 0 {
+		t.Errorf("expected normal info message to be filtered at custom level %v, got: %s", customLevel, buf.String())
+	}
+
+	// A warning message should be filtered out since customLevel > LevelWarn
+	buf.Reset()
+	log.Printf("Warning: minor warning")
+	if buf.Len() > 0 {
+		t.Errorf("expected warning to be filtered at custom level %v, got: %s", customLevel, buf.String())
+	}
+
+	// An error message should be promoted to LevelError (> customLevel) and printed
+	buf.Reset()
+	log.Printf("Error: critical failure")
+	if !strings.Contains(buf.String(), "Error: critical failure") || !strings.Contains(buf.String(), "level=ERROR") {
+		t.Errorf("expected error message to be printed at custom level %v, got: %s", customLevel, buf.String())
+	}
+
+	logx.SetLevel(slog.LevelInfo)
+}
