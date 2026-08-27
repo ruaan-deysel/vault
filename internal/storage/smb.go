@@ -27,7 +27,8 @@ type SMBConfig struct {
 }
 
 type SMBAdapter struct {
-	config SMBConfig
+	config  SMBConfig
+	readDir func(fullPath string) ([]os.FileInfo, error)
 }
 
 func NewSMBAdapter(config SMBConfig) (*SMBAdapter, error) {
@@ -240,18 +241,26 @@ func isSMBNotFound(err error) bool {
 }
 
 func (s *SMBAdapter) List(prefix string) ([]FileInfo, error) {
-	share, session, err := s.connect()
-	if err != nil {
-		return nil, err
-	}
-	defer session.Logoff()
-	defer share.Umount()
-
 	fullPath, err := s.fullPath(prefix, true)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := share.ReadDir(fullPath)
+
+	var entries []os.FileInfo
+	if s.readDir != nil {
+		entries, err = s.readDir(fullPath)
+	} else {
+		var share *smb2.Share
+		var session *smb2.Session
+		share, session, err = s.connect()
+		if err != nil {
+			return nil, err
+		}
+		defer session.Logoff()
+		defer share.Umount()
+
+		entries, err = share.ReadDir(fullPath)
+	}
 	if err != nil {
 		if isSMBNotFound(err) {
 			return nil, fmt.Errorf("smb: list %s: %w: %w", fullPath, fs.ErrNotExist, err)

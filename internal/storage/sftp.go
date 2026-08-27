@@ -57,8 +57,9 @@ func (c *sftpConnection) Close() error {
 }
 
 type SFTPAdapter struct {
-	config SFTPConfig
-	pool   *sftpPool
+	config  SFTPConfig
+	pool    *sftpPool
+	readDir func(fullPath string) ([]os.FileInfo, error)
 }
 
 func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
@@ -405,21 +406,28 @@ func isSFTPNotFound(err error) bool {
 }
 
 func (s *SFTPAdapter) List(prefix string) (_ []FileInfo, retErr error) {
-	conn, err := s.pool.get()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { s.pool.put(conn, retErr) }()
-	client := conn.(*sftpConnection).sftp
-
 	fullPath, err := s.fullPath(prefix, true)
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
-		return nil, err
+
+	var entries []os.FileInfo
+	if s.readDir != nil {
+		entries, err = s.readDir(fullPath)
+	} else {
+		var conn sftpConn
+		conn, err = s.pool.get()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { s.pool.put(conn, retErr) }()
+		client := conn.(*sftpConnection).sftp
+
+		if err = verifyRemoteNoSymlinkEscape(client, s.config.BasePath, fullPath); err != nil {
+			return nil, err
+		}
+		entries, err = client.ReadDir(fullPath)
 	}
-	entries, err := client.ReadDir(fullPath)
 	if err != nil {
 		if isSFTPNotFound(err) {
 			return nil, fmt.Errorf("sftp: list %s: %w: %w", fullPath, fs.ErrNotExist, err)
