@@ -251,3 +251,18 @@ func TestSPACacheHeaders(t *testing.T) {
 		}
 	})
 }
+
+func TestReadOnlySettingsUpdateRejected(t *testing.T) {
+	database := testDB(t)
+	srv := NewServer(database, ServerConfig{Addr: ":0", ReadOnly: true})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"log_level":"debug"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("PUT /api/v1/settings in ReadOnly mode: status = %d, want %d (Forbidden); body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+

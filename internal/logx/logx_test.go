@@ -1,0 +1,125 @@
+package logx_test
+
+import (
+	"bytes"
+	"log"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ruaan-deysel/vault/internal/logx"
+)
+
+func TestSetLevelString(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected slog.Level
+		expStr   string
+	}{
+		{"debug", slog.LevelDebug, "debug"},
+		{"DEBUG", slog.LevelDebug, "debug"},
+		{"  debug  ", slog.LevelDebug, "debug"},
+		{"info", slog.LevelInfo, "info"},
+		{"INFO", slog.LevelInfo, "info"},
+		{"warn", slog.LevelWarn, "warn"},
+		{"warning", slog.LevelWarn, "warn"},
+		{"WARN", slog.LevelWarn, "warn"},
+		{"error", slog.LevelError, "error"},
+		{"ERROR", slog.LevelError, "error"},
+		{"unknown", slog.LevelInfo, "info"},
+		{"", slog.LevelInfo, "info"},
+		{"invalid_level", slog.LevelInfo, "info"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			logx.SetLevelString(tt.input)
+			if got := logx.Level(); got != tt.expected {
+				t.Errorf("SetLevelString(%q): Level() = %v, want %v", tt.input, got, tt.expected)
+			}
+			if got := logx.LevelString(); got != tt.expStr {
+				t.Errorf("SetLevelString(%q): LevelString() = %q, want %q", tt.input, got, tt.expStr)
+			}
+		})
+	}
+}
+
+func TestSetupAndLeveledFiltering(t *testing.T) {
+	buf := new(bytes.Buffer)
+	logx.Setup(buf)
+
+	// Set to INFO
+	logx.SetLevelString("info")
+	buf.Reset()
+
+	slog.Debug("debug message should be hidden")
+	if buf.Len() > 0 {
+		t.Errorf("expected debug to be filtered at INFO level, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	slog.Info("info message should appear", "key", "val")
+	if !strings.Contains(buf.String(), "info message should appear") {
+		t.Errorf("expected info message to appear, got: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "level=INFO") {
+		t.Errorf("expected level=INFO in output, got: %s", buf.String())
+	}
+
+	// Dynamic switch to DEBUG at runtime
+	logx.SetLevelString("debug")
+	buf.Reset()
+	slog.Debug("debug message should now appear", "num", 42)
+	if !strings.Contains(buf.String(), "debug message should now appear") {
+		t.Errorf("expected debug message after level change to debug, got: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "level=DEBUG") {
+		t.Errorf("expected level=DEBUG in output, got: %s", buf.String())
+	}
+
+	// Test standard log integration (log.Print routes at INFO level)
+	logx.SetLevelString("info")
+	buf.Reset()
+	log.Printf("standard log message via print %d", 123)
+	if !strings.Contains(buf.String(), "standard log message via print 123") {
+		t.Errorf("expected standard log to route through slog, got: %s", buf.String())
+	}
+
+	// Switch to WARN: standard log (INFO) should be filtered out
+	logx.SetLevelString("warn")
+	buf.Reset()
+	log.Printf("another standard log message")
+	if buf.Len() > 0 {
+		t.Errorf("expected standard log (INFO) to be filtered at WARN level, got: %s", buf.String())
+	}
+
+	// Reset level to info for clean state
+	logx.SetLevelString("info")
+}
+
+func TestReplaceAttrTimeFormatting(t *testing.T) {
+	buf := new(bytes.Buffer)
+	logx.Setup(buf)
+	logx.SetLevelString("info")
+
+	slog.Info("testing timestamp formatting")
+	out := buf.String()
+
+	// Check time format conforms to RFC3339 prefix like time=202...
+	if !strings.Contains(out, "time=") {
+		t.Fatalf("expected time attribute in output, got: %s", out)
+	}
+
+	// Extract time value: time=...
+	idx := strings.Index(out, "time=")
+	timePart := out[idx+5:]
+	if spaceIdx := strings.Index(timePart, " "); spaceIdx != -1 {
+		timePart = timePart[:spaceIdx]
+	}
+	timePart = strings.Trim(timePart, "\"\n\r")
+
+	if _, err := time.Parse(time.RFC3339, timePart); err != nil {
+		t.Errorf("time attribute %q is not valid RFC3339: %v", timePart, err)
+	}
+}
