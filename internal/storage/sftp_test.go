@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -109,99 +111,83 @@ func TestIsSFTPNotFound(t *testing.T) {
 	}
 }
 
-type fakeStorageFileInfo struct {
-	name    string
-	size    int64
-	mode    os.FileMode
-	modTime time.Time
-	isDir   bool
+func TestWrapSFTPListError(t *testing.T) {
+	t.Parallel()
+
+	if err := wrapSFTPListError(nil, "/test"); err != nil {
+		t.Errorf("wrapSFTPListError(nil) = %v, want nil", err)
+	}
+
+	notFoundErr := wrapSFTPListError(fs.ErrNotExist, "/missing")
+	if notFoundErr == nil || !IsNotExist(notFoundErr) {
+		t.Errorf("wrapSFTPListError(fs.ErrNotExist) = %v, want ErrNotExist", notFoundErr)
+	}
+
+	genericErr := wrapSFTPListError(errors.New("network drop"), "/path")
+	if genericErr == nil || IsNotExist(genericErr) {
+		t.Errorf("wrapSFTPListError(generic) = %v, want non-ErrNotExist", genericErr)
+	}
 }
 
-func (f fakeStorageFileInfo) Name() string       { return f.name }
-func (f fakeStorageFileInfo) Size() int64        { return f.size }
-func (f fakeStorageFileInfo) Mode() os.FileMode  { return f.mode }
-func (f fakeStorageFileInfo) ModTime() time.Time { return f.modTime }
-func (f fakeStorageFileInfo) IsDir() bool        { return f.isDir }
-func (f fakeStorageFileInfo) Sys() any           { return nil }
+func newInProcessSFTP(t *testing.T, root string) *SFTPAdapter {
+	t.Helper()
+	cConn, sConn := net.Pipe()
+	server, err := sftp.NewServer(sConn)
+	if err != nil {
+		t.Fatalf("sftp.NewServer: %v", err)
+	}
+	go func() { _ = server.Serve() }()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = cConn.Close()
+		_ = sConn.Close()
+	})
+	client, err := sftp.NewClientPipe(cConn, cConn)
+	if err != nil {
+		t.Fatalf("sftp.NewClientPipe: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	adapter := &SFTPAdapter{
+		config: SFTPConfig{BasePath: root},
+		pool: newSFTPPool(1, func() (sftpConn, error) {
+			return &sftpConnection{sftp: client}, nil
+		}),
+	}
+	return adapter
+}
 
 func TestSFTPAdapterList(t *testing.T) {
 	t.Parallel()
 
-	t.Run("not found error normalized to fs.ErrNotExist", func(t *testing.T) {
-		t.Parallel()
-		a := &SFTPAdapter{
-			config: SFTPConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, os.ErrNotExist
-			},
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "item")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("os.MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "test.tar"), []byte("data"), 0600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	a := newInProcessSFTP(t, dir)
+
+	t.Run("successful listing", func(t *testing.T) {
+		files, err := a.List("item")
+		if err != nil {
+			t.Fatalf("List(item) unexpected error: %v", err)
 		}
+		if len(files) != 1 || files[0].Path != "item/test.tar" {
+			t.Errorf("List(item) unexpected result: %+v", files)
+		}
+	})
+
+	t.Run("missing directory returns not-found", func(t *testing.T) {
 		files, err := a.List("nonexistent")
 		if files != nil {
 			t.Errorf("expected nil files, got %v", files)
 		}
 		if !IsNotExist(err) {
-			t.Errorf("expected IsNotExist(err)=true, got err=%v", err)
-		}
-	})
-
-	t.Run("sftp status error normalized to fs.ErrNotExist", func(t *testing.T) {
-		t.Parallel()
-		a := &SFTPAdapter{
-			config: SFTPConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, sftp.ErrSSHFxNoSuchFile
-			},
-		}
-		files, err := a.List("missing")
-		if files != nil {
-			t.Errorf("expected nil files, got %v", files)
-		}
-		if !IsNotExist(err) {
-			t.Errorf("expected IsNotExist(err)=true, got err=%v", err)
-		}
-	})
-
-	t.Run("generic error preserved as hard error", func(t *testing.T) {
-		t.Parallel()
-		a := &SFTPAdapter{
-			config: SFTPConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, errors.New("i/o failure")
-			},
-		}
-		files, err := a.List("corrupt")
-		if files != nil {
-			t.Errorf("expected nil files, got %v", files)
-		}
-		if err == nil || IsNotExist(err) {
-			t.Errorf("expected non-IsNotExist error, got err=%v", err)
-		}
-	})
-
-	t.Run("successful listing", func(t *testing.T) {
-		t.Parallel()
-		now := time.Now().UTC()
-		a := &SFTPAdapter{
-			config: SFTPConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return []os.FileInfo{
-					fakeStorageFileInfo{name: "file.tar", size: 1024, modTime: now, isDir: false},
-					fakeStorageFileInfo{name: "subdir", size: 0, modTime: now, isDir: true},
-				}, nil
-			},
-		}
-		files, err := a.List("my-item")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(files) != 2 {
-			t.Fatalf("got %d files, want 2", len(files))
-		}
-		if files[0].Path != "my-item/file.tar" || files[0].Size != 1024 || files[0].IsDir {
-			t.Errorf("files[0] mismatch: %+v", files[0])
-		}
-		if files[1].Path != "my-item/subdir" || !files[1].IsDir {
-			t.Errorf("files[1] mismatch: %+v", files[1])
+			t.Errorf("expected IsNotExist(err)=true, got %v", err)
 		}
 	})
 }

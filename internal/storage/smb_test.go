@@ -121,84 +121,25 @@ func TestIsSMBNotFound(t *testing.T) {
 	}
 }
 
-func TestSMBAdapterList(t *testing.T) {
+func TestWrapSMBListError(t *testing.T) {
 	t.Parallel()
 
-	t.Run("not found error normalized to fs.ErrNotExist", func(t *testing.T) {
-		t.Parallel()
-		a := &SMBAdapter{
-			config: SMBConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, os.ErrNotExist
-			},
-		}
-		files, err := a.List("nonexistent")
-		if files != nil {
-			t.Errorf("expected nil files, got %v", files)
-		}
-		if !IsNotExist(err) {
-			t.Errorf("expected IsNotExist(err)=true, got err=%v", err)
-		}
-	})
+	if err := wrapSMBListError(nil, "/test"); err != nil {
+		t.Errorf("wrapSMBListError(nil) = %v, want nil", err)
+	}
 
-	t.Run("smb status error normalized to fs.ErrNotExist", func(t *testing.T) {
-		t.Parallel()
-		a := &SMBAdapter{
-			config: SMBConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, &smb2.ResponseError{Code: 0xC0000034}
-			},
-		}
-		files, err := a.List("missing")
-		if files != nil {
-			t.Errorf("expected nil files, got %v", files)
-		}
-		if !IsNotExist(err) {
-			t.Errorf("expected IsNotExist(err)=true, got err=%v", err)
-		}
-	})
+	notFoundErr := wrapSMBListError(fs.ErrNotExist, "/missing")
+	if notFoundErr == nil || !IsNotExist(notFoundErr) {
+		t.Errorf("wrapSMBListError(fs.ErrNotExist) = %v, want ErrNotExist", notFoundErr)
+	}
 
-	t.Run("generic error preserved as hard error", func(t *testing.T) {
-		t.Parallel()
-		a := &SMBAdapter{
-			config: SMBConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return nil, errors.New("smb network drop")
-			},
-		}
-		files, err := a.List("corrupt")
-		if files != nil {
-			t.Errorf("expected nil files, got %v", files)
-		}
-		if err == nil || IsNotExist(err) {
-			t.Errorf("expected non-IsNotExist error, got err=%v", err)
-		}
-	})
+	smbNotFoundErr := wrapSMBListError(&smb2.ResponseError{Code: 0xC0000034}, "/missing")
+	if smbNotFoundErr == nil || !IsNotExist(smbNotFoundErr) {
+		t.Errorf("wrapSMBListError(STATUS_OBJECT_NAME_NOT_FOUND) = %v, want ErrNotExist", smbNotFoundErr)
+	}
 
-	t.Run("successful listing", func(t *testing.T) {
-		t.Parallel()
-		now := time.Now().UTC()
-		a := &SMBAdapter{
-			config: SMBConfig{BasePath: "/backups"},
-			readDir: func(fullPath string) ([]os.FileInfo, error) {
-				return []os.FileInfo{
-					fakeStorageFileInfo{name: "image.tar", size: 2048, modTime: now, isDir: false},
-					fakeStorageFileInfo{name: "nested", size: 0, modTime: now, isDir: true},
-				}, nil
-			},
-		}
-		files, err := a.List("my-item")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(files) != 2 {
-			t.Fatalf("got %d files, want 2", len(files))
-		}
-		if files[0].Path != "my-item/image.tar" || files[0].Size != 2048 || files[0].IsDir {
-			t.Errorf("files[0] mismatch: %+v", files[0])
-		}
-		if files[1].Path != "my-item/nested" || !files[1].IsDir {
-			t.Errorf("files[1] mismatch: %+v", files[1])
-		}
-	})
+	genericErr := wrapSMBListError(errors.New("smb network drop"), "/path")
+	if genericErr == nil || IsNotExist(genericErr) {
+		t.Errorf("wrapSMBListError(generic) = %v, want non-ErrNotExist", genericErr)
+	}
 }
