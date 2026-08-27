@@ -42,6 +42,8 @@ import (
 // tests can override via the unexported var if needed.
 const daemonLogBufferBytes = 1 << 20
 
+var hybridWorkingDir = "/var/local/vault"
+
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Start the Vault daemon (API server + scheduler)",
@@ -142,7 +144,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		if hybridMode {
-			workingDir := "/var/local/vault"
+			workingDir := hybridWorkingDir
 			if err := os.MkdirAll(workingDir, 0o750); err != nil {
 				return fmt.Errorf("creating hybrid working directory: %w", err)
 			}

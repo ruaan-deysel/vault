@@ -117,5 +117,34 @@ func TestReplicaCmd_LogLevelApplied(t *testing.T) {
 	logx.SetLevelString("info")
 }
 
+func TestReplicaCmd_RunE_LogLevelApplied(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "vault.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	if err := database.SetSetting("log_level", "error"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	_ = database.Close()
+
+	cmd := &cobra.Command{Use: "replica"}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("db", dbPath, "Database path")
+	cmd.Flags().String("addr", "127.0.0.1:0", "Listen address")
+	cmd.Flags().String("tls-cert", filepath.Join(dir, "nonexistent.crt"), "TLS cert")
+	cmd.Flags().String("tls-key", filepath.Join(dir, "nonexistent.key"), "TLS key")
+
+	logx.SetLevelString("info")
+	_ = replicaCmd.RunE(cmd, nil)
+
+	if logx.LevelString() != "error" {
+		t.Errorf("expected logx level to be error, got %q", logx.LevelString())
+	}
+	logx.SetLevelString("info")
+}
+
 // Ensure context import is used.
 var _ context.Context = context.Background()
+
