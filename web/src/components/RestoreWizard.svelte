@@ -770,7 +770,7 @@
          to extract. Items with an empty selection restore in full. -->
     <div class="mb-6 space-y-3">
       {#each selectedItemsArray as item (itemKey(item))}
-        {@const entry = picker.get(item.name)}
+        {@const entry = picker.get(itemKey(item))}
         {@const sel = entry?.selected?.size || 0}
         {@const total = entry?.contents?.files?.length || 0}
         {#if !supportsFilePicker(item.type)}
