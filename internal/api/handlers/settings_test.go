@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1184,3 +1185,52 @@ func TestUpdate_LogLevel_Invalid(t *testing.T) {
 	}
 }
 
+func TestUpdate_LogLevel_ConcurrentInterleaving(t *testing.T) {
+	h := newTestSettingsHandler(t)
+
+	var (
+		hookMu        sync.Mutex
+		lastHookLevel string
+	)
+	h.SetLogLevelChangeHook(func(lvl string) {
+		hookMu.Lock()
+		lastHookLevel = lvl
+		hookMu.Unlock()
+	})
+
+	const iterations = 20
+	var wg sync.WaitGroup
+	barrier := make(chan struct{})
+
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-barrier
+			level := "debug"
+			if idx%2 == 0 {
+				level = "warn"
+			}
+			body := `{"log_level":"` + level + `"}`
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			h.Update(w, req)
+		}(i)
+	}
+
+	close(barrier)
+	wg.Wait()
+
+	stored, err := h.db.GetSetting("log_level", "info")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+
+	hookMu.Lock()
+	finalHook := lastHookLevel
+	hookMu.Unlock()
+
+	if stored != finalHook {
+		t.Errorf("stored setting %q does not match final applied hook level %q", stored, finalHook)
+	}
+}

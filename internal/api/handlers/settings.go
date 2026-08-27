@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/config"
@@ -36,6 +37,7 @@ type SettingsHandler struct {
 	onConfigChange       ConfigChangeHook
 	onScheduleReload     ScheduleReloader
 	onLogLevelChange     func(string)
+	logLevelMu           sync.Mutex
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -321,8 +323,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.logLevelMu.Lock()
 	for k, v := range incoming {
 		if err := h.db.SetSetting(k, v); err != nil {
+			h.logLevelMu.Unlock()
 			respondInternalError(w, err)
 			return
 		}
@@ -337,6 +341,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if v, ok := incoming["log_level"]; ok && h.onLogLevelChange != nil {
 		h.onLogLevelChange(v)
 	}
+	h.logLevelMu.Unlock()
 
 	// Return the full settings object.
 	h.notifyConfigChange()

@@ -147,4 +147,3 @@ func TestReplicaCmd_RunE_LogLevelApplied(t *testing.T) {
 
 // Ensure context import is used.
 var _ context.Context = context.Background()
-

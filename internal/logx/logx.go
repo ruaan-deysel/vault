@@ -1,12 +1,14 @@
 // Package logx provides centralized, runtime-adjustable leveled logging using
 // log/slog. It bridges Go's standard log package output into a shared slog
 // handler so that existing log.Print* calls respect the runtime log level
-// without requiring changes across all call sites.
+// while preserving warning and error message visibility.
 //
 // This package is intentionally kept free of database or settings dependencies.
 package logx
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -19,14 +21,66 @@ var levelVar = new(slog.LevelVar)
 
 // Setup initializes the global default logger with a text handler writing to w
 // at the level governed by levelVar. Standard library log output is routed
-// through this handler at Info level.
+// through this handler, with severity inference for conventional prefixes
+// ("warning:", "warn", "error:", "err:", "debug:", etc.).
 func Setup(w io.Writer) {
 	opts := &slog.HandlerOptions{
 		Level:       levelVar,
 		ReplaceAttr: replaceAttr,
 	}
-	handler := slog.NewTextHandler(w, opts)
+	textHandler := slog.NewTextHandler(w, opts)
+	handler := &bridgedHandler{inner: textHandler}
 	slog.SetDefault(slog.New(handler))
+}
+
+// bridgedHandler wraps an slog.Handler to ensure standard library log messages
+// (which enter slog at LevelInfo by default) have their severity inferred from
+// message prefixes, allowing Warnings and Errors from legacy log.Printf sites
+// to remain visible even when the log level is set to Warn or Error.
+type bridgedHandler struct {
+	inner slog.Handler
+}
+
+func (b *bridgedHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	// If active level is Warn or Error, stdlib log messages (entering at LevelInfo)
+	// must pass Enabled check so Handle can inspect message prefixes.
+	if level == slog.LevelInfo && (levelVar.Level() == slog.LevelWarn || levelVar.Level() == slog.LevelError) {
+		return true
+	}
+	return level >= levelVar.Level()
+}
+
+func (b *bridgedHandler) Handle(ctx context.Context, r slog.Record) error {
+	effectiveLevel := r.Level
+	if r.Level == slog.LevelInfo {
+		msg := strings.TrimSpace(r.Message)
+		lower := strings.ToLower(msg)
+		if strings.HasPrefix(lower, "error") || strings.HasPrefix(lower, "err:") || strings.HasPrefix(lower, "fatal") || strings.HasPrefix(lower, "panic") {
+			effectiveLevel = slog.LevelError
+		} else if strings.HasPrefix(lower, "warning") || strings.HasPrefix(lower, "warn") {
+			effectiveLevel = slog.LevelWarn
+		} else if strings.HasPrefix(lower, "debug") || strings.HasPrefix(lower, "[debug]") {
+			effectiveLevel = slog.LevelDebug
+		}
+	}
+
+	if effectiveLevel < levelVar.Level() {
+		return nil
+	}
+
+	if effectiveLevel != r.Level {
+		r.Level = effectiveLevel
+	}
+
+	return b.inner.Handle(ctx, r)
+}
+
+func (b *bridgedHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &bridgedHandler{inner: b.inner.WithAttrs(attrs)}
+}
+
+func (b *bridgedHandler) WithGroup(name string) slog.Handler {
+	return &bridgedHandler{inner: b.inner.WithGroup(name)}
 }
 
 // replaceAttr formats record attributes to ensure log lines stay clean,
@@ -83,4 +137,44 @@ func LevelString() string {
 	default:
 		return "info"
 	}
+}
+
+// Debug logs at LevelDebug.
+func Debug(msg string, args ...any) {
+	slog.Default().Debug(msg, args...)
+}
+
+// Info logs at LevelInfo.
+func Info(msg string, args ...any) {
+	slog.Default().Info(msg, args...)
+}
+
+// Warn logs at LevelWarn.
+func Warn(msg string, args ...any) {
+	slog.Default().Warn(msg, args...)
+}
+
+// Error logs at LevelError.
+func Error(msg string, args ...any) {
+	slog.Default().Error(msg, args...)
+}
+
+// Debugf formats and logs at LevelDebug.
+func Debugf(format string, args ...any) {
+	slog.Default().Debug(fmt.Sprintf(format, args...))
+}
+
+// Infof formats and logs at LevelInfo.
+func Infof(format string, args ...any) {
+	slog.Default().Info(fmt.Sprintf(format, args...))
+}
+
+// Warnf formats and logs at LevelWarn.
+func Warnf(format string, args ...any) {
+	slog.Default().Warn(fmt.Sprintf(format, args...))
+}
+
+// Errorf formats and logs at LevelError.
+func Errorf(format string, args ...any) {
+	slog.Default().Error(fmt.Sprintf(format, args...))
 }

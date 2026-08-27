@@ -345,5 +345,3 @@ func TestDaemonCmd_RunE_LogLevelApplied(t *testing.T) {
 	}
 	logx.SetLevelString("info")
 }
-
-
