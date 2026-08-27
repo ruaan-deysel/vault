@@ -122,4 +122,26 @@ func TestReplaceAttrTimeFormatting(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, timePart); err != nil {
 		t.Errorf("time attribute %q is not valid RFC3339: %v", timePart, err)
 	}
+
+	// Test zero time attribute and non-time / grouped attributes
+	buf.Reset()
+	slog.Info("msg with other attrs",
+		slog.Time("zero_time", time.Time{}),
+		slog.String("str", "hello"),
+		slog.Group("grp", slog.Time(slog.TimeKey, time.Now())),
+	)
+	if !strings.Contains(buf.String(), "msg with other attrs") {
+		t.Errorf("expected message to appear, got: %s", buf.String())
+	}
+}
+
+func TestSetLevelAndLevelStringUnknown(t *testing.T) {
+	logx.SetLevel(slog.Level(42))
+	if got := logx.Level(); got != slog.Level(42) {
+		t.Errorf("Level() = %v, want 42", got)
+	}
+	if got := logx.LevelString(); got != "info" {
+		t.Errorf("LevelString() for custom level = %q, want info", got)
+	}
+	logx.SetLevel(slog.LevelInfo)
 }

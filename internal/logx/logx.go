@@ -58,6 +58,11 @@ func SetLevelString(s string) {
 	}
 }
 
+// SetLevel sets the active log level directly.
+func SetLevel(l slog.Level) {
+	levelVar.Set(l)
+}
+
 // Level returns the current active log level.
 func Level() slog.Level {
 	return levelVar.Level()

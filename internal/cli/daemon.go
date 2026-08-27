@@ -297,9 +297,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		// Apply configured log level from database settings.
-		if lvl, err := database.GetSetting("log_level", docsmeta.DefaultFor("log_level")); err == nil {
-			logx.SetLevelString(lvl)
-		}
+		applyLogLevel(database)
 
 		// Validate that the database contains operator configuration
 		// (≥1 job or ≥1 storage destination). If not, log a prominent
@@ -940,4 +938,15 @@ func (a *zfsBrowseAdapter) ListZFSMountpoints() ([]handlers.ZFSMountInfo, error)
 		result[i] = handlers.ZFSMountInfo{Name: p.Name, Mountpoint: p.Mountpoint}
 	}
 	return result, nil
+}
+
+// applyLogLevel loads the configured log level from database settings and
+// applies it to logx. Extracted for unit testing without spinning up the full daemon.
+func applyLogLevel(database *db.DB) {
+	if database == nil {
+		return
+	}
+	if lvl, err := database.GetSetting("log_level", docsmeta.DefaultFor("log_level")); err == nil {
+		logx.SetLevelString(lvl)
+	}
 }

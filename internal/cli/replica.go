@@ -15,7 +15,6 @@ import (
 	"github.com/ruaan-deysel/vault/internal/crypto"
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/discovery"
-	"github.com/ruaan-deysel/vault/internal/docsmeta"
 	"github.com/ruaan-deysel/vault/internal/logx"
 	"github.com/ruaan-deysel/vault/internal/replication"
 	"github.com/ruaan-deysel/vault/internal/scheduler"
@@ -51,9 +50,7 @@ disaster recovery.`,
 		defer database.Close()
 
 		// Apply configured log level from database settings.
-		if lvl, err := database.GetSetting("log_level", docsmeta.DefaultFor("log_level")); err == nil {
-			logx.SetLevelString(lvl)
-		}
+		applyLogLevel(database)
 
 		// Prune old activity logs.
 		if err := database.DeleteOldActivityLogs(90); err != nil {

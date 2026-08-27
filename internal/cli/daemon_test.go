@@ -10,6 +10,7 @@ import (
 	"github.com/ruaan-deysel/vault/internal/anomaly"
 	"github.com/ruaan-deysel/vault/internal/api"
 	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/logx"
 )
 
 // openTestDB opens a fresh SQLite database in a temp directory.
@@ -262,4 +263,27 @@ func TestRunAnomalyTrendTicker_ContextCancel(t *testing.T) {
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 	drainCancel()
 	_ = ev.Drain(drainCtx)
+}
+
+func TestApplyLogLevel(t *testing.T) {
+	d := openTestDB(t)
+
+	// Default setting or missing
+	applyLogLevel(d)
+	if logx.LevelString() != "info" {
+		t.Errorf("applyLogLevel default = %q, want info", logx.LevelString())
+	}
+
+	// Nil database safe
+	applyLogLevel(nil)
+
+	// Set to warn
+	if err := d.SetSetting("log_level", "warn"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	applyLogLevel(d)
+	if logx.LevelString() != "warn" {
+		t.Errorf("applyLogLevel = %q, want warn", logx.LevelString())
+	}
+	logx.SetLevelString("info")
 }
