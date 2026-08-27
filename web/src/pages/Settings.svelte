@@ -1442,10 +1442,10 @@
                 disabled={readOnly || logLevelSaving}
                 class="w-full max-w-full text-sm px-3 py-2 bg-surface-1 border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-vault/50 focus:border-vault disabled:opacity-60 cursor-pointer"
               >
-                <option value="debug">debug</option>
-                <option value="info">info</option>
-                <option value="warn">warn</option>
-                <option value="error">error</option>
+                <option value="debug">Debug</option>
+                <option value="info">Informational</option>
+                <option value="warn">Warning</option>
+                <option value="error">Errors</option>
               </select>
               {#if logLevelSaving}
                 <InlineSpinner />
