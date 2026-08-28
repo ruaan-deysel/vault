@@ -455,3 +455,21 @@ func TestParsePluginDisplayName(t *testing.T) {
 	}
 }
 
+func TestPluginDisplayName(t *testing.T) {
+	// Missing file should gracefully return empty string
+	if got := pluginDisplayName("/nonexistent/path/plugin.plg"); got != "" {
+		t.Errorf("pluginDisplayName() = %q, want empty string", got)
+	}
+
+	// Valid file
+	dir := t.TempDir()
+	p := filepath.Join(dir, "test.plg")
+	if err := os.WriteFile(p, []byte(`<PLUGIN name="Direct Test"></PLUGIN>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := pluginDisplayName(p); got != "Direct Test" {
+		t.Errorf("pluginDisplayName() = %q, want %q", got, "Direct Test")
+	}
+}
+
+
