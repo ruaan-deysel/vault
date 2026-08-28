@@ -6,7 +6,6 @@
   import { isRestoreActive } from '../lib/restore-sync.js'
   import { formatDate, formatBytes, itemDisplayLabel } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
-
   import Spinner from './Spinner.svelte'
   import RestorePointTimeline from './RestorePointTimeline.svelte'
 
@@ -304,7 +303,6 @@
       selectedItems.set(itemKey(item), item)
     }
   }
-
 
   function clearSelection() {
     selectedItems.clear()

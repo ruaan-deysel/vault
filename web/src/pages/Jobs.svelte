@@ -9,7 +9,6 @@
   import { isJobRunningOrQueued } from '../lib/job-active.js'
   import { describeSchedule, relTimeUntil, itemDisplayLabel } from '../lib/utils.js'
   import Modal from '../components/Modal.svelte'
-
   import Toast from '../components/Toast.svelte'
   import Skeleton from '../components/Skeleton.svelte'
   import EmptyState from '../components/EmptyState.svelte'

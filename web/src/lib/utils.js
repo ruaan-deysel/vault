@@ -355,5 +355,3 @@ export function itemDisplayLabel(item) {
   if (itemId.startsWith('/')) return itemId
   return itemName
 }
-
-

@@ -6,7 +6,6 @@
   import Spinner from './Spinner.svelte'
   import PathBrowser from './PathBrowser.svelte'
 
-
   /** @type {{ items: Array<{item_type: string, item_name: string, item_id: string, settings: string, sort_order?: number}>, allowedTypes?: string[], onchange?: (items: any[]) => void }} */
   let { items = $bindable([]), allowedTypes = null, onchange = () => {} } = $props()
 
