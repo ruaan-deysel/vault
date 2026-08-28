@@ -358,4 +358,74 @@ describe('currentItem tracking', () => {
     expect(getProgress().running).toBe(true)
     expect(getProgress().currentItem?.name).toBe('postgres')
   })
+
+  it('handles restore progress and default restore messages', () => {
+    // restoreFromStatus with restore run_type and no explicit message
+    restoreFromStatus({
+      active: true,
+      job_id: 8,
+      run_id: 108,
+      job_name: 'restore-job',
+      run_type: 'restore',
+      current_item: 'nextcloud',
+      current_item_type: 'container',
+    })
+    expect(getProgress().currentItem).toEqual({
+      name: 'nextcloud',
+      item_type: 'container',
+      percent: 0,
+      message: 'Preparing restore...',
+    })
+
+    // item_restore_start and restore_progress
+    handleProgressMessage({
+      type: 'item_restore_start',
+      job_id: 8,
+      run_id: 108,
+      item_name: 'mariadb',
+      item_type: 'container',
+    })
+    expect(getProgress().currentItem).toEqual({
+      name: 'mariadb',
+      item_type: 'container',
+      percent: 0,
+      message: 'Starting...',
+    })
+
+    handleProgressMessage({
+      type: 'restore_progress',
+      item: 'mariadb',
+      item_type: 'container',
+      percent: 55,
+      message: 'Unpacking files...',
+    })
+    expect(getProgress().currentItem).toEqual({
+      name: 'mariadb',
+      item_type: 'container',
+      percent: 55,
+      message: 'Unpacking files...',
+    })
+
+    // backup_progress when currentItem was null
+    clearActiveRun()
+    handleProgressMessage({
+      type: 'job_run_started',
+      job_id: 9,
+      run_id: 109,
+      job_name: 'orphan-progress',
+    })
+    handleProgressMessage({
+      type: 'backup_progress',
+      item: 'standalone-container',
+      item_type: 'container',
+      percent: 30,
+      message: 'Hashing...',
+    })
+    expect(getProgress().currentItem).toEqual({
+      name: 'standalone-container',
+      item_type: 'container',
+      percent: 30,
+      message: 'Hashing...',
+    })
+  })
 })
