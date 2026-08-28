@@ -503,6 +503,9 @@ export function handleProgressMessage(msg, jobNameResolver) {
       return true
     }
     case 'job_run_completed': {
+      phaseMessage = null
+      currentItem = null
+      cancelling = false
       // Clear immediately: the Jobs page's Cancel button keys off this flag and
       // must disappear the instant the run ends, not after the overlay's 5s grace.
       // Guard against a stale/out-of-order completion for an older run clearing
@@ -514,15 +517,10 @@ export function handleProgressMessage(msg, jobNameResolver) {
         msg.run_id == null ||
         (activeRun?.run_id == null && msg.job_id === activeRun?.job_id) ||
         msg.run_id === activeRun?.run_id
-      if (!activeRun || completionMatches) {
-        phaseMessage = null
-        currentItem = null
-        cancelling = false
-        running = false
-        stopWatchdog()
-      }
+      if (!activeRun || completionMatches) running = false
+      if (!running) stopWatchdog()
       clearInterval(_elapsedInterval)
-      if (activeRun && completionMatches) {
+      if (activeRun) {
         const completedRunId = activeRun.run_id
         clearTimeout(_completionTimer)
         _completionTimer = setTimeout(() => {

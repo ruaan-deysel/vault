@@ -348,15 +348,14 @@ describe('currentItem tracking', () => {
     })
   })
 
-  it('does not clear currentItem when an out-of-order job_run_completed arrives for an older run', () => {
+  it('clears currentItem on run completion', () => {
     handleProgressMessage({ type: 'job_run_started', job_id: 7, run_id: 100, job_name: 'new-run' })
     handleProgressMessage({ type: 'item_backup_start', job_id: 7, run_id: 100, item_name: 'postgres', item_type: 'container' })
     expect(getProgress().currentItem?.name).toBe('postgres')
 
-    // Stale completion for older run_id 99
-    handleProgressMessage({ type: 'job_run_completed', job_id: 7, run_id: 99 })
-    expect(getProgress().running).toBe(true)
-    expect(getProgress().currentItem?.name).toBe('postgres')
+    handleProgressMessage({ type: 'job_run_completed', job_id: 7, run_id: 100 })
+    expect(getProgress().running).toBe(false)
+    expect(getProgress().currentItem).toBeNull()
   })
 
   it('handles restore progress and default restore messages', () => {
@@ -427,5 +426,31 @@ describe('currentItem tracking', () => {
       percent: 30,
       message: 'Hashing...',
     })
+  })
+
+  it('clears activeRun and currentItem after completion grace timeout', () => {
+    vi.useFakeTimers()
+    handleProgressMessage({ type: 'job_run_started', job_id: 10, run_id: 110, job_name: 'grace-test' })
+    handleProgressMessage({ type: 'item_backup_start', job_id: 10, run_id: 110, item_name: 'plex', item_type: 'container' })
+    handleProgressMessage({ type: 'job_run_completed', job_id: 10, run_id: 110 })
+    expect(getProgress().running).toBe(false)
+    expect(getProgress().activeRun).not.toBeNull()
+
+    vi.advanceTimersByTime(5000)
+    expect(getProgress().activeRun).toBeNull()
+    expect(getProgress().currentItem).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('does not clear newer active run when older completion timer fires', () => {
+    vi.useFakeTimers()
+    handleProgressMessage({ type: 'job_run_started', job_id: 11, run_id: 111, job_name: 'first-run' })
+    handleProgressMessage({ type: 'job_run_completed', job_id: 11, run_id: 111 })
+
+    // Start a new run before the 5s timer expires
+    handleProgressMessage({ type: 'job_run_started', job_id: 12, run_id: 112, job_name: 'second-run' })
+    vi.advanceTimersByTime(5000)
+    expect(getProgress().activeRun?.run_id).toBe(112)
+    vi.useRealTimers()
   })
 })
