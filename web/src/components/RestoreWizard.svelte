@@ -353,6 +353,9 @@
       // (unknown → fall back to whole-archive behaviour).
       const selectedNames = Array.from(selectedItems.values()).map(i => i.name)
       const containsSelected = (rp) => {
+        if (!selectedArr.every(item => item.jobs.some(j => j.id === rp.jobId))) {
+          return false
+        }
         const meta = parseMetadata(rp.metadata)
         const names = new Set([
           ...Object.keys(meta.item_sizes || {}),
@@ -400,6 +403,13 @@
 
   let selectedItemsArray = $derived(Array.from(selectedItems.values()))
 
+  let step3ItemsArray = $derived(
+    selectedPoint
+      ? selectedItemsArray.filter(item => item.jobs.some(j => j.id === selectedPoint.jobId))
+      : selectedItemsArray
+  )
+  let step3Count = $derived(step3ItemsArray.length)
+
   // Overwrite-banner target (issue #205 / E5). Only ever show a concrete path
   // when it's actually known — otherwise say "original location" honestly.
   //   { path }     → show this exact path
@@ -415,8 +425,9 @@
       // Blank custom destination → backend falls back to original location.
       return dest ? { path: dest } : { original: true }
     }
-    if (selectedCount !== 1) return null
-    const item = selectedItemsArray[0]
+    const currentCount = selectedPoint ? step3Count : selectedCount
+    if (currentCount !== 1) return null
+    const item = selectedPoint ? step3ItemsArray[0] : selectedItemsArray[0]
     if (!item) return null
     if (item.type === 'folder' || item.type === 'flash') return { path: itemDisplayLabel(item) }
     return { original: true }
@@ -451,7 +462,7 @@
     restoring = true
     restoringJobId = selectedPoint.jobId
 
-    const items = selectedItemsArray.map(item => item.name)
+    const items = Array.from(new Set(step3ItemsArray.map(item => item.name)))
 
     const payload = {
       restore_point_id: selectedPoint.id,
@@ -471,7 +482,9 @@
     for (const [key, entry] of picker.entries()) {
       const item = selectedItems.get(key)
       if (item && entry?.selected && entry.selected.size > 0) {
-        filePaths[item.name] = Array.from(entry.selected)
+        if (item.jobs.some(j => j.id === selectedPoint.jobId)) {
+          filePaths[item.name] = Array.from(entry.selected)
+        }
       }
     }
     if (Object.keys(filePaths).length > 0) {
@@ -660,16 +673,16 @@
         <div class="flex justify-between">
           <span class="text-text-muted">Items</span>
           <span class="text-text font-medium">
-            {#if selectedCount === 1}
-              {itemDisplayLabel(selectedItemsArray[0])} ({selectedItemsArray[0].type})
+            {#if step3Count === 1}
+              {itemDisplayLabel(step3ItemsArray[0])} ({step3ItemsArray[0].type})
             {:else}
-              {selectedCount} items
+              {step3Count} items
             {/if}
           </span>
         </div>
-        {#if selectedCount > 1}
+        {#if step3Count > 1}
           <div class="flex flex-wrap gap-1.5 justify-end">
-            {#each selectedItemsArray as item (itemKey(item))}
+            {#each step3ItemsArray as item (itemKey(item))}
               <span class="text-xs px-2 py-0.5 rounded-full bg-surface-3 text-text-dim truncate max-w-[150px]" title={itemDisplayLabel(item)}>{itemDisplayLabel(item)}</span>
             {/each}
           </div>
@@ -769,7 +782,7 @@
          loads the tar index sidecar and lets the user pick which entries
          to extract. Items with an empty selection restore in full. -->
     <div class="mb-6 space-y-3">
-      {#each selectedItemsArray as item (itemKey(item))}
+      {#each step3ItemsArray as item (itemKey(item))}
         {@const entry = picker.get(itemKey(item))}
         {@const sel = entry?.selected?.size || 0}
         {@const total = entry?.contents?.files?.length || 0}
