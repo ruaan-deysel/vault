@@ -125,6 +125,7 @@ func TestRunJob_ItemFailure(t *testing.T) {
 		JobID:    jobID,
 		ItemType: "folder",
 		ItemName: "fail-item",
+		ItemID:   "fail-item-id",
 		Settings: string(itemSettings),
 	}); err != nil {
 		t.Fatalf("add job item: %v", err)
@@ -143,7 +144,8 @@ func TestRunJob_ItemFailure(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("expected 1 item result, got %d", len(res))
 	}
-	if res[0]["type"] != "folder" || res[0]["status"] != "failed" || res[0]["error"] == nil {
+	if res[0]["type"] != "folder" || res[0]["status"] != "failed" || res[0]["error"] == nil ||
+		res[0]["item_id"] != "fail-item-id" || res[0]["settings"] != string(itemSettings) {
 		t.Errorf("unexpected failed item result: %+v", res[0])
 	}
 }
@@ -191,6 +193,7 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 		JobID:    jobID,
 		ItemType: "folder",
 		ItemName: "staging-fail-item",
+		ItemID:   "staging-fail-id",
 		Settings: string(itemSettings),
 	}); err != nil {
 		t.Fatalf("add job item: %v", err)
@@ -209,7 +212,8 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("expected 1 item result, got %d", len(res))
 	}
-	if res[0]["type"] != "folder" || res[0]["status"] != "failed" {
+	if res[0]["type"] != "folder" || res[0]["status"] != "failed" ||
+		res[0]["item_id"] != "staging-fail-id" || res[0]["settings"] != string(itemSettings) {
 		t.Errorf("unexpected staging fail result: %+v", res[0])
 	}
 
@@ -234,6 +238,7 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 		JobID:    jobID2,
 		ItemType: "folder",
 		ItemName: "upload-ok-item",
+		ItemID:   "upload-ok-id",
 		Settings: string(itemSettings2),
 	}); err != nil {
 		t.Fatalf("add job item2: %v", err)
@@ -252,7 +257,8 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 	if len(res2) != 1 {
 		t.Fatalf("expected 1 item result, got %d", len(res2))
 	}
-	if res2[0]["type"] != "folder" || res2[0]["status"] != "ok" {
+	if res2[0]["type"] != "folder" || res2[0]["status"] != "ok" ||
+		res2[0]["item_id"] != "upload-ok-id" || res2[0]["settings"] != string(itemSettings2) {
 		t.Errorf("unexpected upload ok result: %+v", res2[0])
 	}
 
@@ -299,6 +305,7 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 		JobID:    jobID3,
 		ItemType: "folder",
 		ItemName: "upload-fail-item",
+		ItemID:   "upload-fail-id",
 		Settings: string(itemSettings2),
 	}); err != nil {
 		t.Fatalf("add job item3: %v", err)
@@ -317,7 +324,8 @@ func TestRunJob_DeferredStagingAndUploadPaths(t *testing.T) {
 	if len(res3) != 1 {
 		t.Fatalf("expected 1 item result, got %d", len(res3))
 	}
-	if res3[0]["type"] != "folder" || res3[0]["status"] != "failed" {
+	if res3[0]["type"] != "folder" || res3[0]["status"] != "failed" ||
+		res3[0]["item_id"] != "upload-fail-id" || res3[0]["settings"] != string(itemSettings2) {
 		t.Errorf("unexpected upload fail result: %+v", res3[0])
 	}
 }

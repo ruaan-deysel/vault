@@ -480,7 +480,7 @@
                                 <span class="text-xs px-1.5 py-0.5 rounded bg-success/15 text-success shrink-0">verified</span>
                               {/if}
                               {#if item.error}
-                                <span class="text-xs text-danger ml-auto shrink-0">{item.error}</span>
+                                <span class="text-xs text-danger ml-auto min-w-0 break-words">{item.error}</span>
                               {/if}
                             </div>
                           {/each}
