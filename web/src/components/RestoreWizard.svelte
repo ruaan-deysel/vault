@@ -702,7 +702,7 @@
           <span class="text-text-muted">Chain Health</span>
           <span class="inline-flex items-center gap-1">
             <span class="text-xs font-medium {chainHealthTone(selectedPoint)}">{chainHealthLabel(selectedPoint)}</span>
-            {#if chainDependencies(selectedPoint) > 0}
+            {#if selectedPoint?.chain_status !== 'broken' && chainDependencies(selectedPoint) > 0}
               <Tooltip text="Chain length is {selectedPoint.chain_depth}. Restoring replays the base full backup plus intermediate backups in this chain." />
             {/if}
           </span>
