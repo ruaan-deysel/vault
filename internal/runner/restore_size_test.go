@@ -163,3 +163,48 @@ func TestRunRestore_SizeStaysZeroWhenNothingRestored(t *testing.T) {
 		t.Errorf("status = %q, want failed", run.Status)
 	}
 }
+
+// TestRunRestore_ZeroItemSizeReportsZero pins the writer/reader contract for an
+// item that backed up nothing: item_sizes carries an explicit 0 (rather than
+// omitting the item), and the restore treats that 0 as a known size instead of
+// falling through to the restore point's total.
+//
+// The zero is injected rather than produced by a real empty backup: a folder
+// item always writes a tar header, so no folder backup reports 0 bytes. The
+// case the writer guards is an item whose engine reports nothing — a container
+// with every volume skipped, for instance.
+func TestRunRestore_ZeroItemSizeReportsZero(t *testing.T) {
+	t.Parallel()
+	r, d, jobID, rp := seedTwoItemBackup(t)
+
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(rp.Metadata), &meta); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	sizes, ok := meta["item_sizes"].(map[string]any)
+	if !ok {
+		t.Fatalf("item_sizes missing from metadata %s", rp.Metadata)
+	}
+	sizes["small"] = 0
+	rewritten, _ := json.Marshal(meta)
+	zeroed := rp
+	zeroed.Metadata = string(rewritten)
+
+	parsed, found := zeroed.ItemSizes()
+	if !found {
+		t.Fatal("ItemSizes dropped the map once an entry was zero")
+	}
+	if size, present := parsed["small"]; !present || size != 0 {
+		t.Fatalf("item_sizes[small] = %d (present=%v), want an explicit 0", size, present)
+	}
+
+	r.RunRestore(zeroed, []RestoreTarget{{Name: "small", Type: "folder"}}, t.TempDir(), "")
+
+	run := latestRestoreRun(t, d, jobID)
+	if run.ItemsDone == 0 {
+		t.Fatalf("expected the item to restore successfully, run = %+v", run)
+	}
+	if run.SizeBytes != 0 {
+		t.Errorf("run size = %d, want 0 — a recorded zero is a known size, not a missing one (point total is %d)", run.SizeBytes, rp.SizeBytes)
+	}
+}

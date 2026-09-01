@@ -42,7 +42,9 @@ func (rp RestorePoint) BackedUpItems() (map[string]struct{}, bool) {
 // synthetic result whose size is the item's logical byte total, which the
 // shared completion path writes here alongside item_manifests. Sizes are
 // therefore absent only for restore points written before this metadata
-// existed, and for items recorded as 0 bytes (the writer skips those).
+// existed, and for items whose backup result reported no size at all. A zero
+// is recorded explicitly, so an item that backed up nothing restores as 0
+// rather than falling back to the whole restore point's size.
 //
 // Callers must treat a missing entry as "unknown" rather than as zero — a
 // restore reporting 0 bytes would be as wrong as one reporting the whole

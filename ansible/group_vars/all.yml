@@ -19,7 +19,13 @@ create_backup: false
 # uninstall→deploy cycle so a redeploy does not orphan the surviving database.
 # False for a standalone `--tags uninstall`, which really should remove it.
 server_key_stash: /var/local/vault.key.redeploy
-preserve_server_key: "{{ ['deploy', 'redeploy', 'all'] | select('in', ansible_run_tags) | list | length > 0 }}"
+# True only when this run will actually reach the deploy role, which is what
+# puts the key back. With no --tags, ansible_run_tags is ["all"], so a run like
+# `--skip-tags deploy` would otherwise stash the key and never restore it,
+# leaving the surviving database sealed with a key the daemon no longer has.
+preserve_server_key: >-
+  {{ (['deploy', 'redeploy', 'all'] | select('in', ansible_run_tags) | list | length > 0)
+     and (['deploy', 'redeploy'] | select('in', ansible_skip_tags) | list | length == 0) }}
 
 # Vault Replica container
 replica_port: "{{ hostvars[inventory_hostname].replica_port | default(24086) }}"

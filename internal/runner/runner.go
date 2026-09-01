@@ -1809,10 +1809,17 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		itemSizes := make(map[string]int64, len(itemResults))
 		for _, res := range itemResults {
 			name, _ := res["name"].(string)
-			size, _ := res["size_bytes"].(int64)
-			if name != "" && size > 0 {
-				itemSizes[name] = size
+			// A zero is recorded explicitly: an item that legitimately backed
+			// up nothing must be distinguishable from one whose size was never
+			// reported, or restoring only that item falls back to the whole
+			// restore point's size (issue #334). Only a missing or non-numeric
+			// size_bytes is treated as unknown.
+			raw, reported := res["size_bytes"]
+			size, numeric := raw.(int64)
+			if name == "" || !reported || !numeric || size < 0 {
+				continue
 			}
+			itemSizes[name] = size
 		}
 		if len(itemSizes) > 0 {
 			rpMeta["item_sizes"] = itemSizes

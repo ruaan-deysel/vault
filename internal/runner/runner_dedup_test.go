@@ -2,7 +2,9 @@ package runner
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 
@@ -193,7 +195,7 @@ func TestOpenDedupManifestsSession(t *testing.T) {
 		// Rotate the key in place and put it back afterwards: Runner carries a
 		// mutex, so it must not be copied, and the subtests here run in order.
 		original := r.serverKey
-		r.serverKey = bytes.Repeat([]byte{0x5c}, 32)
+		r.serverKey = bytes.Repeat([]byte{0x5c}, crypto.ServerKeySize)
 		defer func() { r.serverKey = original }()
 
 		get, closeSession, err := r.OpenDedupManifests(dest)
@@ -219,9 +221,12 @@ func TestOpenDedupManifestsSession(t *testing.T) {
 		}
 		// Two lookups on one session: both must reach the repo and report the
 		// missing manifest rather than the session going stale after the first.
+		// Asserting the specific chunk-lookup miss is what distinguishes a live
+		// session from one that failed for some other reason on the second call.
 		for i := 0; i < 2; i++ {
-			if _, err := get(bogusID); err == nil {
-				t.Fatalf("lookup %d for an unknown manifest should error", i+1)
+			_, err := get(bogusID)
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("lookup %d: err = %v, want a missing-chunk lookup failure", i+1, err)
 			}
 		}
 	})
