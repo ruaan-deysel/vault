@@ -666,8 +666,17 @@ func (h *JobHandler) effectiveListing(getAdapter func() (storage.Adapter, error)
 	if itemType == "container" {
 		adapter, err := getAdapter()
 		if err == nil {
-			idx, ok, err := h.containerVolumeIndex(adapter, path.Join(rp.StoragePath, itemName), itemName, engine.ListingSuffix)
+			idx, ok, complete, err := h.containerVolumeIndex(adapter, path.Join(rp.StoragePath, itemName), itemName, engine.ListingSuffix)
 			if err == nil && ok {
+				if !complete {
+					// A volume's listing is missing or unreadable, so this
+					// listing under-reports. Pruning against it would delete
+					// every inherited path for that volume; keeping the union
+					// shows a file the restore may no longer write, which is
+					// the safer of the two.
+					log.Printf("api: restore contents: incomplete volume listing for restore point %d — skipping the chain prune", rp.ID) // #nosec G706 //nolint:gosec // rp.ID is a validated int64
+					return engine.TarIndex{}, false
+				}
 				return idx, true
 			}
 		}
@@ -697,7 +706,7 @@ var errNoIndexSidecar = errors.New("no readable tar index sidecar found for this
 func (h *JobHandler) classicItemIndex(adapter storage.Adapter, storagePath, itemName, itemType, archiveName string) (engine.TarIndex, error) {
 	itemPrefix := path.Join(storagePath, itemName)
 	if itemType == "container" && archiveName == "" {
-		idx, ok, err := h.containerVolumeIndex(adapter, itemPrefix, itemName, engine.IndexSuffix)
+		idx, ok, _, err := h.containerVolumeIndex(adapter, itemPrefix, itemName, engine.IndexSuffix)
 		if err != nil {
 			return engine.TarIndex{}, err
 		}
@@ -713,12 +722,18 @@ func (h *JobHandler) classicItemIndex(adapter storage.Adapter, storagePath, item
 // listing, each entry prefixed with the volume's container-internal mount
 // destination. suffix selects which sidecar to merge: engine.IndexSuffix for
 // the browsable contents, engine.ListingSuffix for the effective listing the
-// chain prune compares against. ok=false means this restore point has no
-// volumes.json to attribute paths with, so the caller must fall back.
-func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, itemName, suffix string) (engine.TarIndex, bool, error) {
+// chain prune compares against.
+//
+// ok=false means this restore point has no volumes.json to attribute paths
+// with, so the caller must fall back. complete=false means at least one
+// backed-up volume's sidecar was missing or unreadable and its entries are
+// absent: fine for a listing, which degrades by a volume rather than failing,
+// but never safe to prune a chain against — an omitted volume would take every
+// inherited path with it.
+func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, itemName, suffix string) (engine.TarIndex, bool, bool, error) {
 	entries, err := adapter.List(itemPrefix)
 	if err != nil {
-		return engine.TarIndex{}, false, err
+		return engine.TarIndex{}, false, false, err
 	}
 	byName := make(map[string]string, len(entries))
 	for _, e := range entries {
@@ -740,7 +755,7 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 	if err != nil {
 		// No manifest (or it cannot be decrypted): nothing to attribute
 		// volume paths with.
-		return engine.TarIndex{}, false, nil
+		return engine.TarIndex{}, false, false, nil
 	}
 	var volumes []struct {
 		Destination string `json:"destination"`
@@ -751,9 +766,10 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 	decodeErr := json.NewDecoder(manifestRC).Decode(&volumes)
 	_ = manifestRC.Close()
 	if decodeErr != nil {
-		return engine.TarIndex{}, false, nil
+		return engine.TarIndex{}, false, false, nil
 	}
 
+	complete := true
 	files := make([]engine.TarIndexEntry, 0, len(volumes))
 	for _, v := range volumes {
 		if !v.BackedUp || v.Archive == "" || v.Destination == "" {
@@ -764,12 +780,14 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 			// A volume archived in an earlier step of a chain has no index
 			// here; the chain merge picks it up from that step. Degrading the
 			// listing beats failing the whole request over one volume.
+			complete = false
 			log.Printf("api: restore contents: no %s sidecar for a volume archive under %q — omitting it", suffix, itemPrefix) // #nosec G706 //nolint:gosec // itemPrefix is built from vault-controlled storage paths
 			continue
 		}
 		volIdx, readErr := engine.ReadTarIndex(rc)
 		_ = rc.Close()
 		if readErr != nil {
+			complete = false
 			log.Printf("api: restore contents: unreadable volume %s under %q: %v — omitting it", suffix, itemPrefix, readErr) // #nosec G706 //nolint:gosec // itemPrefix is vault-controlled, err is from the index decoder
 			continue
 		}
@@ -788,7 +806,7 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return engine.TarIndex{Version: 1, Archive: itemName, Files: files}, true, nil
+	return engine.TarIndex{Version: 1, Archive: itemName, Files: files}, true, complete, nil
 }
 
 // openMaybeEncrypted opens a stored sidecar, transparently decrypting an .age

@@ -345,3 +345,66 @@ func TestRestoreChunkedVolumes_MountPointSelection(t *testing.T) {
 		}
 	}
 }
+
+// TestRestoreChunkedVolumes_NestedMounts covers mounts that nest inside one
+// another: a file selected inside the deeper mount must be extracted from that
+// mount only, never routed into the parent whose archive never held it, and
+// picking the parent's mount point must bring the nested mount with it.
+func TestRestoreChunkedVolumes_NestedMounts(t *testing.T) {
+	configSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configSrc, "settings.yml"), []byte("cfg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cacheSrc := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cacheSrc, "f.yml"), []byte("cache\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	configID := backupTestVolume(t, r, configSrc)
+	cacheID := backupTestVolume(t, r, cacheSrc)
+
+	inspect := inspectFromJSON(t, `{
+		"Name": "/test-container",
+		"Config": {"Image": "nginx:latest"},
+		"Mounts": [
+			{"Type":"bind","Source":"/mnt/user/appdata/config","Destination":"/config"},
+			{"Type":"bind","Source":"/mnt/user/appdata/cache","Destination":"/config/cache"}
+		]
+	}`)
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			containerVolPrefix + "/config":       {Size: 100, Chunks: []dedup.ID{configID}},
+			containerVolPrefix + "/config/cache": {Size: 100, Chunks: []dedup.ID{cacheID}},
+		},
+	}
+
+	t.Run("a file in the nested mount comes only from that mount", func(t *testing.T) {
+		restoreDest := t.TempDir()
+		selection := []string{"/config/cache/f.yml"}
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, selection, nil); err != nil {
+			t.Fatalf("restoreChunkedVolumes() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(restoreDest, "cache", "f.yml")); err != nil {
+			t.Errorf("selected file should have been restored from the nested mount: %v", err)
+		}
+		// The parent volume never held cache/f.yml, so it must not be touched.
+		if _, err := os.Stat(filepath.Join(restoreDest, "config")); !os.IsNotExist(err) {
+			t.Errorf("parent mount should not have been restored, stat err = %v", err)
+		}
+	})
+
+	t.Run("picking the parent mount point covers the nested mount", func(t *testing.T) {
+		restoreDest := t.TempDir()
+		if err := restoreChunkedVolumes(context.Background(), m, r, inspect, restoreDest, []string{"/config"}, nil); err != nil {
+			t.Fatalf("restoreChunkedVolumes() error = %v", err)
+		}
+		for _, rel := range []string{filepath.Join("config", "settings.yml"), filepath.Join("cache", "f.yml")} {
+			if _, err := os.Stat(filepath.Join(restoreDest, rel)); err != nil {
+				t.Errorf("expected %s to be restored: %v", rel, err)
+			}
+		}
+	})
+}

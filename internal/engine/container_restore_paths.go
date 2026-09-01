@@ -26,9 +26,10 @@ func ContainerVolumePath(destination, rel string) string {
 // It returns the volume-relative paths to extract and whether the volume is
 // wanted at all. Three outcomes:
 //
-//   - (nil, true) — restore the whole volume. Either the selection is empty
-//     (no picker filter: restore everything, the pre-#275 behaviour) or the
-//     user picked the mount point itself.
+//   - (nil, true) — restore the whole volume. The selection is empty (no picker
+//     filter: restore everything, the pre-#275 behaviour), or the user picked
+//     the mount point itself, or they picked a directory this mount nests
+//     inside.
 //   - (paths, true) — restore only these paths within the volume.
 //   - (nil, false) — the selection names nothing in this volume, so it must be
 //     skipped entirely. Extracting it anyway is the bug in issue #275.
@@ -36,7 +37,15 @@ func ContainerVolumePath(destination, rel string) string {
 // Selecting a directory selects its contents: the returned paths are fed to
 // the same tarIncludeSet / manifest filter the folder handler uses, which
 // already treats a picked directory as covering its descendants.
-func containerVolumeIncludes(selection []string, destination string) ([]string, bool) {
+//
+// allDests carries every mount destination in the backup because mounts nest:
+// a container can mount both /config and /config/cache, and the picker shows
+// them as one tree. Without the full set, /config/cache/f.yml would be routed
+// into /config as well — a mount whose archive never held it — so a selected
+// path belongs only to the DEEPEST destination that contains it. Conversely a
+// selected directory covers the mounts nested beneath it, which is why picking
+// /config restores /config/cache too.
+func containerVolumeIncludes(selection []string, destination string, allDests []string) ([]string, bool) {
 	if len(selection) == 0 {
 		return nil, true
 	}
@@ -52,6 +61,18 @@ func containerVolumeIncludes(selection []string, destination string) ([]string, 
 			// of the selection goes.
 			return nil, true
 		}
+		if containsPath(dest, p) {
+			// A directory this mount nests inside was picked, so the mount
+			// comes with it.
+			return nil, true
+		}
+		if !containsPath(p, dest) {
+			continue
+		}
+		if deepestDest(p, allDests, dest) != dest {
+			// A deeper mount owns this path; that volume will extract it.
+			continue
+		}
 		if dest == "/" {
 			rels = append(rels, strings.TrimPrefix(p, "/"))
 			continue
@@ -64,6 +85,37 @@ func containerVolumeIncludes(selection []string, destination string) ([]string, 
 		return nil, false
 	}
 	return rels, true
+}
+
+// containsPath reports whether the normalised directory path parent contains
+// child, comparing whole path segments so /configuration never counts as being
+// inside /config.
+func containsPath(child, parent string) bool {
+	if parent == "/" {
+		return child != "/"
+	}
+	return strings.HasPrefix(child, parent+"/")
+}
+
+// deepestDest returns the longest mount destination in dests that contains p.
+// fallback is returned when dests is empty or names nothing containing p, so a
+// caller with no mount list behaves exactly as it did before nesting was
+// considered.
+func deepestDest(p string, dests []string, fallback string) string {
+	best := ""
+	for _, d := range dests {
+		nd := normaliseContainerPath(d)
+		if nd == "" || (nd != p && !containsPath(p, nd)) {
+			continue
+		}
+		if len(nd) > len(best) {
+			best = nd
+		}
+	}
+	if best == "" {
+		return fallback
+	}
+	return best
 }
 
 // normaliseContainerPath puts a container-internal path into the single form

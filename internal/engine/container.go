@@ -1288,12 +1288,20 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// absolute paths. Previously it was ignored here entirely and every volume
 	// was extracted whole, whatever the user had picked (issue #275).
 	selection := extractRestoreFilePaths(item.Settings)
+	// Mounts nest, so routing a selected path to the right volume needs the
+	// whole set, not just the mount under consideration.
+	allDests := make([]string, 0, len(inspect.Mounts))
+	for _, mount := range inspect.Mounts {
+		if backupableMount(mount.Type) && mount.Destination != "" {
+			allDests = append(allDests, mount.Destination)
+		}
+	}
 
 	for i, mount := range inspect.Mounts {
 		if !backupableMount(mount.Type) {
 			continue
 		}
-		volIncludes, volWanted := containerVolumeIncludes(selection, mount.Destination)
+		volIncludes, volWanted := containerVolumeIncludes(selection, mount.Destination, allDests)
 		if !volWanted {
 			log.Printf("engine: restore: skipping volume %s — the selected files are all outside it", mount.Destination)
 			continue
@@ -2302,6 +2310,14 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			}
 		}
 	}
+	// Mounts nest, so routing a selected path to the right volume needs every
+	// restorable destination in the manifest, not just the one in hand.
+	allDests := make([]string, 0, len(m.Files))
+	for k, v := range m.Files {
+		if dest, ok := ContainerVolumeDest(k); ok && !IsSkippedVolumeEntry(v) {
+			allDests = append(allDests, dest)
+		}
+	}
 	for k, v := range m.Files {
 		if !strings.HasPrefix(k, containerVolPrefix) {
 			continue
@@ -2319,7 +2335,7 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		// absolute paths, which map onto this volume's own relative paths
 		// (issue #275). A volume the selection never names is skipped outright
 		// rather than extracted whole.
-		volIncludes, volWanted := containerVolumeIncludes(selection, dest)
+		volIncludes, volWanted := containerVolumeIncludes(selection, dest, allDests)
 		if !volWanted {
 			log.Printf("engine: chunked restore: skipping volume %s — the selected files are all outside it", dest)
 			continue

@@ -301,3 +301,75 @@ func TestContainerVolumeIndex_DifferentialChainPrune(t *testing.T) {
 	// but settings.yml must survive, in container-absolute form.
 	assertPaths(t, indexPaths(got), "/config/settings.yml")
 }
+
+// TestContainerVolumeIndex_IncompleteListingSkipsPrune guards the other half of
+// the chain prune: when a volume's listing sidecar is missing, the merged
+// listing under-reports, and pruning against it would delete every inherited
+// path for that volume. The union stays instead.
+func TestContainerVolumeIndex_IncompleteListingSkipsPrune(t *testing.T) {
+	t.Parallel()
+	h, d := newJobHandlerDB(t)
+
+	storageRoot := t.TempDir()
+	cfg, _ := json.Marshal(map[string]string{"path": storageRoot})
+	destID, err := d.CreateStorageDestination(db.StorageDestination{
+		Name: "cvi-part-" + nextUnique(), Type: "local", Config: string(cfg),
+	})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "cvi-part-job-" + nextUnique(), StorageDestID: destID})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if _, err := d.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "container", ItemName: "plex", ItemID: "plex",
+	}); err != nil {
+		t.Fatalf("add job item: %v", err)
+	}
+	runID, err := d.CreateJobRun(db.JobRun{JobID: jobID, Status: "success"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	fullID, err := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "full",
+		StoragePath: "rp-full", Metadata: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create full point: %v", err)
+	}
+	diffID, err := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID: runID, JobID: jobID, BackupType: "differential",
+		StoragePath: "rp-diff", Metadata: "{}", ParentRestorePointID: fullID,
+	})
+	if err != nil {
+		t.Fatalf("create differential point: %v", err)
+	}
+
+	// Two volumes in both steps; the differential has a listing sidecar for
+	// only one of them.
+	fullDir := filepath.Join(storageRoot, "rp-full", "plex")
+	diffDir := filepath.Join(storageRoot, "rp-diff", "plex")
+	for _, dir := range []string{fullDir, diffDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		writeJSONFile(t, filepath.Join(dir, "volumes.json"), []volumeManifestFixture{
+			{Index: 0, Destination: "/config", BackedUp: true, Archive: "vol-0.tar"},
+			{Index: 1, Destination: "/transcode", BackedUp: true, Archive: "vol-1.tar"},
+		})
+		writeVolumeIndex(t, dir, "vol-0.tar", "settings.yml")
+		writeVolumeIndex(t, dir, "vol-1.tar", "tmp.bin")
+	}
+	writeJSONFile(t, filepath.Join(diffDir, "vol-0.tar"+engine.ListingSuffix),
+		engine.TarIndex{Version: 1, Archive: "vol-0.tar", Files: []engine.TarIndexEntry{
+			{Path: "settings.yml", Size: 10, Mode: "0644", ModTime: "2026-01-01T00:00:00Z"},
+		}})
+
+	url := fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/contents?item=plex", jobID, diffID)
+	got := decodeIndex(t, browseContentsAt(t, h, url, jobID, diffID))
+
+	// /transcode/tmp.bin has no listing to vouch for it, so the prune is
+	// skipped entirely rather than dropping it.
+	assertPaths(t, indexPaths(got), "/config/settings.yml", "/transcode/tmp.bin")
+}

@@ -12,6 +12,7 @@ func TestContainerVolumeIncludes(t *testing.T) {
 		name      string
 		selection []string
 		dest      string
+		allDests  []string
 		want      []string
 		wantVol   bool
 	}{
@@ -91,12 +92,54 @@ func TestContainerVolumeIncludes(t *testing.T) {
 			dest:      "/config",
 			wantVol:   false,
 		},
+		{
+			// Nested mounts: /config/cache is its own volume, so a file inside
+			// it belongs to that volume and not to its parent.
+			name:      "a file in a nested mount does not leak into the parent",
+			selection: []string{"/config/cache/f.yml"},
+			dest:      "/config",
+			allDests:  []string{"/config", "/config/cache"},
+			wantVol:   false,
+		},
+		{
+			name:      "a file in a nested mount routes to the deepest mount",
+			selection: []string{"/config/cache/f.yml"},
+			dest:      "/config/cache",
+			allDests:  []string{"/config", "/config/cache"},
+			want:      []string{"f.yml"},
+			wantVol:   true,
+		},
+		{
+			// Picking a directory picks what is under it, including whole
+			// mounts nested beneath.
+			name:      "picking a parent mount point covers a nested mount",
+			selection: []string{"/config"},
+			dest:      "/config/cache",
+			allDests:  []string{"/config", "/config/cache"},
+			wantVol:   true,
+		},
+		{
+			name:      "picking a plain directory covers a mount nested under it",
+			selection: []string{"/config/sub"},
+			dest:      "/config/sub/cache",
+			allDests:  []string{"/config", "/config/sub/cache"},
+			wantVol:   true,
+		},
+		{
+			// Without a mount list the caller behaves as it did before nesting
+			// was considered: the path routes to the mount in hand.
+			name:      "no mount list falls back to the mount in hand",
+			selection: []string{"/config/cache/f.yml"},
+			dest:      "/config",
+			want:      []string{"cache/f.yml"},
+			wantVol:   true,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, wanted := containerVolumeIncludes(tc.selection, tc.dest)
+			got, wanted := containerVolumeIncludes(tc.selection, tc.dest, tc.allDests)
 			if wanted != tc.wantVol {
 				t.Fatalf("volume wanted = %v, want %v", wanted, tc.wantVol)
 			}
