@@ -157,6 +157,22 @@ func TestOpenDedupManifestsSession(t *testing.T) {
 		}
 	})
 
+	t.Run("reports an unbuildable adapter", func(t *testing.T) {
+		// Corrupt config: the adapter cannot be constructed at all, so the
+		// error must surface before any repo work is attempted.
+		broken := db.StorageDestination{
+			Name: "dedup-broken-config", Type: "local",
+			Config: `{"path":`, DedupEnabled: true,
+		}
+		get, closeSession, err := r.OpenDedupManifests(broken)
+		if err == nil {
+			t.Fatal("OpenDedupManifests with an unparsable config should error")
+		}
+		if get != nil || closeSession != nil {
+			t.Error("a failed open must not hand back a fetcher or closer")
+		}
+	})
+
 	// One initialised dedup repo, shared by the subtests below — destination
 	// names are unique per database.
 	dest := makeDedupDest(t, database, storageDir)
