@@ -1806,21 +1806,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			"job_name":     job.Name,
 		}
 		// Store per-item sizes so the restore wizard can show individual item sizes.
-		itemSizes := make(map[string]int64, len(itemResults))
-		for _, res := range itemResults {
-			name, _ := res["name"].(string)
-			// A zero is recorded explicitly: an item that legitimately backed
-			// up nothing must be distinguishable from one whose size was never
-			// reported, or restoring only that item falls back to the whole
-			// restore point's size (issue #334). Only a missing or non-numeric
-			// size_bytes is treated as unknown.
-			raw, reported := res["size_bytes"]
-			size, numeric := raw.(int64)
-			if name == "" || !reported || !numeric || size < 0 {
-				continue
-			}
-			itemSizes[name] = size
-		}
+		itemSizes := collectItemSizes(itemResults)
 		if len(itemSizes) > 0 {
 			rpMeta["item_sizes"] = itemSizes
 		}
@@ -2128,6 +2114,27 @@ func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) 
 }
 
 // ResolveItemManifestID is the public counterpart of the private
+// collectItemSizes extracts the per-item byte sizes from a run's item results,
+// for the item_sizes metadata a restore later sums (issue #334).
+//
+// A zero is kept: an item that legitimately backed up nothing must stay
+// distinguishable from one whose size was never reported, or restoring only
+// that item falls back to the whole restore point's size. Only a missing,
+// non-numeric, or negative size_bytes counts as unknown and is dropped.
+func collectItemSizes(itemResults []map[string]any) map[string]int64 {
+	sizes := make(map[string]int64, len(itemResults))
+	for _, res := range itemResults {
+		name, _ := res["name"].(string)
+		raw, reported := res["size_bytes"]
+		size, numeric := raw.(int64)
+		if name == "" || !reported || !numeric || size < 0 {
+			continue
+		}
+		sizes[name] = size
+	}
+	return sizes
+}
+
 // resolveManifestID helper. Used by API handlers that need to detect
 // whether a (rp, item) pair is a dedup restore point and, if so, fetch its
 // manifest ID without duplicating the metadata-parsing logic.

@@ -18,12 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Restore runs reported the whole backup's size instead of what was restored (#334):** Restoring a subset of a backup — one container out of twenty — showed the entire restore point's size as the "restored amount" on the history and dashboard pages. The run size, completion broadcast, activity entry, and run summary now sum the per-item sizes recorded at backup time, and each item's restore log entry carries its own size. Restore points that record no per-item sizes — those written before this metadata existed — fall back to the restore point total and log that they did, rather than reporting zero; a run in which no item succeeded stays at zero. The history item counter is now type-aware, reading `3/3 containers` instead of `3/3 items`, with mixed-type runs keeping the generic noun. Closes #334.
 
-### Changed
-
-- **`pre-commit run --all-files` passes from a clean checkout.** The `go vet` and `golangci-lint` hooks ran against the host platform, so on macOS staticcheck reported ten SA4023 findings from the Darwin VM/ZFS stubs that CI never sees; both hooks now target `linux/amd64` like the Makefile and CI. The codespell allowlist gained `unparseable` and `pasttime` (both are legitimate spellings in existing test code), a stray `MD028` blockquote break in `docs/mcp.md` was separated, and goimports/end-of-file drift in existing files was flushed.
-
-- **`make redeploy` no longer discards the server key.** The uninstall step wipes `/boot/config/plugins/vault`, which holds `vault.key` — the key that seals the dedup repo master key, storage credentials, and the encryption passphrase. In hybrid mode the database survives on the pool and is re-adopted on start, so a redeploy left a live database full of secrets that could never be unsealed; dedup restore points failed to open with `unseal master (wrong serverKey?)`. The key is now carried across an uninstall→deploy cycle. A standalone `--tags uninstall` still removes it, as a real uninstall should, and so does any run that skips the deploy role — the key is only stashed when the run will actually reach the step that puts it back.
-
 ## [v2026.09.00] - 2026-09-01
 
 ### Added

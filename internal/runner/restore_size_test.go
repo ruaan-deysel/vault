@@ -208,3 +208,29 @@ func TestRunRestore_ZeroItemSizeReportsZero(t *testing.T) {
 		t.Errorf("run size = %d, want 0 — a recorded zero is a known size, not a missing one (point total is %d)", run.SizeBytes, rp.SizeBytes)
 	}
 }
+
+// TestCollectItemSizes pins what counts as a known size in the item_sizes
+// metadata: an explicit zero is kept so a restore of that item alone reports 0,
+// while a missing, non-numeric, or negative size is dropped so the restore
+// falls back rather than claiming the item moved nothing.
+func TestCollectItemSizes(t *testing.T) {
+	t.Parallel()
+	got := collectItemSizes([]map[string]any{
+		{"name": "normal", "size_bytes": int64(4096)},
+		{"name": "empty", "size_bytes": int64(0)},
+		{"name": "unreported"},
+		{"name": "not-a-number", "size_bytes": "4096"},
+		{"name": "float-from-json", "size_bytes": float64(4096)},
+		{"name": "negative", "size_bytes": int64(-1)},
+		{"size_bytes": int64(99)},
+	})
+	want := map[string]int64{"normal": 4096, "empty": 0}
+	if len(got) != len(want) {
+		t.Fatalf("collectItemSizes = %v, want %v", got, want)
+	}
+	for name, size := range want {
+		if got[name] != size {
+			t.Errorf("%s = %d, want %d", name, got[name], size)
+		}
+	}
+}
