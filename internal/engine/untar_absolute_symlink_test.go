@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 type tarEntry struct {
@@ -160,6 +161,60 @@ func TestTarDirectoryRecordsSymlinkOwner(t *testing.T) {
 		seen = true
 		if h.Linkname != "real.txt" {
 			t.Fatalf("Linkname = %q, want real.txt", h.Linkname)
+		}
+		if h.Uid != wantUID || h.Gid != wantGID {
+			t.Fatalf("symlink header owner = %d:%d, want %d:%d", h.Uid, h.Gid, wantUID, wantGID)
+		}
+	}
+	if !seen {
+		t.Fatal("no symlink entry in archive")
+	}
+}
+
+// The incremental/differential walker archives symlinks too, and must record
+// their owner the same way the full walker does.
+func TestTarDirectoryFilteredRecordsSymlinkOwner(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/absolute/target", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(filepath.Join(src, "link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUID, wantGID := fileOwner(info)
+	if wantUID < 0 || wantGID < 0 {
+		t.Skip("ownership not available on this platform")
+	}
+
+	archive := filepath.Join(t.TempDir(), "out.tar")
+	// Zero changedSince and no prevPaths: everything is considered changed.
+	if err := tarDirectoryFilteredWithPrev(context.Background(), src, archive, time.Time{}, nil, "none", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(archive) // #nosec G304 — test-local path
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var seen bool
+	tr := tar.NewReader(f)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if h.Typeflag != tar.TypeSymlink {
+			continue
+		}
+		seen = true
+		if h.Linkname != "/etc/absolute/target" {
+			t.Fatalf("Linkname = %q, want /etc/absolute/target", h.Linkname)
 		}
 		if h.Uid != wantUID || h.Gid != wantGID {
 			t.Fatalf("symlink header owner = %d:%d, want %d:%d", h.Uid, h.Gid, wantUID, wantGID)
