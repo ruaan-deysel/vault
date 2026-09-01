@@ -224,3 +224,24 @@ func TestTarDirectoryFilteredRecordsSymlinkOwner(t *testing.T) {
 		t.Fatal("no symlink entry in archive")
 	}
 }
+
+// removeExistingNonDir deliberately leaves directories alone, so a symlink
+// entry landing on an existing directory surfaces the os.Symlink error rather
+// than silently deleting the directory's contents.
+func TestUntarSymlinkOverExistingDirectoryFails(t *testing.T) {
+	archive := writeTar(t,
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "occupied", Linkname: "elsewhere"}},
+	)
+	dest := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dest, "occupied", "child"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := untarDirectory(context.Background(), archive, dest); err == nil {
+		t.Fatal("untarDirectory() should fail rather than replace an existing directory with a symlink")
+	}
+	// The directory and its contents must survive.
+	if _, err := os.Stat(filepath.Join(dest, "occupied", "child")); err != nil {
+		t.Fatalf("existing directory was destroyed: %v", err)
+	}
+}
