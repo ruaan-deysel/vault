@@ -8,9 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **The restore file picker said "No files match" when an item had no files at all:** With the container picker no longer emitting engine metadata, a container whose volumes were every one of them excluded, anonymous, or virtual now correctly lists nothing — but the picker rendered the empty-filter message, telling the user their filter matched nothing when there was nothing to filter. It now says the backup captured no restorable files, and for containers explains that restoring still recreates the container from its saved configuration and image.
+
 - **Container restore file picker showed wrong sizes and excluded volumes (#333):** Browsing a deduplicated container restore point listed engine metadata as if it were files, showed volumes the job had excluded, and rendered sizes as `-1 B`, `0 B`, or `NaN`. A container's dedup manifest holds only synthetic keys — `__inspect` and `__image_meta` are internal metadata, and each `__vol__<destination>` is a pointer whose real file entries live in a nested per-volume sub-manifest — but the picker emitted those top-level keys verbatim, so pointer and sentinel sizes were displayed as file sizes. The picker now drops synthetic keys, drops skipped and excluded volumes without dereferencing them, and expands each backed-up volume from its sub-manifest with container-internal absolute paths (for example `/config/settings.yml`). The synthetic-key rules are applied only to container items, so a folder or plugin that happens to hold a path named `__inspect` or `__vol__/...` is listed verbatim. Closes #333.
 
 - **Restore runs reported the whole backup's size instead of what was restored (#334):** Restoring a subset of a backup — one container out of twenty — showed the entire restore point's size as the "restored amount" on the history and dashboard pages. The run size, completion broadcast, activity entry, and run summary now sum the per-item sizes recorded at backup time, and each item's restore log entry carries its own size. Restore points that record no per-item sizes — those written before this metadata existed — fall back to the restore point total and log that they did, rather than reporting zero; a run in which no item succeeded stays at zero. The history item counter is now type-aware, reading `3/3 containers` instead of `3/3 items`, with mixed-type runs keeping the generic noun. Closes #334.
+
+### Changed
+
+- **`make redeploy` no longer discards the server key.** The uninstall step wipes `/boot/config/plugins/vault`, which holds `vault.key` — the key that seals the dedup repo master key, storage credentials, and the encryption passphrase. In hybrid mode the database survives on the pool and is re-adopted on start, so a redeploy left a live database full of secrets that could never be unsealed; dedup restore points failed to open with `unseal master (wrong serverKey?)`. The key is now carried across an uninstall→deploy cycle. A standalone `--tags uninstall` still removes it, as a real uninstall should.
 
 ## [v2026.09.00] - 2026-09-01
 
