@@ -3026,8 +3026,17 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			// Relative targets must resolve within destDir after following
 			// existing symlinks; absolute targets are container-internal and
 			// are recreated as-is (see resolveSymlinkTarget).
+			//
+			// A link that fails the check is skipped, not fatal. Refusing to
+			// create it is the whole of the safety property — nothing is
+			// written outside destDir either way — whereas aborting throws
+			// away the entire restore over one entry, which is the failure
+			// this changed: a relative link that resolves through a
+			// (legitimate) absolute one lands outside and would otherwise
+			// kill the run.
 			if err := resolveSymlinkTarget(destDir, target, header.Linkname); err != nil {
-				return fmt.Errorf("unsafe symlink in archive: %w", err)
+				log.Printf("engine: restore: skipping unsafe symlink %s -> %s: %v", header.Name, header.Linkname, err)
+				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)

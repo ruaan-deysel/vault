@@ -43,10 +43,12 @@ func writeTar(t *testing.T, entries ...tarEntry) string {
 // CONTAINER's namespace. Rejecting them aborted the entire restore, which is
 // why a full classic restore of the mysql image failed.
 func TestUntarRestoresAbsoluteSymlink(t *testing.T) {
+	body := []byte("x")
 	archive := writeTar(t,
 		tarEntry{header: &tar.Header{Typeflag: tar.TypeDir, Name: "conf", Mode: 0o755}},
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeReg, Name: "conf/real.cnf", Size: int64(len(body)), Mode: 0o644}, body: body},
 		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "conf/my.cnf", Linkname: "/etc/mysql/my.cnf"}},
-		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "conf/rel.cnf", Linkname: "my.cnf"}},
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "conf/rel.cnf", Linkname: "real.cnf"}},
 	)
 	dest := t.TempDir()
 
@@ -61,8 +63,36 @@ func TestUntarRestoresAbsoluteSymlink(t *testing.T) {
 	if got != "/etc/mysql/my.cnf" {
 		t.Fatalf("link target = %q, want it recreated verbatim as /etc/mysql/my.cnf", got)
 	}
-	if got, err := os.Readlink(filepath.Join(dest, "conf", "rel.cnf")); err != nil || got != "my.cnf" {
-		t.Fatalf("relative symlink = %q, %v; want my.cnf", got, err)
+	if got, err := os.Readlink(filepath.Join(dest, "conf", "rel.cnf")); err != nil || got != "real.cnf" {
+		t.Fatalf("relative symlink = %q, %v; want real.cnf", got, err)
+	}
+}
+
+// A link that fails validation is skipped with a log line, not fatal: the rest
+// of the archive must still be restored. Refusing to create it is the entire
+// safety property; aborting only adds data loss. This case is reachable in
+// practice now that absolute links are permitted — a relative link pointing at
+// one resolves outside the destination.
+func TestUntarSkipsUnsafeSymlinkAndContinues(t *testing.T) {
+	outside := t.TempDir()
+	body := []byte("kept")
+	archive := writeTar(t,
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "abs", Linkname: outside}},
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeSymlink, Name: "via-abs", Linkname: "abs"}},
+		tarEntry{header: &tar.Header{Typeflag: tar.TypeReg, Name: "after.txt", Size: int64(len(body)), Mode: 0o644}, body: body},
+	)
+	dest := t.TempDir()
+
+	if err := untarDirectory(context.Background(), archive, dest); err != nil {
+		t.Fatalf("untarDirectory() should skip the unsafe link, not fail: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "via-abs")); !os.IsNotExist(err) {
+		t.Fatal("the unsafe symlink should not have been created")
+	}
+	// The entry after it still has to be restored.
+	got, err := os.ReadFile(filepath.Join(dest, "after.txt")) // #nosec G304 — test-local path
+	if err != nil || string(got) != "kept" {
+		t.Fatalf("entries after an unsafe symlink were not restored: %q, %v", got, err)
 	}
 }
 
