@@ -65,10 +65,17 @@ func IsSkippedVolumeEntry(e dedup.ManifestEntry) bool {
 // metadata rather than backed-up content, and counting it would make every
 // incremental run look like a fresh backup — the whole of issue #326.
 //
+// Manifest.Installer is compared too: a plugin's .plg payload lives outside
+// Files (see PluginHandler.BackupChunked), so comparing Files alone would call
+// a plugin unchanged when only its installer had been replaced.
+//
 // A nil parent means there is nothing to compare against (a full backup, or
 // the first run of a chain), which is never "unchanged".
 func ChunkedManifestUnchanged(current, parent *dedup.Manifest) bool {
 	if current == nil || parent == nil {
+		return false
+	}
+	if !sameManifestEntry(current.Installer, parent.Installer) {
 		return false
 	}
 	comparable := func(m *dedup.Manifest) map[string][]dedup.ID {
@@ -87,13 +94,29 @@ func ChunkedManifestUnchanged(current, parent *dedup.Manifest) bool {
 	}
 	for key, chunks := range cur {
 		other, ok := prev[key]
-		if !ok || len(other) != len(chunks) {
+		if !ok || !sameChunks(chunks, other) {
 			return false
 		}
-		for i := range chunks {
-			if chunks[i] != other[i] {
-				return false
-			}
+	}
+	return true
+}
+
+// sameManifestEntry compares two out-of-tree payload entries by content
+// address. Both absent counts as equal; one absent does not.
+func sameManifestEntry(a, b *dedup.ManifestEntry) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return sameChunks(a.Chunks, b.Chunks)
+}
+
+func sameChunks(a, b []dedup.ID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
 	return true

@@ -187,6 +187,34 @@ func TestChunkedManifestUnchanged(t *testing.T) {
 			parent: manifest(base),
 			want:   false,
 		},
+		{
+			// A plugin's .plg payload lives outside Files, so a manifest whose
+			// only difference is the installer must not read as unchanged.
+			name:    "only the plugin installer changed",
+			current: &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x11)}}},
+			parent:  &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x12)}}},
+			want:    false,
+		},
+		{
+			name:    "the plugin installer is unchanged too",
+			current: &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x11)}}},
+			parent:  &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x11)}}},
+			want:    true,
+		},
+		{
+			// A manifest written before installers were captured has none; the
+			// next run capturing one is a real change.
+			name:    "an installer was added",
+			current: &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x11)}}},
+			parent:  manifest(base),
+			want:    false,
+		},
+		{
+			name:    "an installer disappeared",
+			current: manifest(base),
+			parent:  &dedup.Manifest{Version: 1, Item: "plex", Files: base, Installer: &dedup.ManifestEntry{Chunks: []dedup.ID{id(0x11)}}},
+			want:    false,
+		},
 		{name: "no parent to compare against", current: manifest(base), parent: nil, want: false},
 		{name: "no current manifest", current: nil, parent: manifest(base), want: false},
 	}
