@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -32,6 +35,10 @@ func applyOwner(path string, uid, gid int) {
 	if uid < 0 && gid < 0 {
 		return
 	}
+	if !restorePathSafe(path) {
+		log.Printf("engine: restore: refusing to set ownership of suspicious path %q", path)
+		return
+	}
 	if err := os.Lchown(path, uid, gid); err != nil {
 		chownWarnOnce.Do(func() {
 			log.Printf("engine: restore: could not set ownership of %s to %d:%d: %v "+
@@ -52,9 +59,7 @@ func applyVolumeRootMeta(path string, mode uint32, uid, gid int) {
 	if mode == 0 {
 		return
 	}
-	if err := os.Chmod(path, os.FileMode(mode)&os.ModePerm); err != nil {
-		log.Printf("engine: restore: could not set mode on volume root %s: %v", path, err)
-	}
+	applyMode(path, os.FileMode(mode))
 	applyOwner(path, uid, gid)
 }
 
@@ -88,4 +93,50 @@ func volumePointerEntry(source string, sub dedup.ID) dedup.ManifestEntry {
 	entry.Mode = uint32(info.Mode().Perm())
 	setManifestOwner(&entry, info)
 	return entry
+}
+
+// restorePathSafe reports whether p is an absolute path with no ".." element.
+// Every caller below has already resolved its path against the restore root —
+// through safepath.JoinUnderBase or joinArchiveTarget plus resolveWithinBase —
+// so this is defence in depth rather than the primary control. It is also the
+// sanitiser barrier CodeQL's go/path-injection query recognises, matching the
+// element-wise check used by validateSnapshotPath and validateKeyFilePath (a
+// substring test would reject a legitimate name like "backups..2026").
+func restorePathSafe(p string) bool {
+	if !filepath.IsAbs(p) {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// applyMode sets a restored path's permission bits. Restores go through this
+// rather than os.Chmod directly: OpenFile only applies its mode when it
+// creates the file and MkdirAll leaves an existing directory alone, so
+// restoring over an existing tree would otherwise keep the stale permissions.
+// A failure is logged, never fatal — the bytes are already back.
+func applyMode(path string, mode os.FileMode) {
+	if !restorePathSafe(path) {
+		log.Printf("engine: restore: refusing to set mode on suspicious path %q", path)
+		return
+	}
+	if err := os.Chmod(path, mode.Perm()); err != nil {
+		log.Printf("engine: restore: could not set mode on %s: %v", path, err)
+	}
+}
+
+// mkdirRestored creates a restored directory, forcing the daemon's own
+// rwx bits on regardless of the recorded mode: the entries beneath it still
+// have to be written, and a directory restored read-only would lock the
+// extractor out of its own children. applyMode puts the recorded mode back
+// once nothing more will be written inside.
+func mkdirRestored(path string, mode os.FileMode) error {
+	if !restorePathSafe(path) {
+		return fmt.Errorf("refusing to create suspicious path %q", path)
+	}
+	return os.MkdirAll(path, mode.Perm()|0o700)
 }

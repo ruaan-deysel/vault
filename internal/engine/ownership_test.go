@@ -349,3 +349,88 @@ func TestFolderChunkedRestoreReadOnlyDir(t *testing.T) {
 		t.Errorf("dir mode = %04o, want 0555", got)
 	}
 }
+
+// Every metadata call resolves its path against the restore root before it
+// gets here, so a relative or traversing path means something upstream is
+// broken: the safest response is to do nothing rather than chmod or chown a
+// path outside the restore.
+func TestRestorePathSafe(t *testing.T) {
+	cases := map[string]bool{
+		"/mnt/user/appdata/x":      true,
+		"/mnt/user/backups..2026":  true, // a legitimate name, not traversal
+		"/mnt/user/appdata/../etc": false,
+		"relative/path":            false,
+		"":                         false,
+		"..":                       false,
+	}
+	for path, want := range cases {
+		if got := restorePathSafe(path); got != want {
+			t.Errorf("restorePathSafe(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+func TestApplyMetadataRejectsUnsafePaths(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(victim, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(victim, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Built by concatenation, not filepath.Join, which would clean the ".."
+	// away and defeat the point of the test.
+	unsafe := dir + "/sub/../keep.txt"
+	applyMode(unsafe, 0o777)
+	if got := modeOf(t, victim); got != 0o600 {
+		t.Errorf("mode = %04o, want the untouched 0600", got)
+	}
+	applyOwner(unsafe, 0, 0)
+
+	if err := mkdirRestored(dir+"/sub/../made", 0o755); err == nil {
+		t.Error("mkdirRestored() accepted a traversing path, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made")); err == nil {
+		t.Error("mkdirRestored() created a directory from a traversing path")
+	}
+}
+
+// mkdirRestored always leaves the daemon able to write inside what it creates,
+// whatever mode the backup recorded — the entries beneath it come next.
+func TestMkdirRestoredForcesOwnerWriteBit(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ro")
+	if err := mkdirRestored(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if got := modeOf(t, dir); got != 0o755 {
+		t.Errorf("mode = %04o, want 0755 while the restore is still writing", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "child"), []byte("x"), 0o644); err != nil {
+		t.Errorf("could not write inside a freshly restored directory: %v", err)
+	}
+}
+
+// An owner the backup never recorded must leave the path alone rather than
+// hand it to root.
+func TestApplyOwnerUnknownIsNoOp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyOwner(path, -1, -1)
+	after, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeUID, beforeGID := fileOwner(before)
+	afterUID, afterGID := fileOwner(after)
+	if beforeUID != afterUID || beforeGID != afterGID {
+		t.Errorf("owner changed from %d:%d to %d:%d", beforeUID, beforeGID, afterUID, afterGID)
+	}
+}

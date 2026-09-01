@@ -2613,9 +2613,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 		// A file bind mount restored over an existing file keeps that file's
 		// mode and owner unless they are set explicitly — and a container
 		// whose hook script comes back root-owned cannot run it.
-		if err := os.Chmod(destPath, safeFileMode(header.Mode)); err != nil {
-			log.Printf("engine: restore: could not set mode on %s: %v", destPath, err)
-		}
+		applyMode(destPath, safeFileMode(header.Mode))
 		applyOwner(destPath, header.Uid, header.Gid)
 		_ = os.Chtimes(destPath, header.ModTime, header.ModTime)
 		return nil
@@ -2976,7 +2974,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			// archive says, because the entries beneath it still have to be
 			// written; the recorded mode is applied in the deferred pass
 			// below, once nothing more will be written inside.
-			if err := os.MkdirAll(target, safeFileMode(header.Mode)|0o700); err != nil {
+			if err := mkdirRestored(target, safeFileMode(header.Mode)); err != nil {
 				return fmt.Errorf("creating directory %s: %w", target, err)
 			}
 			dirs = append(dirs, dirRestoreMeta{
@@ -3015,9 +3013,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			// OpenFile only applies its mode when it creates the file, and
 			// even then the daemon's umask masks it, so a restore over an
 			// existing tree would otherwise keep the old permissions.
-			if err := os.Chmod(target, safeFileMode(header.Mode)); err != nil {
-				log.Printf("engine: restore: could not set mode on %s: %v", target, err)
-			}
+			applyMode(target, safeFileMode(header.Mode))
 			applyOwner(target, header.Uid, header.Gid)
 			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
@@ -3061,9 +3057,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 		d := dirs[i]
 		// MkdirAll leaves an existing directory's mode alone, so an in-place
 		// restore needs the explicit chmod as much as a fresh one does.
-		if err := os.Chmod(d.path, d.mode); err != nil {
-			log.Printf("engine: restore: could not set mode on %s: %v", d.path, err)
-		}
+		applyMode(d.path, d.mode)
 		applyOwner(d.path, d.uid, d.gid)
 		_ = os.Chtimes(d.path, d.modTime, d.modTime)
 	}

@@ -464,7 +464,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		// Writable by the daemon while the restore runs whatever the recorded
 		// mode is — the files inside still have to be written. The real mode
 		// is applied in the deferred pass at the end.
-		if err := os.MkdirAll(full, mode|0o700); err != nil {
+		if err := mkdirRestored(full, mode); err != nil {
 			return fmt.Errorf("restore mkdir %s: %w", d, err)
 		}
 		uid, gid := m.Files[d].Owner()
@@ -508,9 +508,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		}
 		// O_CREATE only applies the mode when it creates the file, so a
 		// restore over an existing tree needs the mode set explicitly.
-		if err := os.Chmod(full, mode); err != nil {
-			log.Printf("engine: restore: could not set mode on %s: %v", full, err)
-		}
+		applyMode(full, mode)
 		uid, gid := e.Owner()
 		applyOwner(full, uid, gid)
 		if t, err := time.Parse(time.RFC3339, e.ModTime); err == nil {
@@ -525,9 +523,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		d := dirMetas[i]
 		// MkdirAll leaves an existing directory's mode untouched, which an
 		// in-place restore over a previous one relies on this to correct.
-		if err := os.Chmod(d.full, d.mode); err != nil {
-			log.Printf("engine: restore: could not set mode on %s: %v", d.full, err)
-		}
+		applyMode(d.full, d.mode)
 		applyOwner(d.full, d.uid, d.gid)
 	}
 	return nil
