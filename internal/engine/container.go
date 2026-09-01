@@ -2696,12 +2696,15 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
-			header := &tar.Header{
-				Typeflag: tar.TypeSymlink,
-				Name:     rel,
-				Linkname: link,
-				ModTime:  info.ModTime(),
+			// FileInfoHeader rather than a hand-built header, so the link
+			// carries its uid/gid and mode like every other entry — restore
+			// Lchowns it, and a hand-built header's zero Uid/Gid would force
+			// every restored symlink to root:root.
+			header, err := tar.FileInfoHeader(info, link)
+			if err != nil {
+				return fmt.Errorf("creating tar header for symlink %s: %w", rel, err)
 			}
+			header.Name = rel
 			return tw.WriteHeader(header)
 		}
 
@@ -2828,12 +2831,15 @@ func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, 
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
-			header := &tar.Header{
-				Typeflag: tar.TypeSymlink,
-				Name:     rel,
-				Linkname: link,
-				ModTime:  info.ModTime(),
+			// FileInfoHeader rather than a hand-built header, so the link
+			// carries its uid/gid and mode like every other entry — restore
+			// Lchowns it, and a hand-built header's zero Uid/Gid would force
+			// every restored symlink to root:root.
+			header, err := tar.FileInfoHeader(info, link)
+			if err != nil {
+				return fmt.Errorf("creating tar header for symlink %s: %w", rel, err)
 			}
+			header.Name = rel
 			return tw.WriteHeader(header)
 		}
 
@@ -3017,7 +3023,9 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			applyOwner(target, header.Uid, header.Gid)
 			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
-			// Validate symlink target resolves within destDir after following existing symlinks.
+			// Relative targets must resolve within destDir after following
+			// existing symlinks; absolute targets are container-internal and
+			// are recreated as-is (see resolveSymlinkTarget).
 			if err := resolveSymlinkTarget(destDir, target, header.Linkname); err != nil {
 				return fmt.Errorf("unsafe symlink in archive: %w", err)
 			}
@@ -3025,7 +3033,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
 			removeExistingNonDir(target)                                // overwrite semantics for links (#175)
-			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget, linkname validated by resolveSymlinkTarget
+			if err := os.Symlink(header.Linkname, target); err != nil { // #nosec G305 — target validated by joinArchiveTarget + resolveWithinBase; linkname validated by resolveSymlinkTarget, and nothing is written through the link (every entry re-checks its real parent chain)
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, header.Linkname, err)
 			}
 			// Lchown, so the link itself is chowned and not whatever it
