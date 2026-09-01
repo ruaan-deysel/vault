@@ -466,12 +466,20 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 	// no chain merge (and no resurrection, issue #231). Check before the
 	// chain branch so dedup increments browse as exactly their manifest.
 	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
-		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		// One repo open serves the item manifest and every volume
+		// sub-manifest it points at.
+		getManifest, closeSession, err := h.runner.OpenDedupManifests(dest)
 		if err != nil {
 			respondInternalError(w, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, itemType, manifest, h.subManifestResolver(dest)))
+		defer closeSession()
+		manifest, err := getManifest(mID)
+		if err != nil {
+			respondInternalError(w, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, itemType, manifest, subManifestFunc(getManifest)))
 		return
 	}
 
@@ -664,24 +672,21 @@ func (h *JobHandler) itemType(jobID int64, itemName string) string {
 	return ""
 }
 
-// subManifestResolver returns a fetcher for nested container volume
-// sub-manifests on the given destination, for dedupManifestToTarIndex.
-func (h *JobHandler) subManifestResolver(dest db.StorageDestination) subManifestFunc {
-	return func(id dedup.ID) (dedup.Manifest, error) {
-		return h.runner.GetDedupManifest(dest, id)
-	}
-}
-
 // itemIndexForPoint fetches one restore point's index for an item: the dedup
 // manifest for chunked points, otherwise the tar-index sidecar (decrypting
 // .age sidecars with the configured passphrase).
 func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, itemType, archiveName string) (engine.TarIndex, error) {
 	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
-		manifest, err := h.runner.GetDedupManifest(dest, mID)
+		getManifest, closeSession, err := h.runner.OpenDedupManifests(dest)
 		if err != nil {
 			return engine.TarIndex{}, err
 		}
-		return dedupManifestToTarIndex(itemName, itemType, manifest, h.subManifestResolver(dest)), nil
+		defer closeSession()
+		manifest, err := getManifest(mID)
+		if err != nil {
+			return engine.TarIndex{}, err
+		}
+		return dedupManifestToTarIndex(itemName, itemType, manifest, subManifestFunc(getManifest)), nil
 	}
 
 	adapter, err := getAdapter()

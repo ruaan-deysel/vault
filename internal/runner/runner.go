@@ -2087,19 +2087,37 @@ func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) 
 // restore points (which don't have a tar index sidecar — chunks live in
 // /_vault/packs/ instead of per-item tar archives).
 func (r *Runner) GetDedupManifest(dest db.StorageDestination, manifestID dedup.ID) (dedup.Manifest, error) {
+	get, closeSession, err := r.OpenDedupManifests(dest)
+	if err != nil {
+		return dedup.Manifest{}, err
+	}
+	defer closeSession()
+	return get(manifestID)
+}
+
+// OpenDedupManifests opens the dedup repo at dest once and returns a fetcher
+// for manifests on it, plus a closer the caller must invoke.
+//
+// Callers that resolve several manifests for one destination — browsing a
+// container restore point walks the item manifest and then one sub-manifest
+// per backed-up volume — should use this rather than calling GetDedupManifest
+// repeatedly, which re-opens the adapter and re-reads repo.json (unsealing the
+// master key) every time. That is cheap on local storage but costs a round
+// trip per manifest on SFTP, SMB, and S3.
+func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) (dedup.Manifest, error), func(), error) {
 	if !dest.DedupEnabled {
-		return dedup.Manifest{}, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
+		return nil, nil, fmt.Errorf("destination %q is not dedup-enabled", dest.Name)
 	}
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		return dedup.Manifest{}, fmt.Errorf("adapter: %w", err)
+		return nil, nil, fmt.Errorf("adapter: %w", err)
 	}
-	defer storage.CloseAdapter(adapter)
 	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
 	if err != nil {
-		return dedup.Manifest{}, fmt.Errorf("open dedup repo: %w", err)
+		storage.CloseAdapter(adapter)
+		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
-	return repo.GetManifest(manifestID)
+	return repo.GetManifest, func() { storage.CloseAdapter(adapter) }, nil
 }
 
 // ResolveItemManifestID is the public counterpart of the private
