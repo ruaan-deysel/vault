@@ -2696,15 +2696,20 @@ func tarDirectory(ctx context.Context, srcDir, destPath string, exclusions []str
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
-			// FileInfoHeader rather than a hand-built header, so the link
-			// carries its uid/gid and mode like every other entry — restore
-			// Lchowns it, and a hand-built header's zero Uid/Gid would force
-			// every restored symlink to root:root.
-			header, err := tar.FileInfoHeader(info, link)
-			if err != nil {
-				return fmt.Errorf("creating tar header for symlink %s: %w", rel, err)
+			// Uid/Gid are set explicitly: this header used to leave them at
+			// zero, which makes restore Lchown every link to root:root.
+			// (tar.FileInfoHeader would fill them in too, but only fails on a
+			// nil FileInfo, leaving an unreachable error branch behind.)
+			header := &tar.Header{
+				Typeflag: tar.TypeSymlink,
+				Name:     rel,
+				Linkname: link,
+				Mode:     int64(info.Mode().Perm()),
+				ModTime:  info.ModTime(),
 			}
-			header.Name = rel
+			if uid, gid := fileOwner(info); uid >= 0 && gid >= 0 {
+				header.Uid, header.Gid = uid, gid
+			}
 			return tw.WriteHeader(header)
 		}
 
@@ -2831,15 +2836,20 @@ func tarDirectoryFilteredWithPrev(ctx context.Context, srcDir, destPath string, 
 				log.Printf("engine: skipping unreadable symlink %s: %v", rel, err)
 				return nil
 			}
-			// FileInfoHeader rather than a hand-built header, so the link
-			// carries its uid/gid and mode like every other entry — restore
-			// Lchowns it, and a hand-built header's zero Uid/Gid would force
-			// every restored symlink to root:root.
-			header, err := tar.FileInfoHeader(info, link)
-			if err != nil {
-				return fmt.Errorf("creating tar header for symlink %s: %w", rel, err)
+			// Uid/Gid are set explicitly: this header used to leave them at
+			// zero, which makes restore Lchown every link to root:root.
+			// (tar.FileInfoHeader would fill them in too, but only fails on a
+			// nil FileInfo, leaving an unreachable error branch behind.)
+			header := &tar.Header{
+				Typeflag: tar.TypeSymlink,
+				Name:     rel,
+				Linkname: link,
+				Mode:     int64(info.Mode().Perm()),
+				ModTime:  info.ModTime(),
 			}
-			header.Name = rel
+			if uid, gid := fileOwner(info); uid >= 0 && gid >= 0 {
+				header.Uid, header.Gid = uid, gid
+			}
 			return tw.WriteHeader(header)
 		}
 
