@@ -3,7 +3,9 @@ package runner
 import (
 	"testing"
 
+	"github.com/ruaan-deysel/vault/internal/dedup"
 	"github.com/ruaan-deysel/vault/internal/engine"
+	"github.com/ruaan-deysel/vault/internal/storage"
 )
 
 // TestMarkUnchanged covers the run-log side of issue #326. The flag is
@@ -71,4 +73,71 @@ func TestMarkUnchanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestChunkedItemUnchanged runs against a real dedup repo: the flag is only
+// trustworthy if the manifest can actually be read back, and the failure path
+// (a manifest ID the repo does not hold) must degrade to "changed" rather than
+// mislabel the item or fail the backup.
+func TestChunkedItemUnchanged(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := makeDedupDest(t, database, storageDir)
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	defer storage.CloseAdapter(adapter)
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	body := dedup.Manifest{Version: 1, Item: "plex", Files: map[string]dedup.ManifestEntry{
+		"__vol__/config": {Chunks: []dedup.ID{{0x01}}},
+	}}
+	id, err := repo.PutManifest("plex", body)
+	if err != nil {
+		t.Fatalf("PutManifest: %v", err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	t.Run("the written manifest matches its parent", func(t *testing.T) {
+		if !chunkedItemUnchanged(repo, id, &body, "plex") {
+			t.Error("a manifest identical to its parent reported as changed")
+		}
+	})
+
+	t.Run("the written manifest differs from its parent", func(t *testing.T) {
+		other := dedup.Manifest{Version: 1, Item: "plex", Files: map[string]dedup.ManifestEntry{
+			"__vol__/config": {Chunks: []dedup.ID{{0x02}}},
+		}}
+		if chunkedItemUnchanged(repo, id, &other, "plex") {
+			t.Error("a manifest with a different chunk reported as unchanged")
+		}
+	})
+
+	t.Run("a full backup has no parent to compare against", func(t *testing.T) {
+		if chunkedItemUnchanged(repo, id, nil, "plex") {
+			t.Error("an item with no parent reported as unchanged")
+		}
+	})
+
+	t.Run("the manifest cannot be read back", func(t *testing.T) {
+		var missing dedup.ID
+		missing[0] = 0xff
+		if chunkedItemUnchanged(repo, missing, &body, "plex") {
+			t.Error("an unreadable manifest must report as changed, not unchanged")
+		}
+	})
+
+	t.Run("no repo at all", func(t *testing.T) {
+		if chunkedItemUnchanged(nil, id, &body, "plex") {
+			t.Error("a nil repo must report as changed")
+		}
+	})
 }

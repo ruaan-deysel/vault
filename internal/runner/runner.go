@@ -2136,6 +2136,29 @@ func collectItemSizes(itemResults []map[string]any) map[string]int64 {
 	return sizes
 }
 
+// chunkedItemUnchanged reports whether a dedup item's freshly written manifest
+// captured anything the parent did not already hold (issue #326).
+//
+// Re-reading the manifest just written is cheap — it is one chunk, and it is
+// still in the repo's cache — and it keeps the decision out of the
+// ChunkedHandler interface, which returns only an ID. A read failure is not
+// worth failing an otherwise successful backup over, so it is logged and the
+// item reports as changed: over-reporting a backup is the safe direction.
+//
+// With no parent there is nothing to compare against — a full backup, or the
+// first run of a chain — which is never unchanged.
+func chunkedItemUnchanged(repo *dedup.Repo, manifestID dedup.ID, parent *dedup.Manifest, itemName string) bool {
+	if repo == nil || parent == nil {
+		return false
+	}
+	written, err := repo.GetManifest(manifestID)
+	if err != nil {
+		log.Printf("runner: dedup item %q: re-reading written manifest: %v (reporting as changed)", itemName, err)
+		return false
+	}
+	return engine.ChunkedManifestUnchanged(&written, parent)
+}
+
 // markUnchanged records on a per-item run-log entry that the engine captured
 // no changed content for the item (engine.MetaUnchanged).
 //
@@ -2511,20 +2534,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 			"dedup_ratio":    dedupRatio,
 		})
 
-	// Compare what was just written against the parent to decide whether this
-	// run actually captured anything new (issue #326). A read of the manifest
-	// we just wrote is cheap — it is one chunk, and it is still in the repo's
-	// cache — and it keeps the decision out of the ChunkedHandler interface,
-	// which returns only an ID. A read failure is not worth failing a
-	// successful backup over: the item simply reports as backed up.
-	unchanged := false
-	if parent != nil {
-		if written, gErr := repo.GetManifest(manifestID); gErr == nil {
-			unchanged = engine.ChunkedManifestUnchanged(&written, parent)
-		} else {
-			log.Printf("runner: dedup item %q: re-reading written manifest: %v (reporting as changed)", item.Name, gErr)
-		}
-	}
+	unchanged := chunkedItemUnchanged(repo, manifestID, parent, item.Name)
 
 	midCopy := append([]byte(nil), manifestID[:]...)
 	// The existing per-item byte accounting in RunJob sums result.Files[].Size
