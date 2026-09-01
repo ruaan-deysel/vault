@@ -185,7 +185,7 @@ func TestDedupManifestToTarIndex_Empty(t *testing.T) {
 		Item:    "test-item",
 		Files:   map[string]dedup.ManifestEntry{},
 	}
-	idx := dedupManifestToTarIndex("test-item", m, nil)
+	idx := dedupManifestToTarIndex("test-item", "folder", m, nil)
 	if idx.Version != 1 {
 		t.Errorf("version = %d, want 1", idx.Version)
 	}
@@ -210,7 +210,7 @@ func TestDedupManifestToTarIndex_SingleFile(t *testing.T) {
 			},
 		},
 	}
-	idx := dedupManifestToTarIndex("mybackup", m, nil)
+	idx := dedupManifestToTarIndex("mybackup", "folder", m, nil)
 	if len(idx.Files) != 1 {
 		t.Fatalf("files len = %d, want 1", len(idx.Files))
 	}
@@ -242,7 +242,7 @@ func TestDedupManifestToTarIndex_Directory(t *testing.T) {
 			},
 		},
 	}
-	idx := dedupManifestToTarIndex("volbackup", m, nil)
+	idx := dedupManifestToTarIndex("volbackup", "folder", m, nil)
 	if len(idx.Files) != 1 {
 		t.Fatalf("want 1 entry, got %d", len(idx.Files))
 	}
@@ -258,7 +258,7 @@ func TestDedupManifestToTarIndex_MultipleFiles(t *testing.T) {
 		"c": {Size: 3},
 	}
 	m := dedup.Manifest{Version: 1, Item: "multi", Files: files}
-	idx := dedupManifestToTarIndex("multi", m, nil)
+	idx := dedupManifestToTarIndex("multi", "folder", m, nil)
 	if len(idx.Files) != 3 {
 		t.Errorf("files len = %d, want 3", len(idx.Files))
 	}
@@ -295,7 +295,7 @@ func TestDedupManifestToTarIndex_DropsSyntheticContainerKeys(t *testing.T) {
 			"__image_meta": {Size: 128, Chunks: []dedup.ID{{2}}},
 		},
 	}
-	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, nil, nil))
+	idx := dedupManifestToTarIndex("plex", "container", m, subManifestStub(t, nil, nil))
 	if len(idx.Files) != 0 {
 		t.Fatalf("engine metadata leaked into picker: %+v", idx.Files)
 	}
@@ -314,7 +314,7 @@ func TestDedupManifestToTarIndex_DropsSkippedVolumes(t *testing.T) {
 			"__vol__/music": {Size: 0},
 		},
 	}
-	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, nil, &calls))
+	idx := dedupManifestToTarIndex("plex", "container", m, subManifestStub(t, nil, &calls))
 	if len(idx.Files) != 0 {
 		t.Fatalf("excluded volumes listed as restorable: %+v", idx.Files)
 	}
@@ -342,7 +342,7 @@ func TestDedupManifestToTarIndex_ExpandsVolumeSubManifest(t *testing.T) {
 			"__vol__/movies": {Size: -1},
 		},
 	}
-	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{subID: sub}, nil))
+	idx := dedupManifestToTarIndex("plex", "container", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{subID: sub}, nil))
 
 	got := map[string]int64{}
 	for _, f := range idx.Files {
@@ -387,7 +387,7 @@ func TestDedupManifestToTarIndex_SortsAndOmitsUnreadableVolume(t *testing.T) {
 			"__vol__/broken": {Size: 64, Chunks: []dedup.ID{badID}},
 		},
 	}
-	idx := dedupManifestToTarIndex("app", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{okID: sub}, nil))
+	idx := dedupManifestToTarIndex("app", "container", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{okID: sub}, nil))
 
 	if len(idx.Files) != 2 {
 		t.Fatalf("files = %+v, want the 2 readable entries only", idx.Files)
@@ -407,7 +407,7 @@ func TestDedupManifestToTarIndex_NilResolverOmitsVolumes(t *testing.T) {
 	}
 	// Without a resolver the pointer entry's size describes the sub-manifest,
 	// not the volume — omit rather than report a misleading size.
-	idx := dedupManifestToTarIndex("app", m, nil)
+	idx := dedupManifestToTarIndex("app", "container", m, nil)
 	if len(idx.Files) != 0 {
 		t.Fatalf("files = %+v, want none", idx.Files)
 	}
@@ -424,12 +424,42 @@ func TestDedupManifestToTarIndex_FolderManifestUnaffected(t *testing.T) {
 			"a.txt": {Size: 1},
 		},
 	}
-	idx := dedupManifestToTarIndex("docs", m, subManifestStub(t, nil, nil))
+	idx := dedupManifestToTarIndex("docs", "folder", m, subManifestStub(t, nil, nil))
 	if len(idx.Files) != 2 {
 		t.Fatalf("files = %+v, want 2", idx.Files)
 	}
 	if idx.Files[0].Path != "a.txt" || idx.Files[1].Path != "b.txt" {
 		t.Errorf("files not sorted: %+v", idx.Files)
+	}
+}
+
+// The synthetic-key rules belong to container manifests only. A folder or
+// plugin may legitimately hold a file named __inspect or a directory named
+// __vol__ — those paths must survive untouched.
+func TestDedupManifestToTarIndex_FolderKeepsContainerLookalikePaths(t *testing.T) {
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "docs",
+		Files: map[string]dedup.ManifestEntry{
+			"__inspect":      {Size: 11},
+			"__image_meta":   {Size: 22},
+			"__vol__/movies": {Size: 33, Chunks: []dedup.ID{{9}}},
+		},
+	}
+	// A resolver is supplied but must never be consulted for a folder item.
+	idx := dedupManifestToTarIndex("docs", "folder", m, subManifestStub(t, nil, nil))
+	got := map[string]int64{}
+	for _, f := range idx.Files {
+		got[f.Path] = f.Size
+	}
+	want := map[string]int64{"__inspect": 11, "__image_meta": 22, "__vol__/movies": 33}
+	if len(got) != len(want) {
+		t.Fatalf("files = %+v, want %v", idx.Files, want)
+	}
+	for path, size := range want {
+		if got[path] != size {
+			t.Errorf("%s size = %d, want %d", path, got[path], size)
+		}
 	}
 }
 

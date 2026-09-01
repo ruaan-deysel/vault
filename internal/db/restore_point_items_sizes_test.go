@@ -16,9 +16,17 @@ func TestRestorePointItemSizes(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			// Dedup points record membership without sizes, so a caller must
-			// be able to tell "unknown" from "zero".
-			name:     "dedup manifests carry no sizes",
+			// Dedup points record item_sizes alongside item_manifests, from
+			// the chunked path's logical byte total.
+			name:     "dedup point records both sizes and manifests",
+			metadata: `{"item_sizes":{"plex":4096},"item_manifests":{"plex":"ab12"}}`,
+			want:     map[string]int64{"plex": 4096},
+			wantOK:   true,
+		},
+		{
+			// A point with membership but no sizes predates this metadata;
+			// the caller must be able to tell "unknown" from "zero".
+			name:     "manifests without sizes",
 			metadata: `{"item_manifests":{"plex":"ab12"}}`,
 			wantOK:   false,
 		},

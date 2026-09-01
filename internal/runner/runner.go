@@ -3212,17 +3212,18 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	// restore point (issue #334): restoring one container out of twenty read
 	// as the full backup size on the history and dashboard pages.
 	//
-	// When no per-item size is known — dedup points record item_manifests
-	// without sizes, and pre-metadata points record neither — fall back to the
-	// restore point's total. That is the old, inflated number, but for a
-	// whole-item restore it is correct, and it beats reporting 0 bytes for a
-	// restore that demonstrably moved data.
+	// When no per-item size is known, fall back to the restore point's total.
+	// That is the old, inflated number, but for a whole-item restore it is
+	// correct, and it beats reporting 0 bytes for a restore that demonstrably
+	// moved data. Restore points predating item_sizes metadata take this path,
+	// as do items whose recorded size was 0.
+	//
+	// A run in which nothing succeeded reports 0 regardless: the fallback
+	// exists to describe restored content, and there is none.
 	restoredSize := restoredBytes
-	if restoredSizesKnown == 0 {
+	if restoredSizesKnown == 0 && itemsDone > 0 {
 		restoredSize = restorePoint.SizeBytes
-		if itemsDone > 0 {
-			log.Printf("runner: restore point %d records no per-item sizes — reporting the restore point total (%d bytes) for run %d", restorePoint.ID, restoredSize, runID)
-		}
+		log.Printf("runner: restore point %d records no per-item sizes — reporting the restore point total (%d bytes) for run %d", restorePoint.ID, restoredSize, runID)
 	}
 
 	logJSON, _ := json.Marshal(itemResults)

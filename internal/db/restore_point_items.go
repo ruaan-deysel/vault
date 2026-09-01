@@ -38,11 +38,15 @@ func (rp RestorePoint) BackedUpItems() (map[string]struct{}, bool) {
 // ItemSizes returns the per-item byte sizes recorded when the backup ran, and
 // whether any were found.
 //
-// Only classic backups record item_sizes; dedup points record item_manifests
-// with no sizes, and restore points written before this metadata existed have
-// neither. Callers must therefore treat a missing entry as "unknown" rather
-// than as zero — a restore that reported 0 bytes would be as wrong as one that
-// reports the whole backup's size (issue #334).
+// Both classic and dedup backups record item_sizes: the chunked path reports a
+// synthetic result whose size is the item's logical byte total, which the
+// shared completion path writes here alongside item_manifests. Sizes are
+// therefore absent only for restore points written before this metadata
+// existed, and for items recorded as 0 bytes (the writer skips those).
+//
+// Callers must treat a missing entry as "unknown" rather than as zero — a
+// restore reporting 0 bytes would be as wrong as one reporting the whole
+// backup's size (issue #334).
 func (rp RestorePoint) ItemSizes() (map[string]int64, bool) {
 	if rp.Metadata == "" {
 		return nil, false

@@ -45,19 +45,25 @@ type subManifestFunc func(dedup.ID) (dedup.Manifest, error)
 // backed-up volume is expanded from its sub-manifest with paths prefixed by
 // the volume's container-internal destination.
 //
+// The synthetic-key rules apply ONLY to container items. A folder or plugin
+// manifest maps one key to one real path, so a user file legitimately named
+// "__inspect" or living under a "__vol__…" directory must pass through
+// untouched rather than be dropped or mis-expanded as a volume.
+//
 // getSub may be nil, in which case volumes cannot be expanded and are omitted
 // rather than reported with pointer-entry sizes.
-func dedupManifestToTarIndex(itemName string, m dedup.Manifest, getSub subManifestFunc) engine.TarIndex {
+func dedupManifestToTarIndex(itemName, itemType string, m dedup.Manifest, getSub subManifestFunc) engine.TarIndex {
+	isContainer := itemType == "container"
 	idx := engine.TarIndex{
 		Version: 1,
 		Archive: itemName,
 		Files:   make([]engine.TarIndexEntry, 0, len(m.Files)),
 	}
 	for p, e := range m.Files {
-		if engine.IsSyntheticContainerKey(p) {
+		if isContainer && engine.IsSyntheticContainerKey(p) {
 			continue
 		}
-		if dest, isVol := engine.ContainerVolumeDest(p); isVol {
+		if dest, isVol := engine.ContainerVolumeDest(p); isVol && isContainer {
 			if engine.IsSkippedVolumeEntry(e) || getSub == nil {
 				continue
 			}
@@ -441,6 +447,9 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 		}
 	}
 	archiveName := strings.TrimSpace(r.URL.Query().Get("file"))
+	// Container manifests need synthetic-key resolution; folder and plugin
+	// manifests must pass through untouched (see dedupManifestToTarIndex).
+	itemType := h.itemType(jobID, itemName)
 
 	job, err := h.db.GetJob(jobID)
 	if err != nil {
@@ -462,7 +471,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 			respondInternalError(w, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, manifest, h.subManifestResolver(dest)))
+		respondJSON(w, http.StatusOK, dedupManifestToTarIndex(itemName, itemType, manifest, h.subManifestResolver(dest)))
 		return
 	}
 
@@ -479,7 +488,7 @@ func (h *JobHandler) RestorePointContents(w http.ResponseWriter, r *http.Request
 			respondError(w, http.StatusNotFound, "restore chain is incomplete; file browsing is unavailable for this restore point")
 			return
 		}
-		h.respondMergedChainContents(w, chain, dest, itemName, archiveName)
+		h.respondMergedChainContents(w, chain, dest, itemName, itemType, archiveName)
 		return
 	}
 
@@ -559,7 +568,7 @@ var errIndexEncryptedNoPassphrase = errors.New("index is encrypted but no passph
 // conclusively shows the item was not captured by that step; a missing or
 // unreadable index otherwise fails the request (fail closed) so the wizard
 // falls back to whole-item restore instead of presenting a partial file list.
-func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) {
+func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []db.RestorePoint, dest db.StorageDestination, itemName, itemType, archiveName string) {
 	var adapter storage.Adapter
 	getAdapter := func() (storage.Adapter, error) {
 		if adapter == nil {
@@ -592,7 +601,7 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 		if i == len(chain)-1 {
 			stepArchive = archiveName
 		}
-		idx, err := h.itemIndexForPoint(getAdapter, step, dest, itemName, stepArchive)
+		idx, err := h.itemIndexForPoint(getAdapter, step, dest, itemName, itemType, stepArchive)
 		if err != nil {
 			if errors.Is(err, errIndexEncryptedNoPassphrase) {
 				respondError(w, http.StatusFailedDependency, errIndexEncryptedNoPassphrase.Error())
@@ -633,6 +642,28 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	respondJSON(w, http.StatusOK, engine.TarIndex{Version: 1, Archive: itemName, Files: files})
 }
 
+// itemType resolves a job item's type ("container", "folder", "plugin", …).
+//
+// Returns "" when the item is no longer configured on the job — a restore
+// point can outlive its item. Callers treat that as "not a container", which
+// is the safe default: it leaves manifest keys untouched rather than dropping
+// paths that only look synthetic.
+func (h *JobHandler) itemType(jobID int64, itemName string) string {
+	items, err := h.db.GetJobItems(jobID)
+	if err != nil {
+		// The item name is caller-supplied, so it is deliberately left out of the
+		// log line; the job ID identifies the failure well enough.
+		log.Printf("api: restore contents: cannot resolve item types for job %d: %v", jobID, err) // #nosec G706 //nolint:gosec // jobID is a validated int64, err is from the internal DB layer
+		return ""
+	}
+	for _, it := range items {
+		if it.ItemName == itemName {
+			return it.ItemType
+		}
+	}
+	return ""
+}
+
 // subManifestResolver returns a fetcher for nested container volume
 // sub-manifests on the given destination, for dedupManifestToTarIndex.
 func (h *JobHandler) subManifestResolver(dest db.StorageDestination) subManifestFunc {
@@ -644,13 +675,13 @@ func (h *JobHandler) subManifestResolver(dest db.StorageDestination) subManifest
 // itemIndexForPoint fetches one restore point's index for an item: the dedup
 // manifest for chunked points, otherwise the tar-index sidecar (decrypting
 // .age sidecars with the configured passphrase).
-func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, archiveName string) (engine.TarIndex, error) {
+func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error), rp db.RestorePoint, dest db.StorageDestination, itemName, itemType, archiveName string) (engine.TarIndex, error) {
 	if mID, isDedup := runner.ResolveItemManifestID(rp, itemName); isDedup {
 		manifest, err := h.runner.GetDedupManifest(dest, mID)
 		if err != nil {
 			return engine.TarIndex{}, err
 		}
-		return dedupManifestToTarIndex(itemName, manifest, h.subManifestResolver(dest)), nil
+		return dedupManifestToTarIndex(itemName, itemType, manifest, h.subManifestResolver(dest)), nil
 	}
 
 	adapter, err := getAdapter()
