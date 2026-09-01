@@ -587,7 +587,7 @@ func (h *JobHandler) respondMergedChainContents(w http.ResponseWriter, chain []d
 	// files, so the picker must not offer them (issue #231). Without a
 	// listing (pre-listing backups) the union stays, matching the restore.
 	newest := chain[len(chain)-1]
-	if listing, ok := h.runner.ReadItemSidecar(dest, newest, itemName, engine.ListingSuffix); ok {
+	if listing, ok := h.effectiveListing(getAdapter, dest, newest, itemName, itemType); ok {
 		keep := make(map[string]struct{}, len(listing.Files))
 		for _, f := range listing.Files {
 			keep[f.Path] = struct{}{}
@@ -653,6 +653,31 @@ func (h *JobHandler) itemIndexForPoint(getAdapter func() (storage.Adapter, error
 	return h.classicItemIndex(adapter, rp.StoragePath, itemName, itemType, archiveName)
 }
 
+// effectiveListing reads the newest chain step's authoritative listing, in the
+// same path vocabulary as the merged chain contents it prunes.
+//
+// That last part is the whole point. A container's listing sidecars are
+// per-volume and volume-relative (`settings.yml`), while the merged listing is
+// container-absolute (`/config/settings.yml`) — comparing the two directly
+// keeps nothing and empties the picker. Containers therefore go through the
+// same volume merge the index listing uses, and everything else keeps reading
+// its single sidecar.
+func (h *JobHandler) effectiveListing(getAdapter func() (storage.Adapter, error), dest db.StorageDestination, rp db.RestorePoint, itemName, itemType string) (engine.TarIndex, bool) {
+	if itemType == "container" {
+		adapter, err := getAdapter()
+		if err == nil {
+			idx, ok, err := h.containerVolumeIndex(adapter, path.Join(rp.StoragePath, itemName), itemName, engine.ListingSuffix)
+			if err == nil && ok {
+				return idx, true
+			}
+		}
+		// No volumes manifest (or the adapter is unavailable): fall through to
+		// the single-sidecar read, whose paths match the single-archive
+		// listing this point would then have produced.
+	}
+	return h.runner.ReadItemSidecar(dest, rp, itemName, engine.ListingSuffix)
+}
+
 // errNoIndexSidecar marks an item whose tar index sidecar is absent or
 // unreadable at every candidate path.
 var errNoIndexSidecar = errors.New("no readable tar index sidecar found for this item")
@@ -672,7 +697,7 @@ var errNoIndexSidecar = errors.New("no readable tar index sidecar found for this
 func (h *JobHandler) classicItemIndex(adapter storage.Adapter, storagePath, itemName, itemType, archiveName string) (engine.TarIndex, error) {
 	itemPrefix := path.Join(storagePath, itemName)
 	if itemType == "container" && archiveName == "" {
-		idx, ok, err := h.containerVolumeIndex(adapter, itemPrefix, itemName)
+		idx, ok, err := h.containerVolumeIndex(adapter, itemPrefix, itemName, engine.IndexSuffix)
 		if err != nil {
 			return engine.TarIndex{}, err
 		}
@@ -684,11 +709,13 @@ func (h *JobHandler) classicItemIndex(adapter storage.Adapter, storagePath, item
 	return h.singleArchiveIndex(adapter, itemPrefix, archiveName)
 }
 
-// containerVolumeIndex merges every backed-up volume's index sidecar into one
+// containerVolumeIndex merges every backed-up volume's sidecar into one
 // listing, each entry prefixed with the volume's container-internal mount
-// destination. ok=false means this restore point has no volumes.json to
-// attribute paths with, so the caller must fall back.
-func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, itemName string) (engine.TarIndex, bool, error) {
+// destination. suffix selects which sidecar to merge: engine.IndexSuffix for
+// the browsable contents, engine.ListingSuffix for the effective listing the
+// chain prune compares against. ok=false means this restore point has no
+// volumes.json to attribute paths with, so the caller must fall back.
+func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, itemName, suffix string) (engine.TarIndex, bool, error) {
 	entries, err := adapter.List(itemPrefix)
 	if err != nil {
 		return engine.TarIndex{}, false, err
@@ -732,18 +759,18 @@ func (h *JobHandler) containerVolumeIndex(adapter storage.Adapter, itemPrefix, i
 		if !v.BackedUp || v.Archive == "" || v.Destination == "" {
 			continue
 		}
-		rc, openErr := open(v.Archive + engine.IndexSuffix)
+		rc, openErr := open(v.Archive + suffix)
 		if openErr != nil {
 			// A volume archived in an earlier step of a chain has no index
 			// here; the chain merge picks it up from that step. Degrading the
 			// listing beats failing the whole request over one volume.
-			log.Printf("api: restore contents: no index sidecar for a volume archive under %q — omitting it", itemPrefix) // #nosec G706 //nolint:gosec // itemPrefix is built from vault-controlled storage paths
+			log.Printf("api: restore contents: no %s sidecar for a volume archive under %q — omitting it", suffix, itemPrefix) // #nosec G706 //nolint:gosec // itemPrefix is built from vault-controlled storage paths
 			continue
 		}
 		volIdx, readErr := engine.ReadTarIndex(rc)
 		_ = rc.Close()
 		if readErr != nil {
-			log.Printf("api: restore contents: unreadable volume index under %q: %v — omitting it", itemPrefix, readErr) // #nosec G706 //nolint:gosec // itemPrefix is vault-controlled, err is from the index decoder
+			log.Printf("api: restore contents: unreadable volume %s under %q: %v — omitting it", suffix, itemPrefix, readErr) // #nosec G706 //nolint:gosec // itemPrefix is vault-controlled, err is from the index decoder
 			continue
 		}
 		if v.IsFile {
@@ -784,17 +811,17 @@ func (h *JobHandler) openMaybeEncrypted(adapter storage.Adapter, storedPath stri
 		_ = rc.Close()
 		return nil, err
 	}
-	return readCloserFunc{Reader: dec, closes: []io.Closer{dec, rc}}, nil
+	return multiCloseReader{Reader: dec, closes: []io.Closer{dec, rc}}, nil
 }
 
-// readCloserFunc closes a decrypting reader and the underlying storage reader
+// multiCloseReader closes a decrypting reader and the underlying storage reader
 // together, so a caller only has to close what it was handed.
-type readCloserFunc struct {
+type multiCloseReader struct {
 	io.Reader
 	closes []io.Closer
 }
 
-func (r readCloserFunc) Close() error {
+func (r multiCloseReader) Close() error {
 	var firstErr error
 	for _, c := range r.closes {
 		if err := c.Close(); err != nil && firstErr == nil {

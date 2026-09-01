@@ -1024,14 +1024,13 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			entry.Archive = archiveName
 			manifest = append(manifest, entry)
 
-			// Best-effort tar index sidecar for partial restore. Only
-			// useful for directory tars (volume containing multiple
-			// files); single-file bind-mount archives are skipped via
-			// the entry.IsFile flag because there is nothing to index.
-			if !entry.IsFile {
-				if err := WriteTarIndex(volDest); err == nil {
-					result.Files = append(result.Files, backupFileInfo(volDest+IndexSuffix))
-				}
+			// Best-effort tar index sidecar for partial restore. Written
+			// for single-file bind mounts too: the index is the only
+			// record of the file's size and mode, and without it the
+			// restore-point browser has nothing to list the mount with,
+			// so a file mount could never be picked (issue #275).
+			if err := WriteTarIndex(volDest); err == nil {
+				result.Files = append(result.Files, backupFileInfo(volDest+IndexSuffix))
 			}
 		}
 
