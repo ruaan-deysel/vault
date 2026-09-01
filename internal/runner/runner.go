@@ -2115,24 +2115,6 @@ func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) 
 	return repo.GetManifest, func() { storage.CloseAdapter(adapter) }, nil
 }
 
-// ResolveItemManifestID is the public counterpart of the private
-// markUnchanged records on a per-item run-log entry that the engine captured
-// no changed content for the item (engine.MetaUnchanged).
-//
-// The item's status stays "ok" — the backup succeeded, and the item remains
-// restorable from this restore point through its chain. The flag is additive
-// so every consumer that reads status keeps its existing meaning, while the
-// history and dashboard can tell "backed up again" apart from "nothing had
-// changed" (issue #326).
-func markUnchanged(resEntry map[string]any, result *engine.BackupResult) {
-	if result == nil {
-		return
-	}
-	if unchanged, ok := result.Meta[engine.MetaUnchanged].(bool); ok && unchanged {
-		resEntry["unchanged"] = true
-	}
-}
-
 // collectItemSizes extracts the per-item byte sizes from a run's item results,
 // for the item_sizes metadata a restore later sums (issue #334).
 //
@@ -2154,6 +2136,24 @@ func collectItemSizes(itemResults []map[string]any) map[string]int64 {
 	return sizes
 }
 
+// markUnchanged records on a per-item run-log entry that the engine captured
+// no changed content for the item (engine.MetaUnchanged).
+//
+// The item's status stays "ok" — the backup succeeded, and the item remains
+// restorable from this restore point through its chain. The flag is additive
+// so every consumer that reads status keeps its existing meaning, while the
+// history and dashboard can tell "backed up again" apart from "nothing had
+// changed" (issue #326).
+func markUnchanged(resEntry map[string]any, result *engine.BackupResult) {
+	if result == nil {
+		return
+	}
+	if unchanged, ok := result.Meta[engine.MetaUnchanged].(bool); ok && unchanged {
+		resEntry["unchanged"] = true
+	}
+}
+
+// ResolveItemManifestID is the public counterpart of the private
 // resolveManifestID helper. Used by API handlers that need to detect
 // whether a (rp, item) pair is a dedup restore point and, if so, fetch its
 // manifest ID without duplicating the metadata-parsing logic.
