@@ -14,6 +14,7 @@ import (
 
 	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/engine"
 	jobintake "github.com/ruaan-deysel/vault/internal/jobs"
 	"github.com/ruaan-deysel/vault/internal/runner"
 	"github.com/ruaan-deysel/vault/internal/ws"
@@ -413,6 +414,33 @@ func TestDedupManifestToTarIndex_NilResolverOmitsVolumes(t *testing.T) {
 	}
 }
 
+// A database_dump-enabled container adds __dbdump__ (the chunked logical
+// dump) and __dbdump_replay__ (a zero-value marker). Both are engine
+// metadata: restore replays the dump into the live server rather than
+// extracting it to a path, so neither may reach the picker (issue #333).
+func TestDedupManifestToTarIndex_DropsDatabaseDumpKeys(t *testing.T) {
+	subID := dedup.ID{7}
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "mysql",
+		Files: map[string]dedup.ManifestEntry{
+			engine.ContainerDBDumpKey:   {Size: 4096, Chunks: []dedup.ID{{3}}},
+			engine.ContainerDBReplayKey: {},
+			"__vol__/var/lib/mysql":     {Size: 1, Chunks: []dedup.ID{subID}},
+		},
+	}
+	sub := dedup.Manifest{Version: 1, Files: map[string]dedup.ManifestEntry{
+		"ibdata1": {Size: 12},
+	}}
+	idx := dedupManifestToTarIndex("mysql", "container", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{subID: sub}, nil))
+	if len(idx.Files) != 1 {
+		t.Fatalf("files = %+v, want only the volume's file", idx.Files)
+	}
+	if idx.Files[0].Path != "/var/lib/mysql/ibdata1" || idx.Files[0].Size != 12 {
+		t.Errorf("file = %+v, want /var/lib/mysql/ibdata1 at 12 bytes", idx.Files[0])
+	}
+}
+
 // A folder/plugin manifest has no synthetic keys and must pass through
 // untouched even when a resolver is available.
 func TestDedupManifestToTarIndex_FolderManifestUnaffected(t *testing.T) {
@@ -460,6 +488,45 @@ func TestDedupManifestToTarIndex_FolderKeepsContainerLookalikePaths(t *testing.T
 		if got[path] != size {
 			t.Errorf("%s size = %d, want %d", path, got[path], size)
 		}
+	}
+}
+
+// itemType decides whether the container synthetic-key rules apply, so each of
+// its three outcomes is pinned: the item's own type, "" for an item the job no
+// longer configures (a restore point can outlive its item), and "" when the
+// lookup itself fails. All three must leave a folder/plugin path untouched.
+func TestJobHandler_ItemType(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+
+	jobID, err := d.CreateJob(db.Job{Name: "item-type-job", Enabled: true})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	for _, it := range []db.JobItem{
+		{JobID: jobID, ItemType: "container", ItemName: "plex"},
+		{JobID: jobID, ItemType: "folder", ItemName: "docs"},
+	} {
+		if _, err := d.AddJobItem(it); err != nil {
+			t.Fatalf("add item %s: %v", it.ItemName, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		jobID    int64
+		itemName string
+		want     string
+	}{
+		{"container item", jobID, "plex", "container"},
+		{"folder item", jobID, "docs", "folder"},
+		{"item no longer configured", jobID, "gone", ""},
+		{"unknown job", jobID + 4242, "plex", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := h.itemType(tc.jobID, tc.itemName); got != tc.want {
+				t.Errorf("itemType(%d, %q) = %q, want %q", tc.jobID, tc.itemName, got, tc.want)
+			}
+		})
 	}
 }
 
