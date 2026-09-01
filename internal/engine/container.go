@@ -1285,8 +1285,18 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		_ = json.Unmarshal(mData, &savedManifest)
 	}
 
+	// The restore file picker's selection arrives as container-internal
+	// absolute paths. Previously it was ignored here entirely and every volume
+	// was extracted whole, whatever the user had picked (issue #275).
+	selection := extractRestoreFilePaths(item.Settings)
+
 	for i, mount := range inspect.Mounts {
 		if !backupableMount(mount.Type) {
+			continue
+		}
+		volIncludes, volWanted := containerVolumeIncludes(selection, mount.Destination)
+		if !volWanted {
+			log.Printf("engine: restore: skipping volume %s — the selected files are all outside it", mount.Destination)
 			continue
 		}
 		volArchive, err := findArchive(sourceDir, fmt.Sprintf("volume_%d.tar", i))
@@ -1335,7 +1345,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			if err := os.MkdirAll(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
-			if err := untarDirectory(ctx, volArchive, targetPath); err != nil {
+			if err := untarDirectoryFiltered(ctx, volArchive, targetPath, volIncludes); err != nil {
 				return fmt.Errorf("restoring volume %s: %w", targetPath, err)
 			}
 		}
@@ -2242,7 +2252,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 	if progress != nil {
 		progress(item.Name, 40, "restoring volumes")
 	}
-	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, progress); err != nil {
+	if err := restoreChunkedVolumes(ctx, m, repo, inspect, restoreDest, extractRestoreFilePaths(item.Settings), progress); err != nil {
 		return err
 	}
 
@@ -2277,7 +2287,7 @@ func (h *ContainerHandler) RestoreChunked(ctx context.Context, item BackupItem, 
 // (mirroring classic Restore and recreateAndStartContainer's bind rewrite).
 // The function needs no Docker client — it delegates file extraction to
 // FolderHandler.RestoreChunked — making it testable without a Docker mock.
-func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, progress ProgressFunc) error {
+func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Repo, inspect restoreInspect, restoreDest string, selection []string, progress ProgressFunc) error {
 	if err := checkVolumeTargetCollisions(restoreDest, inspect.mountInfos()); err != nil {
 		return err
 	}
@@ -2306,6 +2316,15 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			continue
 		}
 		dest := strings.TrimPrefix(k, containerVolPrefix)
+		// Honour the restore file picker: its selection is in container-internal
+		// absolute paths, which map onto this volume's own relative paths
+		// (issue #275). A volume the selection never names is skipped outright
+		// rather than extracted whole.
+		volIncludes, volWanted := containerVolumeIncludes(selection, dest)
+		if !volWanted {
+			log.Printf("engine: chunked restore: skipping volume %s — the selected files are all outside it", dest)
+			continue
+		}
 		mnt, ok := mountByDest[dest]
 		if !ok || mnt.Source == "" {
 			log.Printf("engine: chunked restore: no matching bind mount for %s in inspect — skipping", dest)
@@ -2324,6 +2343,11 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
 		}
 		proxy := BackupItem{Name: dest, Type: "folder"}
+		if len(volIncludes) > 0 {
+			// FolderHandler.RestoreChunked already filters its manifest by this
+			// setting, so the volume-relative paths go straight through.
+			proxy.Settings = map[string]any{"restore_file_paths": volIncludes}
+		}
 		if err := fh.RestoreChunked(ctx, proxy, repo, v.Chunks[0], src, progress); err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
