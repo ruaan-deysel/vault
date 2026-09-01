@@ -3,9 +3,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -183,7 +185,7 @@ func TestDedupManifestToTarIndex_Empty(t *testing.T) {
 		Item:    "test-item",
 		Files:   map[string]dedup.ManifestEntry{},
 	}
-	idx := dedupManifestToTarIndex("test-item", m)
+	idx := dedupManifestToTarIndex("test-item", m, nil)
 	if idx.Version != 1 {
 		t.Errorf("version = %d, want 1", idx.Version)
 	}
@@ -208,7 +210,7 @@ func TestDedupManifestToTarIndex_SingleFile(t *testing.T) {
 			},
 		},
 	}
-	idx := dedupManifestToTarIndex("mybackup", m)
+	idx := dedupManifestToTarIndex("mybackup", m, nil)
 	if len(idx.Files) != 1 {
 		t.Fatalf("files len = %d, want 1", len(idx.Files))
 	}
@@ -240,7 +242,7 @@ func TestDedupManifestToTarIndex_Directory(t *testing.T) {
 			},
 		},
 	}
-	idx := dedupManifestToTarIndex("volbackup", m)
+	idx := dedupManifestToTarIndex("volbackup", m, nil)
 	if len(idx.Files) != 1 {
 		t.Fatalf("want 1 entry, got %d", len(idx.Files))
 	}
@@ -256,9 +258,178 @@ func TestDedupManifestToTarIndex_MultipleFiles(t *testing.T) {
 		"c": {Size: 3},
 	}
 	m := dedup.Manifest{Version: 1, Item: "multi", Files: files}
-	idx := dedupManifestToTarIndex("multi", m)
+	idx := dedupManifestToTarIndex("multi", m, nil)
 	if len(idx.Files) != 3 {
 		t.Errorf("files len = %d, want 3", len(idx.Files))
+	}
+}
+
+// --- container manifests (issue #333) ---------------------------------------
+//
+// A container manifest holds only synthetic keys; real files live one level
+// down in a FolderHandler sub-manifest per volume. These cover the three ways
+// the old pass-through leaked engine internals into the picker.
+
+// subManifestStub serves sub-manifests by chunk ID, and reports how many
+// lookups were made so a test can assert a volume was never dereferenced.
+func subManifestStub(t *testing.T, byID map[dedup.ID]dedup.Manifest, calls *int) subManifestFunc {
+	t.Helper()
+	return func(id dedup.ID) (dedup.Manifest, error) {
+		if calls != nil {
+			*calls++
+		}
+		m, ok := byID[id]
+		if !ok {
+			return dedup.Manifest{}, fmt.Errorf("no sub-manifest %x", id[:4])
+		}
+		return m, nil
+	}
+}
+
+func TestDedupManifestToTarIndex_DropsSyntheticContainerKeys(t *testing.T) {
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "plex",
+		Files: map[string]dedup.ManifestEntry{
+			"__inspect":    {Size: 4096, Chunks: []dedup.ID{{1}}},
+			"__image_meta": {Size: 128, Chunks: []dedup.ID{{2}}},
+		},
+	}
+	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, nil, nil))
+	if len(idx.Files) != 0 {
+		t.Fatalf("engine metadata leaked into picker: %+v", idx.Files)
+	}
+}
+
+func TestDedupManifestToTarIndex_DropsSkippedVolumes(t *testing.T) {
+	calls := 0
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "plex",
+		Files: map[string]dedup.ManifestEntry{
+			// The sentinel an excluded/skipped mount is recorded with. This is
+			// what rendered as "-1 B" in the picker.
+			"__vol__/movies": {Size: -1},
+			// Defensive: a volume with no chunks is equally not restorable.
+			"__vol__/music": {Size: 0},
+		},
+	}
+	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, nil, &calls))
+	if len(idx.Files) != 0 {
+		t.Fatalf("excluded volumes listed as restorable: %+v", idx.Files)
+	}
+	if calls != 0 {
+		t.Errorf("skipped volumes were dereferenced %d times, want 0", calls)
+	}
+}
+
+func TestDedupManifestToTarIndex_ExpandsVolumeSubManifest(t *testing.T) {
+	subID := dedup.ID{9}
+	sub := dedup.Manifest{
+		Version: 1,
+		Files: map[string]dedup.ManifestEntry{
+			"settings.yml":  {Size: 512, Mode: 0o644, ModTime: "2026-01-01T00:00:00Z"},
+			"db/":           {Size: 0, Mode: 0o755, IsDir: true},
+			"db/library.db": {Size: 1048576, Mode: 0o600},
+		},
+	}
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "plex",
+		Files: map[string]dedup.ManifestEntry{
+			"__inspect":      {Size: 4096, Chunks: []dedup.ID{{1}}},
+			"__vol__/config": {Size: 64, Chunks: []dedup.ID{subID}},
+			"__vol__/movies": {Size: -1},
+		},
+	}
+	idx := dedupManifestToTarIndex("plex", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{subID: sub}, nil))
+
+	got := map[string]int64{}
+	for _, f := range idx.Files {
+		got[f.Path] = f.Size
+	}
+	want := map[string]int64{
+		"/config/settings.yml":  512,
+		"/config/db":            0,
+		"/config/db/library.db": 1048576,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("files = %+v, want %d entries", idx.Files, len(want))
+	}
+	for p, size := range want {
+		if got[p] != size {
+			t.Errorf("%s size = %d, want %d", p, got[p], size)
+		}
+	}
+	// Paths must be container-absolute so a picker selection matches what the
+	// user sees inside the container.
+	for _, f := range idx.Files {
+		if !strings.HasPrefix(f.Path, "/config/") {
+			t.Errorf("path %q is not prefixed with the volume destination", f.Path)
+		}
+	}
+}
+
+func TestDedupManifestToTarIndex_SortsAndOmitsUnreadableVolume(t *testing.T) {
+	okID, badID := dedup.ID{7}, dedup.ID{8}
+	sub := dedup.Manifest{
+		Version: 1,
+		Files: map[string]dedup.ManifestEntry{
+			"z.txt": {Size: 1},
+			"a.txt": {Size: 2},
+		},
+	}
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "app",
+		Files: map[string]dedup.ManifestEntry{
+			"__vol__/data":   {Size: 64, Chunks: []dedup.ID{okID}},
+			"__vol__/broken": {Size: 64, Chunks: []dedup.ID{badID}},
+		},
+	}
+	idx := dedupManifestToTarIndex("app", m, subManifestStub(t, map[dedup.ID]dedup.Manifest{okID: sub}, nil))
+
+	if len(idx.Files) != 2 {
+		t.Fatalf("files = %+v, want the 2 readable entries only", idx.Files)
+	}
+	if idx.Files[0].Path != "/data/a.txt" || idx.Files[1].Path != "/data/z.txt" {
+		t.Errorf("files not sorted by path: %+v", idx.Files)
+	}
+}
+
+func TestDedupManifestToTarIndex_NilResolverOmitsVolumes(t *testing.T) {
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "app",
+		Files: map[string]dedup.ManifestEntry{
+			"__vol__/data": {Size: 64, Chunks: []dedup.ID{{5}}},
+		},
+	}
+	// Without a resolver the pointer entry's size describes the sub-manifest,
+	// not the volume — omit rather than report a misleading size.
+	idx := dedupManifestToTarIndex("app", m, nil)
+	if len(idx.Files) != 0 {
+		t.Fatalf("files = %+v, want none", idx.Files)
+	}
+}
+
+// A folder/plugin manifest has no synthetic keys and must pass through
+// untouched even when a resolver is available.
+func TestDedupManifestToTarIndex_FolderManifestUnaffected(t *testing.T) {
+	m := dedup.Manifest{
+		Version: 1,
+		Item:    "docs",
+		Files: map[string]dedup.ManifestEntry{
+			"b.txt": {Size: 2},
+			"a.txt": {Size: 1},
+		},
+	}
+	idx := dedupManifestToTarIndex("docs", m, subManifestStub(t, nil, nil))
+	if len(idx.Files) != 2 {
+		t.Fatalf("files = %+v, want 2", idx.Files)
+	}
+	if idx.Files[0].Path != "a.txt" || idx.Files[1].Path != "b.txt" {
+		t.Errorf("files not sorted: %+v", idx.Files)
 	}
 }
 
