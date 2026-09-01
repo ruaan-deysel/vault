@@ -34,3 +34,27 @@ func (rp RestorePoint) BackedUpItems() (map[string]struct{}, bool) {
 	}
 	return items, true
 }
+
+// ItemSizes returns the per-item byte sizes recorded when the backup ran, and
+// whether any were found.
+//
+// Only classic backups record item_sizes; dedup points record item_manifests
+// with no sizes, and restore points written before this metadata existed have
+// neither. Callers must therefore treat a missing entry as "unknown" rather
+// than as zero — a restore that reported 0 bytes would be as wrong as one that
+// reports the whole backup's size (issue #334).
+func (rp RestorePoint) ItemSizes() (map[string]int64, bool) {
+	if rp.Metadata == "" {
+		return nil, false
+	}
+	var meta struct {
+		ItemSizes map[string]int64 `json:"item_sizes"`
+	}
+	if err := json.Unmarshal([]byte(rp.Metadata), &meta); err != nil {
+		return nil, false
+	}
+	if len(meta.ItemSizes) == 0 {
+		return nil, false
+	}
+	return meta.ItemSizes, true
+}

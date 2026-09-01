@@ -367,6 +367,7 @@ export function itemDisplayLabel(item) {
  * ('containers', 'vms', …), so normaliseItemType() accepts both spellings and
  * every caller lands on one vocabulary.
  */
+/** @type {Record<string, [string, string]>} */
 const ITEM_TYPE_NOUNS = {
   container: ['container', 'containers'],
   vm: ['VM', 'VMs'],

@@ -3099,10 +3099,19 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		}
 	}()
 
+	// Per-item sizes recorded at backup time, used to report what this restore
+	// actually wrote rather than the whole restore point's size (issue #334).
+	itemSizes, _ := restorePoint.ItemSizes()
+
 	var (
 		itemsDone   int
 		itemsFailed int
 		itemResults []map[string]any
+		// restoredBytes sums only the items whose size is known;
+		// restoredSizesKnown counts them, so "nothing known" stays
+		// distinguishable from "known to be zero bytes".
+		restoredBytes      int64
+		restoredSizesKnown int
 	)
 
 	for _, t := range targets {
@@ -3174,9 +3183,16 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 				"items_failed": itemsFailed,
 				"items_total":  len(targets),
 			})
+			okDetails := map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())}
+			if size, known := itemSizes[t.Name]; known {
+				restoredBytes += size
+				restoredSizesKnown++
+				result["size_bytes"] = size
+				okDetails["size_bytes"] = size
+			}
 			r.runLog(runID, runLogLevelInfo,
 				fmt.Sprintf("Restored %s (%s) in %s", t.Name, t.Type, elapsed.Truncate(time.Second)),
-				map[string]any{"item_name": t.Name, "item_type": t.Type, "duration_seconds": int(elapsed.Seconds())})
+				okDetails)
 		}
 
 		itemResults = append(itemResults, result)
@@ -3192,12 +3208,29 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		status = "failed"
 	}
 
+	// Report what this restore actually wrote, not the size of the whole
+	// restore point (issue #334): restoring one container out of twenty read
+	// as the full backup size on the history and dashboard pages.
+	//
+	// When no per-item size is known — dedup points record item_manifests
+	// without sizes, and pre-metadata points record neither — fall back to the
+	// restore point's total. That is the old, inflated number, but for a
+	// whole-item restore it is correct, and it beats reporting 0 bytes for a
+	// restore that demonstrably moved data.
+	restoredSize := restoredBytes
+	if restoredSizesKnown == 0 {
+		restoredSize = restorePoint.SizeBytes
+		if itemsDone > 0 {
+			log.Printf("runner: restore point %d records no per-item sizes — reporting the restore point total (%d bytes) for run %d", restorePoint.ID, restoredSize, runID)
+		}
+	}
+
 	logJSON, _ := json.Marshal(itemResults)
 	run.Status = status
 	run.Log = string(logJSON)
 	run.ItemsDone = itemsDone
 	run.ItemsFailed = itemsFailed
-	run.SizeBytes = restorePoint.SizeBytes
+	run.SizeBytes = restoredSize
 	_ = r.db.UpdateJobRun(run)
 
 	r.broadcast(map[string]any{
@@ -3209,7 +3242,7 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 		"items_done":   itemsDone,
 		"items_failed": itemsFailed,
 		"items_total":  len(targets),
-		"size_bytes":   restorePoint.SizeBytes,
+		"size_bytes":   restoredSize,
 	})
 
 	// Terminal activity entry gates run-log expansion in the UI (same
@@ -3222,10 +3255,10 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 			"restore_point_id": restorePoint.ID,
 			"items_done":       itemsDone,
 			"items_failed":     itemsFailed,
-			"size_bytes":       restorePoint.SizeBytes,
+			"size_bytes":       restoredSize,
 		}))
 
-	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restorePoint.SizeBytes, time.Since(restoreStart))
+	sumLevel, sumMsg, sumData := runSummaryMessage("Restore", "", status, itemsDone, itemsFailed, len(targets), restoredSize, time.Since(restoreStart))
 	sumData["restore_point_id"] = restorePoint.ID
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }
