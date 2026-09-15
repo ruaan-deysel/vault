@@ -1202,7 +1202,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 			}
 		}
 
-		if btResult.ParentRP != nil && (item.ItemType == "container" || item.ItemType == "folder") {
+		if btResult.ParentRP != nil && classicDiffListingType(item.ItemType) {
 			if itemCapturedInParentRP(btResult.ParentRP, item.ItemName) {
 				backupItem.Settings["changed_since"] = btResult.ParentRP.CreatedAt.Format(time.RFC3339)
 				// Classic (non-dedup) differentials/incrementals load the parent's
@@ -1218,7 +1218,9 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					var listingPaths []string
 					var volumeListingPaths map[string][]string
 					var volumeResolvedSources map[string]string
-					if item.ItemType == "folder" {
+					if item.ItemType == "folder" || item.ItemType == "plugin" {
+						// A plugin's config directory is a single tree, so it
+						// takes the folder listing shape (issue #351).
 						listingPaths = r.loadParentListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
 					} else {
 						volumeListingPaths, volumeResolvedSources = r.loadParentVolumeListingPaths(btResult.ParentRP, dest, item.ItemName, encryptPassphrase)
@@ -1237,6 +1239,15 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		if item.ItemType == "folder" {
 			backupItem.Settings["path"] = settings["path"]
 			backupItem.Settings["preset"] = settings["preset"]
+			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
+				backupItem.Settings["exclude_paths"] = merged
+			}
+		}
+
+		// Plugin items take exclusions the same way, but no path: the handler
+		// derives the config directory from the plugin name, and the "path"
+		// key is a test-only seam (issue #351).
+		if item.ItemType == "plugin" {
 			if merged := mergeExclusions(settings["exclude_paths"], globalExcludes); len(merged) > 0 {
 				backupItem.Settings["exclude_paths"] = merged
 			}
@@ -3414,11 +3425,13 @@ func (r *Runner) restoreItemChain(ctx context.Context, restorePoint db.RestorePo
 		r.runLog(reporter.RunID, runLogLevelInfo,
 			fmt.Sprintf("Restore chain replayed for %s: %d step(s)", itemName, replayedSteps),
 			map[string]any{"item_name": itemName, "steps": replayedSteps})
-		// Classic folder chains overlay without deletion tracking; prune
-		// files the overlay wrote that are absent from the newest point's
-		// authoritative listing (issue #231). Whole-item restores only — a
-		// partial file-picker restore writes nothing prunable.
-		if itemType == "folder" && len(filePaths) == 0 {
+		// Classic folder and plugin chains overlay without deletion
+		// tracking; prune files the overlay wrote that are absent from the
+		// newest point's authoritative listing (issue #231, extended to
+		// plugins in #351 now that they write a listing). Whole-item
+		// restores only — a partial file-picker restore writes nothing
+		// prunable.
+		if (itemType == "folder" || itemType == "plugin") && len(filePaths) == 0 {
 			r.pruneChainResurrected(chain, itemName, destination, passphrase, replayStart)
 		}
 		return nil
@@ -3997,9 +4010,24 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 // never silent mtime-only filtering, which would drop a NEW stale-mtime file
 // (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
 // forward via the parent manifest in the engine and never reach this helper.
+// classicDiffListingType reports whether an item type participates in the
+// parent-listing flow: a differential/incremental capture that needs the
+// parent's effective listing to spot new files with stale mtimes, and that
+// degrades to a full archive when that listing is unavailable.
+func classicDiffListingType(itemType string) bool {
+	switch itemType {
+	case "container", "folder", "plugin":
+		return true
+	default:
+		return false
+	}
+}
+
 func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string, volumeResolvedSources map[string]string) {
 	switch itemType {
-	case "folder":
+	case "folder", "plugin":
+		// A plugin's config directory is a single tree, so it uses the
+		// folder's flat listing shape (issue #351).
 		if listingPaths != nil {
 			settings["prev_listing_paths"] = listingPaths
 		} else {
