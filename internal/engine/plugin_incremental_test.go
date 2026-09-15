@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,5 +292,80 @@ func TestPluginBackupChunkedForwardsExclusions(t *testing.T) {
 	}
 	if _, ok := m.Files["skip.conf"]; ok {
 		t.Errorf("skip.conf should have been excluded: %+v", m.Files)
+	}
+}
+
+// TestPluginBackupArchiveFailureIsReported pins that a failed config archive
+// aborts the backup. Both the incremental and the full branch have to do it:
+// returning the result anyway would register a plugin backup whose config
+// archive is missing or truncated, and the run would be reported as a success.
+func TestPluginBackupArchiveFailureIsReported(t *testing.T) {
+	cases := []struct {
+		name         string
+		changedSince string
+		wantMessage  string
+	}{
+		{
+			name:        "full archive",
+			wantMessage: "archiving plugin config",
+		},
+		{
+			name:         "incremental archive",
+			changedSince: time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
+			wantMessage:  "archiving changed plugin config files",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := newPluginFixture(t, "myplugin")
+			writePluginFile(t, configDir, "a.conf", "a", time.Now())
+
+			// A directory where the archive belongs: creating the archive
+			// file cannot succeed, whatever the process runs as.
+			destDir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(destDir, "config.tar"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+
+			settings := map[string]any{"id": "myplugin"}
+			if tc.changedSince != "" {
+				settings["changed_since"] = tc.changedSince
+			}
+
+			_, err := (&PluginHandler{}).Backup(context.Background(),
+				BackupItem{Name: "myplugin", Type: "plugin", Settings: settings, Compression: CompressionNone},
+				destDir, noopProgress)
+			if err == nil {
+				t.Fatal("a config archive that cannot be written must fail the backup")
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Errorf("error %q should name the failed step (%q)", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+// TestPluginBackupMalformedChangedSinceArchivesEverything pins the safe
+// fallback: an unparseable cut-off must not silently filter the archive down
+// to nothing — the whole config directory is captured instead.
+func TestPluginBackupMalformedChangedSinceArchivesEverything(t *testing.T) {
+	configDir := newPluginFixture(t, "myplugin")
+	writePluginFile(t, configDir, "old.conf", "old", time.Now().Add(-3*time.Hour))
+	writePluginFile(t, configDir, "fresh.conf", "fresh", time.Now())
+
+	destDir := t.TempDir()
+	if _, err := (&PluginHandler{}).Backup(context.Background(),
+		BackupItem{Name: "myplugin", Type: "plugin", Compression: CompressionNone,
+			Settings: map[string]any{"id": "myplugin", "changed_since": "not-a-timestamp"}},
+		destDir, noopProgress); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	names := listTarEntries(t, filepath.Join(destDir, "config.tar"))
+	for _, want := range []string{"old.conf", "fresh.conf"} {
+		if !containsName(names, want) {
+			t.Errorf("archive missing %s — an unparseable cut-off must fall back to a full archive: %v", want, names)
+		}
 	}
 }
