@@ -32,8 +32,16 @@ type volumePathRewrite struct {
 // A match only counts when the path ends at a boundary — end of input, a
 // quote, an XML delimiter, or a path separator — so /mnt/user/appdata/plex
 // never rewrites the unrelated /mnt/user/appdata/plex-config, while a
-// subdirectory of a remapped mount follows its parent. Longer paths are
-// applied first so nested mounts resolve to the most specific rewrite.
+// subdirectory of a remapped mount follows its parent. Longer paths win so
+// nested mounts resolve to the most specific rewrite.
+//
+// It is a single left-to-right pass, not one pass per rewrite: the text a
+// rewrite emits is never re-examined. Applying the rewrites in sequence would
+// let a later one match inside what an earlier one produced — a container
+// binding both /mnt/user and /mnt/user/appdata/plex, restored to
+// /mnt/user/restore, would have its /mnt/user/restore/plex mangled into
+// /mnt/user/restore/user/restore/plex, because the restore destination
+// normally lives under a share that is itself a bind.
 func rewriteTemplateVolumePaths(data []byte, rewrites []volumePathRewrite) []byte {
 	if len(data) == 0 || len(rewrites) == 0 {
 		return data
@@ -52,32 +60,30 @@ func rewriteTemplateVolumePaths(data []byte, rewrites []volumePathRewrite) []byt
 	sort.SliceStable(ordered, func(i, j int) bool { return len(ordered[i].Old) > len(ordered[j].Old) })
 
 	content := string(data)
-	for _, rw := range ordered {
-		content = replaceAtPathBoundary(content, rw.Old, rw.New)
-	}
-	return []byte(content)
-}
-
-// replaceAtPathBoundary replaces every occurrence of old in s with replacement,
-// but only where the occurrence ends at a path boundary — so a path never
-// rewrites a longer sibling that merely starts with it.
-func replaceAtPathBoundary(s, old, replacement string) string {
 	var b strings.Builder
-	for {
-		idx := strings.Index(s, old)
-		if idx < 0 {
-			b.WriteString(s)
-			return b.String()
+	b.Grow(len(content))
+	for i := 0; i < len(content); {
+		matched := false
+		for _, rw := range ordered {
+			if !strings.HasPrefix(content[i:], rw.Old) {
+				continue
+			}
+			end := i + len(rw.Old)
+			if end != len(content) && !isPathBoundary(content[end]) {
+				// A longer sibling path (plex-config), not this mount.
+				continue
+			}
+			b.WriteString(rw.New)
+			i = end
+			matched = true
+			break
 		}
-		end := idx + len(old)
-		b.WriteString(s[:idx])
-		if end == len(s) || isPathBoundary(s[end]) {
-			b.WriteString(replacement)
-		} else {
-			b.WriteString(old)
+		if !matched {
+			b.WriteByte(content[i])
+			i++
 		}
-		s = s[end:]
 	}
+	return []byte(b.String())
 }
 
 // isPathBoundary reports whether c can legitimately follow a complete host

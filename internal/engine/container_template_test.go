@@ -94,6 +94,24 @@ func TestRewriteTemplateVolumePaths(t *testing.T) {
 		})
 	}
 
+	t.Run("a substitution is never rewritten again", func(t *testing.T) {
+		t.Parallel()
+
+		// The restore destination normally lives under a share the container
+		// also binds, so a shorter rewrite applied afterwards would re-match
+		// inside the text the longer one just produced.
+		got := string(rewriteTemplateVolumePaths(
+			[]byte(`<Config Default="/mnt/user/appdata/plex">/mnt/user</Config>`),
+			[]volumePathRewrite{
+				{Old: "/mnt/user", New: "/mnt/user/restore/user"},
+				{Old: "/mnt/user/appdata/plex", New: "/mnt/user/restore/plex"},
+			}))
+		want := `<Config Default="/mnt/user/restore/plex">/mnt/user/restore/user</Config>`
+		if got != want {
+			t.Errorf("got  %s\nwant %s", got, want)
+		}
+	})
+
 	t.Run("an empty template stays empty", func(t *testing.T) {
 		t.Parallel()
 
