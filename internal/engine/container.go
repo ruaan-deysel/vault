@@ -3,6 +3,7 @@ package engine
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,86 @@ type volumeManifestEntry struct {
 	RootMode uint32 `json:"root_mode,omitempty"`
 	RootUID  int    `json:"root_uid,omitempty"`
 	RootGID  int    `json:"root_gid,omitempty"`
+}
+
+// volumeStableKey returns the identity Vault correlates a container mount by
+// across backup, chain merge and restore. The mount's source host path is
+// stable across a container recreation; its position in inspect.Mounts is not.
+// Naming archives by that position meant a recreate that reordered the mounts
+// silently paired one volume's differential archive with a different volume's
+// base full (issue #352).
+func volumeStableKey(source string) string {
+	return source
+}
+
+// volumeArchiveBase derives a per-volume archive filename from the stable key.
+// The key is hashed rather than sanitised so the name is a fixed length and
+// free of path separators whatever the source path looks like. Both affixes
+// are load-bearing: MergeContainerChainStaging discovers volume archives by
+// the "volume_" prefix, and findArchive appends the compression suffix to the
+// ".tar" base.
+func volumeArchiveBase(source string) string {
+	sum := sha256.Sum256([]byte(volumeStableKey(source)))
+	return fmt.Sprintf("volume_%x.tar", sum[:8])
+}
+
+// findVolumeManifestEntry resolves the manifest entry for a mount, preferring
+// the stable key and falling back to the mount index so manifests written
+// before #352 still resolve.
+// resolveVolumeArchive locates a volume's archive on disk, preferring the name
+// the manifest recorded, then the stable-key name, then the legacy index name
+// so restore points written before #352 keep restoring.
+func resolveVolumeArchive(sourceDir, manifestArchive, source string, index int) (string, error) {
+	bases := make([]string, 0, 3)
+	if manifestArchive != "" {
+		// Normalise away the compression suffix: a chain merge re-tars the
+		// overlay under the plain base name, so the recorded ".tar.zst" may
+		// no longer exist while ".tar" does.
+		base := manifestArchive
+		if i := strings.Index(base, ".tar"); i >= 0 {
+			base = base[:i] + ".tar"
+		}
+		bases = append(bases, base)
+	}
+	if source != "" {
+		bases = append(bases, volumeArchiveBase(source))
+	}
+	bases = append(bases, fmt.Sprintf("volume_%d.tar", index))
+
+	var lastErr error
+	seen := make(map[string]bool, len(bases))
+	for _, base := range bases {
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		p, err := findArchive(sourceDir, base)
+		if err == nil {
+			return p, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func findVolumeManifestEntry(manifest []volumeManifestEntry, source string, index int) (volumeManifestEntry, bool) {
+	if source != "" {
+		for _, me := range manifest {
+			if me.Source == source {
+				return me, true
+			}
+		}
+	}
+	// Fall back to the index only for entries that recorded no source at
+	// all. When a source was recorded and did not match, the mount is new or
+	// changed — returning some other volume's entry would be worse than
+	// returning none.
+	for _, me := range manifest {
+		if me.Source == "" && me.Index == index {
+			return me, true
+		}
+	}
+	return volumeManifestEntry{}, false
 }
 
 // devicePrefixes are virtual / system filesystem paths that must never be
@@ -686,7 +767,8 @@ func containerExclusions(settings map[string]any) []string {
 //  1. Inspects the container and saves its config as JSON.
 //  2. Stops the container if running (unless no_stop is set).
 //  3. Saves the container image as image.tar.
-//  4. Tars each bind mount volume to volume_N.tar.gz.
+//  4. Tars each bind mount volume to volume_<key>.tar, where <key> is
+//     derived from the mount source so the name survives a mount reorder.
 //  5. Restarts the container if it was stopped.
 func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir string, progress ProgressFunc) (*BackupResult, error) {
 	result := &BackupResult{ItemName: item.Name}
@@ -984,7 +1066,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 			// bind mounts are auto-handled too — the helper inspects whatever
 			// path it's given). Saves CPU on Immich/Jellyfin/etc. appdata.
 			effectiveCompression := MaybeDowngradeCompression(mount.Source, item.Compression)
-			archiveName := fmt.Sprintf("volume_%d.tar%s", i, archiveExt(effectiveCompression))
+			archiveName := volumeArchiveBase(mount.Source) + archiveExt(effectiveCompression)
 			volDest := filepath.Join(destDir, archiveName)
 
 			if srcInfo.IsDir() {
@@ -1341,14 +1423,18 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			log.Printf("engine: restore: skipping volume %s — the selected files are all outside it", mount.Destination)
 			continue
 		}
-		volArchive, err := findArchive(sourceDir, fmt.Sprintf("volume_%d.tar", i))
+		// Correlate by the mount's stable key rather than its position:
+		// Docker can report the same mounts in a different order after a
+		// container recreate, which paired one volume's archive with another
+		// volume's target (issue #352). Restore points written before that
+		// fix are still index-named, hence the fallbacks.
+		savedEntry, _ := findVolumeManifestEntry(savedManifest, mount.Source, i)
+
+		volArchive, err := resolveVolumeArchive(sourceDir, savedEntry.Archive, mount.Source, i)
 		if err != nil {
-			// Check manifest to explain why.
-			for _, me := range savedManifest {
-				if me.Index == i && !me.BackedUp {
-					log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, me.SkipReason)
-					break
-				}
+			// Explain the absence when the manifest recorded a reason.
+			if !savedEntry.BackedUp && savedEntry.SkipReason != "" {
+				log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, savedEntry.SkipReason)
 			}
 			continue // skip if archive doesn't exist
 		}
@@ -1367,16 +1453,10 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		}
 		targetPath = normalizedTargetPath
 
-		// Check the manifest for what this mount was: a file-based bind mount
+		// The manifest records what this mount was: a file-based bind mount
 		// extracts differently, and a directory mount carries the metadata of
-		// its own root, which no tar archive records.
-		var savedEntry volumeManifestEntry
-		for _, me := range savedManifest {
-			if me.Index == i {
-				savedEntry = me
-				break
-			}
-		}
+		// its own root, which no tar archive records. savedEntry was resolved
+		// by stable key above.
 		isFileMount := savedEntry.IsFile
 
 		if isFileMount {

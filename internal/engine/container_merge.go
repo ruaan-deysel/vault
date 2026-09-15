@@ -47,7 +47,7 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 		}
 	}
 
-	// Collect distinct volume archive base names (e.g. "volume_0.tar") across
+	// Collect distinct volume archive base names (e.g. "volume_<key>.tar") across
 	// every step, normalising the compression suffix.
 	bases := map[string]struct{}{}
 	for _, dir := range stepDirs {
