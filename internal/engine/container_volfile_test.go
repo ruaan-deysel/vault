@@ -276,3 +276,221 @@ func TestRestoreChunkedVolumeFileRefusesSymlinkTarget(t *testing.T) {
 		t.Errorf("the symlink's target was overwritten: %q", data)
 	}
 }
+
+// The file-mount loop's defensive paths. Each one is a manifest or inspect
+// that disagrees with the other; the restore must skip or report, never
+// silently write the wrong thing.
+func TestRestoreChunkedVolumes_FileMountEdgeCases(t *testing.T) {
+	newRepoWithFile := func(t *testing.T, body string) (*dedup.Repo, dedup.ManifestEntry, string) {
+		t.Helper()
+		repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+		t.Cleanup(cleanup)
+		source := filepath.Join(t.TempDir(), "hook.sh")
+		if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		entry, err := chunkFileIntoRepo(repo, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		return repo, entry, source
+	}
+
+	t.Run("an entry with no chunks is skipped", func(t *testing.T) {
+		repo, _, source := newRepoWithFile(t, "x")
+		dest := t.TempDir()
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+			containerVolFilePrefix + "/hook.sh": {Size: 12},
+		}}
+		inspect := inspectFromJSON(t, fmt.Sprintf(`{
+			"Name": "/ts",
+			"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/hook.sh"}]
+		}`, source))
+
+		if err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, nil); err != nil {
+			t.Fatalf("a chunkless entry must be skipped, not fatal: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(dest, "hook.sh")); !os.IsNotExist(err) {
+			t.Errorf("an empty file was materialised for a chunkless entry: %v", err)
+		}
+	})
+
+	t.Run("a mount the inspect no longer has is skipped", func(t *testing.T) {
+		repo, entry, source := newRepoWithFile(t, "x")
+		dest := t.TempDir()
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+			// Backed up when the container still mounted it; the mount has
+			// since been removed from the container definition.
+			containerVolFilePrefix + "/gone.sh": entry,
+		}}
+		inspect := inspectFromJSON(t, fmt.Sprintf(`{
+			"Name": "/ts",
+			"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/hook.sh"}]
+		}`, source))
+
+		if err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, nil); err != nil {
+			t.Fatalf("a mount missing from the inspect must be skipped, not fatal: %v", err)
+		}
+		if entries, err := os.ReadDir(dest); err != nil || len(entries) != 0 {
+			t.Errorf("destination should be untouched, got %v (err %v)", entries, err)
+		}
+	})
+
+	t.Run("an unresolvable target is refused before anything is written", func(t *testing.T) {
+		repo, entry, _ := newRepoWithFile(t, "x")
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+			containerVolFilePrefix + "/hook.sh": entry,
+		}}
+		// A mount source of "/" has no usable last component, so a remapped
+		// target cannot be derived for it. The collision preflight resolves
+		// every mount up front, so this is rejected before the file-mount
+		// loop runs at all — which is the behaviour we want pinned: a
+		// container whose mounts cannot all be remapped is not restored
+		// halfway.
+		inspect := inspectFromJSON(t, `{
+			"Name": "/ts",
+			"Mounts": [{"Type": "bind", "Source": "/", "Destination": "/hook.sh"}]
+		}`)
+
+		dest := t.TempDir()
+		err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, nil)
+		if err == nil || !strings.Contains(err.Error(), "invalid restore name") {
+			t.Fatalf("error = %v, want the unresolvable mount name to be reported", err)
+		}
+		if entries, readErr := os.ReadDir(dest); readErr != nil || len(entries) != 0 {
+			t.Errorf("destination should be untouched, got %v (err %v)", entries, readErr)
+		}
+	})
+
+	t.Run("a failed write is reported", func(t *testing.T) {
+		repo, entry, source := newRepoWithFile(t, "x")
+		// A directory already occupies the restore target, so the open fails.
+		dest := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dest, "hook.sh"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+			containerVolFilePrefix + "/hook.sh": entry,
+		}}
+		inspect := inspectFromJSON(t, fmt.Sprintf(`{
+			"Name": "/ts",
+			"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/hook.sh"}]
+		}`, source))
+
+		err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, nil)
+		if err == nil || !strings.Contains(err.Error(), "restore volume file /hook.sh") {
+			t.Fatalf("error = %v, want it to name the file mount", err)
+		}
+	})
+
+	t.Run("progress reports the restored mount", func(t *testing.T) {
+		repo, entry, source := newRepoWithFile(t, "x")
+		dest := t.TempDir()
+		m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+			containerVolFilePrefix + "/hook.sh": entry,
+		}}
+		inspect := inspectFromJSON(t, fmt.Sprintf(`{
+			"Name": "/ts",
+			"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/hook.sh"}]
+		}`, source))
+
+		var seen []string
+		progress := func(name string, _ int, msg string) { seen = append(seen, name+":"+msg) }
+		if err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, progress); err != nil {
+			t.Fatalf("restoreChunkedVolumes: %v", err)
+		}
+		if len(seen) != 1 || !strings.HasPrefix(seen[0], "/hook.sh:") {
+			t.Fatalf("progress = %v, want one report naming /hook.sh", seen)
+		}
+	})
+}
+
+// restoreChunkedVolumeFile's own failure modes, driven directly because the
+// loop above cannot reach all of them through a valid inspect.
+func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	source := filepath.Join(t.TempDir(), "hook.sh")
+	if err := os.WriteFile(source, []byte("hook\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := chunkFileIntoRepo(repo, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a target outside the approved roots is rejected", func(t *testing.T) {
+		err := restoreChunkedVolumeFile(repo, entry, "/nope/escape/hook.sh")
+		if err == nil {
+			t.Fatal("a path outside the restore roots must be refused")
+		}
+	})
+
+	t.Run("an unusable parent directory is reported", func(t *testing.T) {
+		// A regular file stands where a parent directory would have to be,
+		// so MkdirAll cannot create the tree.
+		base := t.TempDir()
+		blocker := filepath.Join(base, "blocker")
+		if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := restoreChunkedVolumeFile(repo, entry, filepath.Join(blocker, "sub", "hook.sh"))
+		if err == nil {
+			t.Fatal("restoring under a file must fail")
+		}
+	})
+
+	t.Run("a parent directory that cannot be created is reported", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root ignores directory permissions")
+		}
+		base := t.TempDir()
+		readOnly := filepath.Join(base, "ro")
+		if err := os.Mkdir(readOnly, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(readOnly, 0o700) })
+
+		err := restoreChunkedVolumeFile(repo, entry, filepath.Join(readOnly, "sub", "hook.sh"))
+		if err == nil || !strings.Contains(err.Error(), "mkdir") {
+			t.Fatalf("error = %v, want it to report the directory it could not create", err)
+		}
+	})
+
+	t.Run("a missing chunk is reported", func(t *testing.T) {
+		var missing dedup.ID
+		missing[0] = 0x7f
+		broken := entry
+		broken.Chunks = []dedup.ID{missing}
+		target := filepath.Join(t.TempDir(), "hook.sh")
+
+		err := restoreChunkedVolumeFile(repo, broken, target)
+		if err == nil || !strings.Contains(err.Error(), "reading chunk") {
+			t.Fatalf("error = %v, want it to mention reading a chunk", err)
+		}
+	})
+
+	t.Run("a zero mode falls back to 0644", func(t *testing.T) {
+		bare := entry
+		bare.Mode = 0
+		bare.ModTime = ""
+		target := filepath.Join(t.TempDir(), "hook.sh")
+		if err := restoreChunkedVolumeFile(repo, bare, target); err != nil {
+			t.Fatalf("restoreChunkedVolumeFile: %v", err)
+		}
+		info, err := os.Lstat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("mode = %04o, want 0644 for an entry that recorded none", got)
+		}
+	})
+}
