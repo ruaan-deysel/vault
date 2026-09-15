@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	containertypes "github.com/moby/moby/api/types/container"
@@ -531,5 +532,90 @@ func TestMergeContainerChainSpanningTheNamingChange(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSafeVolumeArchiveName pins the restore-boundary guard on names read out
+// of a backup's volumes.json. The manifest travels with the backup and can
+// come from remote storage, so a crafted entry must not be able to steer the
+// restore at a file outside the staging directory.
+func TestSafeVolumeArchiveName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "engine-written stable-key name", in: "volume_0a1b2c3d4e5f6071.tar", want: true},
+		{name: "legacy index name", in: "volume_0.tar", want: true},
+		{name: "gzip suffix", in: "volume_0.tar.gz", want: true},
+		{name: "zstd suffix", in: "volume_0.tar.zst", want: true},
+		{name: "empty", in: "", want: false},
+		{name: "parent traversal", in: "../volume_0.tar", want: false},
+		{name: "deep traversal", in: "../../etc/shadow.tar", want: false},
+		{name: "absolute path", in: "/etc/volume_0.tar", want: false},
+		{name: "nested path", in: "sub/volume_0.tar", want: false},
+		{name: "dot", in: ".", want: false},
+		{name: "dotdot", in: "..", want: false},
+		{name: "wrong prefix", in: "image.tar", want: false},
+		{name: "prefix but not a tar", in: "volume_0.json", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := safeVolumeArchiveName(tc.in); got != tc.want {
+				t.Errorf("safeVolumeArchiveName(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveVolumeArchiveIgnoresUnsafeManifestName proves the guard is wired
+// in: an unsafe manifest name is dropped and resolution continues with the
+// stable key rather than opening the named path.
+func TestResolveVolumeArchiveIgnoresUnsafeManifestName(t *testing.T) {
+	t.Parallel()
+
+	const source = "/mnt/user/appdata/plex"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, volumeArchiveBase(source)), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A file the crafted name points at, one level up from the staging dir.
+	outside := filepath.Join(filepath.Dir(dir), "volume_escape.tar")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+
+	got, err := resolveVolumeArchive(dir, "../volume_escape.tar", source, -1)
+	if err != nil {
+		t.Fatalf("resolveVolumeArchive() error = %v", err)
+	}
+	if got != filepath.Join(dir, volumeArchiveBase(source)) {
+		t.Errorf("resolveVolumeArchive() = %q, want the stable-key archive inside %q", got, dir)
+	}
+}
+
+// TestMergeContainerChainRejectsCorruptManifest proves the merge stops on a
+// volumes.json it cannot parse. Falling back to filename-only grouping there
+// is what silently drops a base full's data when a chain spans the naming
+// change, so a corrupt manifest must fail loudly instead.
+func TestMergeContainerChainRejectsCorruptManifest(t *testing.T) {
+	t.Parallel()
+
+	step := t.TempDir()
+	writeStepVolume(t, step, "volume_0.tar", "old.txt")
+	if err := os.WriteFile(filepath.Join(step, "volumes.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := MergeContainerChainStaging(context.Background(), []string{step}, t.TempDir())
+	if err == nil {
+		t.Fatal("expected MergeContainerChainStaging to fail on a corrupt volumes.json")
+	}
+	if !strings.Contains(err.Error(), "volumes.json") {
+		t.Errorf("error %q does not name the offending file", err)
 	}
 }

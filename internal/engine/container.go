@@ -101,6 +101,25 @@ func volumeArchiveBase(source string) string {
 	return fmt.Sprintf("volume_%x.tar", sum[:8])
 }
 
+// safeVolumeArchiveName reports whether a name read out of a backup's
+// volumes.json may be joined onto the staging directory. The manifest travels
+// with the backup and can come from remote storage, so it is untrusted input
+// at the restore boundary: a name like "../../etc/shadow.tar" would otherwise
+// be opened outside the staging directory. Only a bare volume_*.tar filename
+// — the shape the engine itself writes — is accepted.
+func safeVolumeArchiveName(name string) bool {
+	if name == "" || name != filepath.Base(name) {
+		return false
+	}
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	if !strings.HasPrefix(name, "volume_") {
+		return false
+	}
+	return strings.Contains(name, ".tar")
+}
+
 // resolveVolumeArchive locates a volume's archive on disk, preferring the name
 // the manifest recorded, then the stable-key name, then the legacy index name
 // so restore points written before #352 keep restoring.
@@ -112,15 +131,13 @@ func volumeArchiveBase(source string) string {
 // what a container recreate can shift.
 func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
 	bases := make([]string, 0, 3)
-	if manifestArchive != "" {
+	if safeVolumeArchiveName(manifestArchive) {
 		// Normalise away the compression suffix: a chain merge re-tars the
 		// overlay under the plain base name, so the recorded ".tar.zst" may
 		// no longer exist while ".tar" does.
-		base := manifestArchive
-		if i := strings.Index(base, ".tar"); i >= 0 {
-			base = base[:i] + ".tar"
-		}
-		bases = append(bases, base)
+		bases = append(bases, tarBaseName(manifestArchive))
+	} else if manifestArchive != "" {
+		log.Printf("engine: restore: ignoring unsafe volume archive name %q in volumes.json", manifestArchive)
 	}
 	if source != "" {
 		bases = append(bases, volumeArchiveBase(source))
@@ -1407,9 +1424,17 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 	// Step 3: Restore volumes.
 	// Load the volumes manifest (if present) to know which were skipped.
 	progress(item.Name, 30, "restoring volumes")
+	// "Absent" and "present but unreadable" must stay distinct: the legacy
+	// index fallback below is only safe when we KNOW no manifest was written.
+	// Treating a corrupt manifest as absent would re-enable the loop-position
+	// fallback and hand mounts each other's archives (issue #352).
 	var savedManifest []volumeManifestEntry
+	manifestPresent := false
 	if mData, err := os.ReadFile(filepath.Join(sourceDir, "volumes.json")); err == nil { // #nosec G304 — sourceDir is vault-controlled temp directory
-		_ = json.Unmarshal(mData, &savedManifest)
+		manifestPresent = true
+		if err := json.Unmarshal(mData, &savedManifest); err != nil {
+			return fmt.Errorf("parsing volumes.json for %s: %w", item.Name, err)
+		}
 	}
 
 	// The restore file picker's selection arrives as container-internal
@@ -1451,7 +1476,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		switch {
 		case entryFound:
 			legacyIndex = savedEntry.Index
-		case len(savedManifest) == 0:
+		case !manifestPresent:
 			legacyIndex = i
 		}
 

@@ -60,7 +60,10 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 	perStep := make([]map[string]string, len(stepDirs)) // canonical base -> archive base in that step
 	canonical := map[string]struct{}{}
 	for i, dir := range stepDirs {
-		byCanonical := canonicalVolumeArchives(dir)
+		byCanonical, err := canonicalVolumeArchives(dir)
+		if err != nil {
+			return err
+		}
 		perStep[i] = byCanonical
 		for base := range byCanonical {
 			canonical[base] = struct{}{}
@@ -115,17 +118,21 @@ func MergeContainerChainStaging(ctx context.Context, stepDirs []string, outDir s
 // which preserves the previous filename-only behaviour for that archive. An
 // unreadable step yields no archives, matching the merge's long-standing
 // skip-the-step contract.
-func canonicalVolumeArchives(stepDir string) map[string]string {
+func canonicalVolumeArchives(stepDir string) (map[string]string, error) {
 	sourceByArchive := map[string]string{}
 	if data, err := os.ReadFile(filepath.Join(stepDir, "volumes.json")); err == nil { // #nosec G304 — stepDir is a vault-controlled staging directory
+		// A manifest that exists but will not parse must stop the merge.
+		// Falling back to filename-only grouping here is what silently drops
+		// a base full's data when the chain spans the #352 naming change.
 		var manifest []volumeManifestEntry
-		if json.Unmarshal(data, &manifest) == nil {
-			for _, me := range manifest {
-				if me.Archive == "" || me.Source == "" {
-					continue
-				}
-				sourceByArchive[tarBaseName(me.Archive)] = me.Source
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return nil, fmt.Errorf("parsing volumes.json in chain step %s: %w", stepDir, err)
+		}
+		for _, me := range manifest {
+			if me.Archive == "" || me.Source == "" {
+				continue
 			}
+			sourceByArchive[tarBaseName(me.Archive)] = me.Source
 		}
 	}
 
@@ -134,7 +141,7 @@ func canonicalVolumeArchives(stepDir string) map[string]string {
 		// Preserve the long-standing contract that an unreadable step is
 		// skipped rather than failing the whole merge; the readable steps
 		// still merge.
-		return map[string]string{}
+		return map[string]string{}, nil
 	}
 
 	out := make(map[string]string, len(entries))
@@ -149,7 +156,7 @@ func canonicalVolumeArchives(stepDir string) map[string]string {
 		}
 		out[canonicalBase] = base
 	}
-	return out
+	return out, nil
 }
 
 // tarBaseName strips any compression suffix, leaving the ".tar" base that
