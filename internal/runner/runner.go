@@ -986,7 +986,7 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 	// (issue #319). The run ID lives in the database, where the restore point
 	// already links back to it.
 	timestamp := time.Now().Format("2006-01-02_150405")
-	basePath := uniqueRunPath(dest, fmt.Sprintf("%s/%s", job.Name, timestamp))
+	basePath := uniqueRunPath(dest, fmt.Sprintf("%s/%s", job.Name, timestamp), runID)
 
 	// Resolve encryption passphrase if job has encryption enabled.
 	var encryptPassphrase string

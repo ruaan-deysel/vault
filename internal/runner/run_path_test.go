@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ func TestUniqueRunPath(t *testing.T) {
 
 	base := "nightly/2026-09-15_143000"
 
-	if got := uniqueRunPath(dest, base); got != base {
+	if got := uniqueRunPath(dest, base, 7); got != base {
 		t.Errorf("a free path should be used as-is, got %q", got)
 	}
 
@@ -36,7 +37,7 @@ func TestUniqueRunPath(t *testing.T) {
 		}
 	}
 	occupy(base)
-	second := uniqueRunPath(dest, base)
+	second := uniqueRunPath(dest, base, 7)
 	if second == base {
 		t.Fatal("a taken path must not be handed out again — the earlier run would be overwritten")
 	}
@@ -45,16 +46,36 @@ func TestUniqueRunPath(t *testing.T) {
 	}
 
 	occupy(second)
-	third := uniqueRunPath(dest, base)
+	third := uniqueRunPath(dest, base, 7)
 	if third != base+"-3" {
 		t.Errorf("got %q, want %q", third, base+"-3")
 	}
 
-	// An unusable destination must not block the backup: the upload reports
-	// the real problem with a far better message than this check could.
+	// An unusable destination must not block the backup — but it must not
+	// hand out the plain name either, because nothing has proven that name
+	// free. The run ID is unique by construction, so it becomes the suffix.
 	broken := db.StorageDestination{Name: "broken", Type: "definitely-not-a-provider", Config: "{}"}
-	if got := uniqueRunPath(broken, base); got != base {
-		t.Errorf("an unreachable destination should fall through to the plain name, got %q", got)
+	if got := uniqueRunPath(broken, base, 42); got != base+"-r42" {
+		t.Errorf("got %q, want the run-ID fallback %q", got, base+"-r42")
+	}
+
+	// Same rule when the destination exists but cannot be listed at all: a
+	// local destination whose root has been removed underneath it.
+	goneDir := filepath.Join(t.TempDir(), "gone")
+	goneCfg, _ := json.Marshal(map[string]string{"path": goneDir})
+	gone := db.StorageDestination{Name: "gone", Type: "local", Config: string(goneCfg)}
+	if got := uniqueRunPath(gone, base, 43); got != base+"-r43" {
+		t.Errorf("got %q, want the run-ID fallback %q", got, base+"-r43")
+	}
+
+	// And when the same-second collisions never stop, the run ID breaks the
+	// tie rather than the search silently reusing a taken folder.
+	occupy(base + "-3")
+	for attempt := 4; attempt <= maxRunPathAttempts; attempt++ {
+		occupy(fmt.Sprintf("%s-%d", base, attempt))
+	}
+	if got := uniqueRunPath(dest, base, 44); got != base+"-r44" {
+		t.Errorf("got %q, want the run-ID fallback %q", got, base+"-r44")
 	}
 }
 

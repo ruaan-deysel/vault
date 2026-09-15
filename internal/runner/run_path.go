@@ -22,31 +22,42 @@ const maxRunPathAttempts = 50
 // job can share — and the storage adapters overwrite silently, so a collision
 // would destroy the earlier run's data with no error anywhere.
 //
-// A destination that cannot be reached is not a reason to refuse the backup:
-// the run proceeds on the plain name and the upload surfaces the real problem
-// with a far better message than this check could.
-func uniqueRunPath(dest db.StorageDestination, basePath string) string {
+// When the destination cannot answer whether a path is free, the run is not
+// refused — but neither is the plain name assumed safe. It falls back to
+// "<basePath>-r<runID>", which is unique by construction because run IDs are,
+// so an unreachable destination can never cost an earlier run its data.
+func uniqueRunPath(dest db.StorageDestination, basePath string, runID int64) string {
+	// Unique without asking the destination anything: run IDs are unique.
+	fallback := fmt.Sprintf("%s-r%d", basePath, runID)
+
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
-		log.Printf("runner: cannot check %s for an existing run folder: %v (using %s as-is)", dest.Name, err, basePath)
-		return basePath
+		log.Printf("runner: cannot check %s for an existing run folder: %v (using %s)", dest.Name, err, fallback)
+		return fallback
 	}
 	defer storage.CloseAdapter(adapter)
 
 	candidate := basePath
 	for attempt := 2; attempt <= maxRunPathAttempts; attempt++ {
 		entries, listErr := adapter.List(candidate)
-		if listErr != nil {
-			// Not found is the common answer and the one we want; anything
-			// else is a destination problem the upload will report properly.
-			return candidate
+		if listErr == nil {
+			if len(entries) == 0 {
+				return candidate
+			}
+			candidate = fmt.Sprintf("%s-%d", basePath, attempt)
+			continue
 		}
-		if len(entries) == 0 {
-			return candidate
+		// "Not found" is the common answer and the one we want, but the
+		// adapters do not agree on how to spell it, so the destination root
+		// is probed instead: if that lists, the destination is healthy and
+		// the error really did mean the candidate is free.
+		if _, probeErr := adapter.List(""); probeErr != nil {
+			log.Printf("runner: %s cannot be listed (%v) — using %s rather than risk overwriting a run", dest.Name, probeErr, fallback)
+			return fallback
 		}
-		candidate = fmt.Sprintf("%s-%d", basePath, attempt)
+		return candidate
 	}
 
-	log.Printf("runner: %s already has %d run folders for this timestamp — reusing %s", dest.Name, maxRunPathAttempts, candidate)
-	return candidate
+	log.Printf("runner: %s already has %d run folders for this timestamp — using %s", dest.Name, maxRunPathAttempts, fallback)
+	return fallback
 }
