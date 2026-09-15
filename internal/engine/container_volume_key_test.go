@@ -619,3 +619,74 @@ func TestMergeContainerChainRejectsCorruptManifest(t *testing.T) {
 		t.Errorf("error %q does not name the offending file", err)
 	}
 }
+
+// TestLegacyVolumeIndex pins the decision that keeps the legacy archive
+// fallback from re-creating the #352 mis-pairing.
+func TestLegacyVolumeIndex(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		entry           volumeManifestEntry
+		entryFound      bool
+		manifestPresent bool
+		loopIndex       int
+		want            int
+	}{
+		{
+			// The backup-time index, not the current loop position.
+			name:            "matched entry uses its recorded index",
+			entry:           volumeManifestEntry{Index: 3},
+			entryFound:      true,
+			manifestPresent: true,
+			loopIndex:       0,
+			want:            3,
+		},
+		{
+			name:            "no manifest at all falls back to the loop position",
+			entryFound:      false,
+			manifestPresent: false,
+			loopIndex:       2,
+			want:            2,
+		},
+		{
+			// The mount is new or changed since the backup; guessing an index
+			// would hand it another volume's archive.
+			name:            "manifest present but mount unlisted disables the fallback",
+			entryFound:      false,
+			manifestPresent: true,
+			loopIndex:       2,
+			want:            -1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := legacyVolumeIndex(tc.entry, tc.entryFound, tc.manifestPresent, tc.loopIndex); got != tc.want {
+				t.Errorf("legacyVolumeIndex() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTarBaseName covers the compression-suffix normalisation both the merge
+// and the restore lookup depend on.
+func TestTarBaseName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ in, want string }{
+		{"volume_0.tar", "volume_0.tar"},
+		{"volume_0.tar.gz", "volume_0.tar"},
+		{"volume_0.tar.zst", "volume_0.tar"},
+		{"image.tar.gz", "image.tar"},
+		{"no-suffix", "no-suffix"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := tarBaseName(tc.in); got != tc.want {
+				t.Errorf("tarBaseName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

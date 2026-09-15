@@ -120,6 +120,27 @@ func safeVolumeArchiveName(name string) bool {
 	return strings.Contains(name, ".tar")
 }
 
+// legacyVolumeIndex decides which index, if any, the legacy
+// volume_<index>.tar name may be built from, returning a negative value to
+// disable that fallback.
+//
+// The legacy name is only safe to try when we know which backup-time index it
+// belongs to. A matched manifest entry carries it. A restore point with no
+// manifest at all leaves the current loop position as the only available
+// guess. A manifest that exists but does NOT list this mount means the mount
+// is new or changed since the backup — probing an index there would hand it
+// another volume's archive, which is the mis-pairing issue #352 is about.
+func legacyVolumeIndex(entry volumeManifestEntry, entryFound, manifestPresent bool, loopIndex int) int {
+	switch {
+	case entryFound:
+		return entry.Index
+	case !manifestPresent:
+		return loopIndex
+	default:
+		return -1
+	}
+}
+
 // resolveVolumeArchive locates a volume's archive on disk, preferring the name
 // the manifest recorded, then the stable-key name, then the legacy index name
 // so restore points written before #352 keep restoring.
@@ -1466,19 +1487,7 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		// fix are still index-named, hence the fallbacks.
 		savedEntry, entryFound := findVolumeManifestEntry(savedManifest, mount.Source, i)
 
-		// The legacy index-named archive is only safe to try when we know
-		// which backup-time index it belongs to. A matched manifest entry
-		// carries it; a restore point with no manifest at all leaves the loop
-		// position as the only available guess. A manifest that exists but
-		// does NOT list this mount means the mount is new or changed — trying
-		// an index there would hand it another volume's archive.
-		legacyIndex := -1
-		switch {
-		case entryFound:
-			legacyIndex = savedEntry.Index
-		case !manifestPresent:
-			legacyIndex = i
-		}
+		legacyIndex := legacyVolumeIndex(savedEntry, entryFound, manifestPresent, i)
 
 		volArchive, err := resolveVolumeArchive(sourceDir, savedEntry.Archive, mount.Source, legacyIndex)
 		if err != nil {
