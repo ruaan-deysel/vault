@@ -653,6 +653,17 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 		return
 	}
 
+	// Recover forceType from the original run when retrying, so a failed
+	// scheduled full backup (issue #322) or other forced run retries with the
+	// same backup type rather than reverting to the job's default chain.
+	if opts.retryOfRunID > 0 && opts.forceType == "" {
+		if origRun, err := r.db.GetJobRun(opts.retryOfRunID); err == nil {
+			if origRun.BackupType == "full" && job.BackupTypeChain != "" && job.BackupTypeChain != "full" {
+				opts.forceType = "full"
+			}
+		}
+	}
+
 	items, err := r.db.GetJobItems(jobID)
 	if err != nil {
 		log.Printf("runner: failed to get items for job %d: %v", jobID, err)

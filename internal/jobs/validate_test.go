@@ -63,5 +63,13 @@ func TestNormalizeSecondarySchedules(t *testing.T) {
 				t.Errorf("chain %q kept full_backup_schedule %q — every run is already a full", chain, job.FullBackupSchedule)
 			}
 		}
+		// Even an unparseable full backup schedule is cleared when the chain is full.
+		job := db.Job{Name: "j", BackupTypeChain: "full", FullBackupSchedule: "invalid-cron"}
+		if err := normalize(&job); err != nil {
+			t.Fatalf("Validate(chain=full, invalid schedule): %v", err)
+		}
+		if job.FullBackupSchedule != "" {
+			t.Errorf("full chain kept full_backup_schedule %q", job.FullBackupSchedule)
+		}
 	})
 }

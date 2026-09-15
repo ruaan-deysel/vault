@@ -91,14 +91,13 @@ func normalize(job *db.Job) error {
 		return invalidCause("verify_schedule", err, "invalid verify schedule: %s", err.Error())
 	}
 	job.FullBackupSchedule = strings.TrimSpace(job.FullBackupSchedule)
-	if err := scheduler.ValidateSchedule(job.FullBackupSchedule); err != nil {
-		return invalidCause("full_backup_schedule", err, "invalid full backup schedule: %s", err.Error())
-	}
 	// A "full" chain has nothing to schedule a full *alongside* — every run is
 	// already a full — so the field is dropped rather than silently doubling
-	// the job's cadence.
+	// the job's cadence. Only incremental and differential chains validate it.
 	if job.BackupTypeChain == "" || job.BackupTypeChain == "full" {
 		job.FullBackupSchedule = ""
+	} else if err := scheduler.ValidateSchedule(job.FullBackupSchedule); err != nil {
+		return invalidCause("full_backup_schedule", err, "invalid full backup schedule: %s", err.Error())
 	}
 	for field, value := range map[string]string{
 		"backup_type_chain": job.BackupTypeChain,

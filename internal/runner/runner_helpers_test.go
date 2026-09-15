@@ -555,3 +555,69 @@ func TestResolveBackupTypeForcedFull(t *testing.T) {
 		t.Errorf("forced full attached parent restore point %d — a full backup is the base of the chain", res.ParentRP.ID)
 	}
 }
+
+// Retrying a run that was forced to "full" (such as a scheduled full backup on
+// an incremental chain) must retain "full" rather than falling back to the
+// job's incremental/differential chain setting.
+func TestRunJobRetry_PreservesForcedFullBackupType(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	dest := createLocalDest(t, database, storageDir)
+
+	jobID, err := database.CreateJob(db.Job{
+		Name: "inc-job-retry", BackupTypeChain: "incremental", StorageDestID: dest.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	// Create an existing restore point so a normal run resolves to "incremental".
+	origSuccessRun, err := database.CreateJobRun(db.JobRun{JobID: jobID, Status: "completed", BackupType: "full"})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+	if _, err := database.CreateRestorePoint(db.RestorePoint{
+		JobRunID: origSuccessRun, JobID: jobID, BackupType: "full", StoragePath: "inc-job-retry/base", Metadata: "{}",
+	}); err != nil {
+		t.Fatalf("CreateRestorePoint: %v", err)
+	}
+
+	// Trip the destination breaker so runJobInternal records a skipped run
+	// without executing the storage pipeline.
+	if err := database.OpenBreaker(dest.ID, 3); err != nil {
+		t.Fatalf("OpenBreaker: %v", err)
+	}
+
+	// Create an original failed run that was forced to "full".
+	failedFullRunID, err := database.CreateJobRun(db.JobRun{
+		JobID: jobID, Status: "failed", BackupType: "full",
+	})
+	if err != nil {
+		t.Fatalf("CreateJobRun: %v", err)
+	}
+
+	// Retry that failed full run.
+	r.RunJobRetry(jobID, failedFullRunID, 1)
+
+	// Fetch runs for the job; find the retry run created after failedFullRunID.
+	runs, err := database.GetJobRuns(jobID, 10)
+	if err != nil {
+		t.Fatalf("GetJobRuns: %v", err)
+	}
+	var retryRun *db.JobRun
+	for i := range runs {
+		if runs[i].ID > failedFullRunID {
+			retryRun = &runs[i]
+			break
+		}
+	}
+	if retryRun == nil {
+		t.Fatalf("retry run not found in runs: %+v", runs)
+	}
+	if retryRun.RetryOfRunID == nil || *retryRun.RetryOfRunID != failedFullRunID {
+		t.Fatalf("retry run retry_of_run_id = %v, want %d", retryRun.RetryOfRunID, failedFullRunID)
+	}
+	if retryRun.BackupType != "full" {
+		t.Errorf("retry run backup_type = %q, want full (preserved from original run)", retryRun.BackupType)
+	}
+}
