@@ -361,4 +361,7 @@ var dataMigrations = []string{
 	// them is a no-op.
 	"UPDATE activity_log SET category = 'health' WHERE category = 'anomaly'",
 	"UPDATE activity_log SET level = 'warn' WHERE category = 'health' AND level = 'info' AND (message LIKE 'Anomaly %' OR message LIKE '%anomaly(s) acknowledged%')",
+	// Scheduled full backups for incremental/differential chains (#322).
+	// A second cron expression per job; empty means no scheduled full.
+	"ALTER TABLE jobs ADD COLUMN full_backup_schedule TEXT DEFAULT ''",
 }
