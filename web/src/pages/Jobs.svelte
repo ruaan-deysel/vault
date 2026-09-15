@@ -968,18 +968,22 @@
     const signal = mountsAbortController.signal
 
     // Fetch every selected container's mounts concurrently. A failed or
-    // unavailable fetch records an empty list (not undefined) so the UI shows
-    // "no bind mounts" rather than spinning on "Loading…" forever.
+    // unavailable fetch records null (not undefined, not []) so the UI stops
+    // spinning on "Loading…" without claiming the container genuinely has no
+    // mounts — that claim comes with a promise about what is backed up
+    // instead, and it must only be made when the query actually succeeded
+    // (issue #305).
     const entries = await Promise.all(
       names.filter(Boolean).map(async (name) => {
         try {
           const { url, options } = buildApiRequest('GET', `/containers/${encodeURIComponent(name)}/mounts`)
           const res = await fetch(url, { ...options, signal })
-          if (!res.ok) return [name, []]
+          if (!res.ok) return [name, null]
           const data = await res.json()
-          return [name, data.available && Array.isArray(data.mounts) ? data.mounts : []]
+          if (!data.available || !Array.isArray(data.mounts)) return [name, null]
+          return [name, data.mounts]
         } catch {
-          return [name, []]
+          return [name, null]
         }
       })
     )
@@ -2039,6 +2043,11 @@
                   <!-- Mount point toggles -->
                   {#if mounts === undefined}
                     <p class="text-xs text-text-dim italic">Loading mount points…</p>
+                  {:else if mounts === null}
+                    <p class="text-xs text-text-dim italic">
+                      Mount points could not be read for this container. The backup still runs; every mount it
+                      has at that moment is included.
+                    </p>
                   {:else if mounts.length === 0}
                     <p class="text-xs text-text-dim italic">
                       No bind mounts or named volumes detected. Vault still backs up this container's image,
