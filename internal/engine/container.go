@@ -2966,16 +2966,30 @@ func writeTarEntry(ctx context.Context, tw *tar.Writer, rel string, header *tar.
 		return false, fmt.Errorf("writing tar header for %s: %w", rel, err)
 	}
 	n, copyErr := contextCopy(ctx, tw, io.LimitReader(src, header.Size))
-	if copyErr == nil {
+	if copyErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+	} else if n == header.Size {
 		return false, nil
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return false, ctxErr
-	}
+
+	// Two ways to get here, and both leave the committed header promising
+	// bytes that were never written: the read failed part-way, or the file
+	// shrank between the stat and this copy (a rotated log, a compacted
+	// database) so the copy ended early with no error at all. Either way the
+	// entry has to be padded to the promised length, or tw.Close fails with
+	// "missed writing N bytes" and takes the whole backup down (issue #166).
+	// Short of rewriting the header — impossible once it is on the wire —
+	// zero-filling is the only repair, so the file is reported as skipped.
 	if padErr := zeroPad(tw, header.Size-n); padErr != nil {
 		return false, fmt.Errorf("writing file %s to tar: %w", rel, padErr)
 	}
-	log.Printf("engine: file %s became unreadable after %d of %d bytes — the remainder is zero-filled and the file is reported as skipped: %v", rel, n, header.Size, copyErr)
+	if copyErr != nil {
+		log.Printf("engine: file %s became unreadable after %d of %d bytes — the remainder is zero-filled and the file is reported as skipped: %v", rel, n, header.Size, copyErr)
+	} else {
+		log.Printf("engine: file %s shrank from %d to %d bytes while it was being archived — the remainder is zero-filled and the file is reported as skipped", rel, header.Size, n)
+	}
 	return true, nil
 }
 

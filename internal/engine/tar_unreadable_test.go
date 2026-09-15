@@ -132,6 +132,18 @@ func TestWriteTarEntry(t *testing.T) {
 			wantSize:    maxStagedFileSize + 1024,
 		},
 		{
+			// The large-file counterpart of the shrink case above. The header
+			// is already on the wire, so the entry cannot be re-sized; it is
+			// padded to the promised length and reported, which is the only
+			// repair that keeps tw.Close from failing the whole backup (#166).
+			name:        "a large file that shrank mid-walk is padded and reported",
+			size:        maxStagedFileSize + 4096,
+			src:         func() io.Reader { return &zeroReader{remaining: maxStagedFileSize} },
+			wantSkipped: true,
+			wantPresent: true,
+			wantSize:    maxStagedFileSize + 4096,
+		},
+		{
 			name:        "readable large file is archived",
 			size:        maxStagedFileSize + 16,
 			src:         func() io.Reader { return &zeroReader{remaining: maxStagedFileSize + 16} },
