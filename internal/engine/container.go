@@ -1494,6 +1494,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 			// Explain the absence when the manifest recorded a reason.
 			if !savedEntry.BackedUp && savedEntry.SkipReason != "" {
 				log.Printf("engine: restore: skipping volume %s (was excluded: %s)", mount.Source, savedEntry.SkipReason)
+			} else {
+				// Nothing recorded a reason: the mount exists in the config
+				// but no archive could be resolved for it — a source path
+				// that changed since the backup lands here. Say so, rather
+				// than reporting a complete restore with a volume missing.
+				log.Printf("engine: restore: skipping volume %s — no archive found: %v", mount.Source, err)
 			}
 			continue // skip if archive doesn't exist
 		}
