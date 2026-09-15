@@ -3435,16 +3435,33 @@ func (r *Runner) RunRestore(restorePoint db.RestorePoint, targets []RestoreTarge
 	r.runLog(runID, sumLevel, sumMsg, sumData)
 }
 
+// RestoreItemOptions carries the choices a scripted restore can make that the
+// HTTP API exposes as request fields.
+type RestoreItemOptions struct {
+	// CleanDestination replaces the destination's contents rather than
+	// merging into them. Nil means the default — replace, matching the API's
+	// clean_destination — so an automation that wants the old additive
+	// behaviour has to ask for it, but can.
+	CleanDestination *bool
+}
+
 // RestoreItem restores a single item from a restore point.
 // If destination is non-empty, it overrides the original restore path.
 // If passphrase is non-empty, .age files are decrypted before restoring.
 // For incremental/differential restore points, the full chain is restored
 // in order (base full → incremental/differential overlays).
-func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string) error {
+// The destination is replaced unless opts says otherwise (issue #321).
+func (r *Runner) RestoreItem(restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, opts ...RestoreItemOptions) error {
+	cleanDestination := true
+	for _, o := range opts {
+		if o.CleanDestination != nil {
+			cleanDestination = *o.CleanDestination
+		}
+	}
 	// Deliberately context.Background(): this is the un-tracked scripted/MCP
 	// entry point with no registered cancel func or stall watchdog. The tracked
 	// RunRestore path threads its own cancellable ctx through the chain.
-	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, true, restoreProgressReporter{})
+	return r.restoreItemWithReporter(context.Background(), restorePoint, itemName, itemType, destination, passphrase, nil, cleanDestination, restoreProgressReporter{})
 }
 
 func (r *Runner) restoreItemWithReporter(ctx context.Context, restorePoint db.RestorePoint, itemName, itemType, destination, passphrase string, filePaths []string, cleanDestination bool, reporter restoreProgressReporter) error {
