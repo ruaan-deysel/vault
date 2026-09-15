@@ -81,7 +81,10 @@ func WriteTarIndex(archivePath string) error {
 		if err != nil {
 			return fmt.Errorf("reading tar entry for indexing: %w", err)
 		}
-		// Skip global headers and tar-internal records (xattr/longname).
+		// Skip the pax metadata records, which are not files. GNU
+		// longname/longlink records need no case of their own: archive/tar's
+		// reader consumes them itself and applies them to the header that
+		// follows, so they never reach Next.
 		switch hdr.Typeflag {
 		case tar.TypeXGlobalHeader, tar.TypeXHeader:
 			continue
