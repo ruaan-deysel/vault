@@ -76,7 +76,9 @@ describe('cronError', () => {
     expect(cronError('0 2 1,, * *')).toMatch(/Empty value in the day of month/)
     expect(cronError('0 2 1/2/3 * *')).toMatch(/Too many "\/"/)
     expect(cronError('0 2 1-2-3 * *')).toMatch(/Too many "-"/)
-    expect(cronError('*/x * * * *')).toMatch(/Step value in the minute field/)
+    expect(cronError('*/x * * * *')).toMatch(/Step value in the minute field must be a number/)
+    expect(cronError('*/0 * * * *')).toMatch(/Step in the minute field must be between 1 and 59/)
+    expect(cronError('*/99 * * * *')).toMatch(/Step in the minute field must be between 1 and 59/)
   })
 
   it('rejects an unknown descriptor', () => {

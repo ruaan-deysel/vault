@@ -106,8 +106,14 @@ function fieldError(field, { name, min, max }) {
     if (term === '') return `Empty value in the ${name} field.`
     const [base, step, ...rest] = term.split('/')
     if (rest.length > 0) return `Too many "/" in the ${name} field.`
-    if (step !== undefined && !inRange(step, 1, max)) {
-      return `Step value in the ${name} field must be a number.`
+    if (step !== undefined) {
+      if (!isPlainInt(step)) {
+        return `Step value in the ${name} field must be a number.`
+      }
+      const s = Number(step)
+      if (s < 1 || s > max) {
+        return `Step in the ${name} field must be between 1 and ${max} — got "${step}".`
+      }
     }
     if (base === '*') continue
     const [from, to, ...extra] = base.split('-')

@@ -76,6 +76,9 @@
   // Parse initial cron value into UI state
   function parseCron(cron) {
     if (!cron) return
+    // In custom mode the user may type an expression that happens to match
+    // a preset shape; keep frequency as 'custom' so the input doesn't vanish.
+    if (frequency === 'custom') return
     // Anything the presets cannot express is edited as raw text. Without this
     // the picker mislabelled such a schedule and then overwrote it with a
     // preset the moment anything was touched (issue #309).
@@ -144,6 +147,8 @@
     buildCron()
   }
 
+  let customError = $derived(frequency === 'custom' ? cronError(customCron) : null)
+
   // Human-readable description
   let description = $derived.by(() => {
     const time = formatClockTime(hour, minute)
@@ -168,8 +173,6 @@
     }
     return ''
   })
-
-  let customError = $derived(frequency === 'custom' ? cronError(customCron) : null)
 
   // Switching to Custom seeds the box with the schedule the job already has,
   // so the mode starts from what is in force rather than clearing it — an
