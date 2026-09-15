@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -2135,6 +2136,10 @@ func findDatabaseDump(sourceDir string) string {
 //	                       represented with Size: -1 and an empty Chunks slice,
 //	                       so the volume manifest is preserved for diagnostics
 //	                       even when we didn't back it up.
+//	__volfile__<destination> → a single-file bind mount (a Tailscale hook
+//	                       file, a config file bound on its own), chunked
+//	                       directly with its mode, mtime and owner — there
+//	                       is no tree to delegate to FolderHandler
 //	__template           → one-chunk entry holding the Unraid template XML
 //	                       (best-effort; absent when the container has none)
 //	__dbdump__           → chunked logical database dump, written only when the
@@ -2163,6 +2168,12 @@ const (
 	// template happened to still be on the flash drive (issue #379).
 	containerTemplateKey = "__template"
 	containerVolPrefix   = "__vol__"
+	// containerVolFilePrefix holds a single-file bind mount's chunks
+	// directly, rather than pointing at a nested folder sub-manifest the
+	// way __vol__ does. The prefix deliberately does not start with
+	// "__vol__", so the restore and GC walks tell the two apart with a
+	// plain HasPrefix check (issue #380).
+	containerVolFilePrefix = "__volfile__"
 	// volumeSkippedSize is the sentinel size stored on a __vol__<dest> entry
 	// when shouldSkipVolume returned true at backup time. Restore uses this
 	// to skip the entry without trying to dereference a missing chunk ID.
@@ -2419,6 +2430,42 @@ func (h *ContainerHandler) BackupChunked(ctx context.Context, item BackupItem, r
 			// path, matching the classic path and the effective listing
 			// (issue #353). mnt.Source stays the manifest's key.
 			resolvedSource := resolveMountSource(mnt.Source)
+
+			// Classify the inode, the same way the classic path does with
+			// os.Lstat — the chunked path assumed every mount was a directory
+			// and handed it to FolderHandler regardless (issue #380).
+			srcInfo, statErr := os.Lstat(resolvedSource)
+			if statErr != nil {
+				return fmt.Errorf("stat volume %s: %w", mnt.Source, statErr)
+			}
+			if srcInfo.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeCharDevice|os.ModeIrregular) != 0 {
+				// A bind to /var/run/docker.sock and friends is never useful
+				// to back up, and walking it produces nothing. Recorded with
+				// the skip sentinel so the entry survives for diagnostics.
+				log.Printf("engine: chunked: skipping volume %s for %s: unsupported inode type (%s)",
+					mnt.Source, item.Name, srcInfo.Mode().Type().String())
+				m.Files[key] = dedup.ManifestEntry{Size: volumeSkippedSize}
+				continue
+			}
+			if !srcInfo.IsDir() {
+				// A single file bound on its own — a Tailscale hook file, a
+				// lone config file. There is no tree to delegate, so its
+				// chunks hang off the manifest directly, under a key the
+				// restore can tell apart from a volume pointer. Chunked on
+				// every run rather than carried forward: one file is cheap,
+				// and the chunk store collapses an unchanged one to nothing.
+				entry, fErr := chunkFileIntoRepo(repo, resolvedSource)
+				if fErr != nil {
+					return fmt.Errorf("chunking volume file %s: %w", mnt.Source, fErr)
+				}
+				entry.Mode = uint32(srcInfo.Mode().Perm())
+				entry.ModTime = srcInfo.ModTime().UTC().Format(time.RFC3339)
+				if uid, gid := fileOwner(srcInfo); uid >= 0 && gid >= 0 {
+					entry.UID, entry.GID = &uid, &gid
+				}
+				m.Files[containerVolFilePrefix+mnt.Destination] = entry
+				continue
+			}
 
 			var volParent *dedup.Manifest
 			if hasChangedSince && parent != nil {
@@ -2716,6 +2763,92 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		}
 		rootUID, rootGID := v.Owner()
 		applyVolumeRootMeta(src, v.Mode, rootUID, rootGID)
+	}
+
+	// Single-file bind mounts, whose chunks hang off the manifest directly
+	// (issue #380). They are written here rather than through FolderHandler,
+	// which restores trees into a directory and has no notion of a file
+	// destination.
+	for k, v := range m.Files {
+		dest, isVolFile := ContainerVolumeFileDest(k)
+		if !isVolFile {
+			continue
+		}
+		if len(v.Chunks) == 0 {
+			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
+			continue
+		}
+		// The picker names the mount by its container-internal path, so a
+		// selection that does not include this file skips it — the same rule
+		// the volume loop applies (issue #275).
+		if len(selection) > 0 && !slices.Contains(selection, dest) {
+			log.Printf("engine: chunked restore: skipping file mount %s — it is not in the selection", dest)
+			continue
+		}
+		mnt, ok := mountByDest[dest]
+		if !ok || mnt.Source == "" {
+			log.Printf("engine: chunked restore: no matching bind mount for file %s in inspect — skipping", dest)
+			continue
+		}
+		target, err := volumeRestoreTarget(restoreDest, mnt.Type, mnt.Name, mnt.Source)
+		if err != nil {
+			return fmt.Errorf("restore volume file %s: %w", dest, err)
+		}
+		if err := restoreChunkedVolumeFile(repo, v, target); err != nil {
+			return fmt.Errorf("restore volume file %s: %w", dest, err)
+		}
+		if progress != nil {
+			progress(dest, -1, "restored file mount")
+		}
+	}
+	return nil
+}
+
+// restoreChunkedVolumeFile writes one single-file bind mount's chunks to
+// target, restoring the mode, mtime and owner the backup recorded.
+//
+// The parent directory is created first: a file mount's host path need not
+// exist yet on a restore to a fresh system, and Docker would otherwise
+// materialise a directory in its place when the container starts.
+func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, target string) error {
+	normalized, err := normalizeRestorePath(filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(normalized, 0o750); err != nil {
+		return fmt.Errorf("mkdir %s: %w", normalized, err)
+	}
+	path := filepath.Join(normalized, filepath.Base(target))
+
+	mode := os.FileMode(entry.Mode)
+	if mode == 0 {
+		mode = 0o644
+	}
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — path is validated by normalizeRestorePath
+	if err != nil {
+		return err
+	}
+	for _, id := range entry.Chunks {
+		chunk, gErr := repo.Get(id)
+		if gErr != nil {
+			_ = out.Close()
+			return fmt.Errorf("reading chunk: %w", gErr)
+		}
+		if _, wErr := out.Write(chunk); wErr != nil {
+			_ = out.Close()
+			return wErr
+		}
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	// O_CREATE only applies the mode when it creates the file, so a restore
+	// over an existing one needs it set explicitly.
+	applyMode(path, mode)
+	uid, gid := entry.Owner()
+	applyOwner(path, uid, gid)
+	if t, err := time.Parse(time.RFC3339, entry.ModTime); err == nil {
+		_ = os.Chtimes(path, t, t)
 	}
 	return nil
 }
