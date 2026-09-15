@@ -2040,7 +2040,10 @@
                   {#if mounts === undefined}
                     <p class="text-xs text-text-dim italic">Loading mount points…</p>
                   {:else if mounts.length === 0}
-                    <p class="text-xs text-text-dim italic">No bind mounts detected for this container.</p>
+                    <p class="text-xs text-text-dim italic">
+                      No bind mounts or named volumes detected. Vault still backs up this container's image,
+                      its configuration and its Unraid template, so it can be recreated exactly as it is now.
+                    </p>
                   {:else}
                     <div class="space-y-1.5">
                       {#each mounts as mount (mount.destination)}
