@@ -101,13 +101,16 @@ func volumeArchiveBase(source string) string {
 	return fmt.Sprintf("volume_%x.tar", sum[:8])
 }
 
-// findVolumeManifestEntry resolves the manifest entry for a mount, preferring
-// the stable key and falling back to the mount index so manifests written
-// before #352 still resolve.
 // resolveVolumeArchive locates a volume's archive on disk, preferring the name
 // the manifest recorded, then the stable-key name, then the legacy index name
 // so restore points written before #352 keep restoring.
-func resolveVolumeArchive(sourceDir, manifestArchive, source string, index int) (string, error) {
+//
+// legacyIndex is the index the legacy name is built from, or a negative value
+// to disable that fallback entirely. It must be the index the BACKUP recorded,
+// never the current loop position: falling back to the loop position would
+// reintroduce the very mis-pairing #352 fixes, since that position is exactly
+// what a container recreate can shift.
+func resolveVolumeArchive(sourceDir, manifestArchive, source string, legacyIndex int) (string, error) {
 	bases := make([]string, 0, 3)
 	if manifestArchive != "" {
 		// Normalise away the compression suffix: a chain merge re-tars the
@@ -122,7 +125,12 @@ func resolveVolumeArchive(sourceDir, manifestArchive, source string, index int) 
 	if source != "" {
 		bases = append(bases, volumeArchiveBase(source))
 	}
-	bases = append(bases, fmt.Sprintf("volume_%d.tar", index))
+	if legacyIndex >= 0 {
+		bases = append(bases, fmt.Sprintf("volume_%d.tar", legacyIndex))
+	}
+	if len(bases) == 0 {
+		return "", fmt.Errorf("no archive name could be resolved for volume %s in %s", source, sourceDir)
+	}
 
 	var lastErr error
 	seen := make(map[string]bool, len(bases))
@@ -140,6 +148,9 @@ func resolveVolumeArchive(sourceDir, manifestArchive, source string, index int) 
 	return "", lastErr
 }
 
+// findVolumeManifestEntry resolves the manifest entry for a mount, preferring
+// the stable key and falling back to the mount index so manifests written
+// before #352 still resolve.
 func findVolumeManifestEntry(manifest []volumeManifestEntry, source string, index int) (volumeManifestEntry, bool) {
 	if source != "" {
 		for _, me := range manifest {
@@ -1428,9 +1439,23 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		// container recreate, which paired one volume's archive with another
 		// volume's target (issue #352). Restore points written before that
 		// fix are still index-named, hence the fallbacks.
-		savedEntry, _ := findVolumeManifestEntry(savedManifest, mount.Source, i)
+		savedEntry, entryFound := findVolumeManifestEntry(savedManifest, mount.Source, i)
 
-		volArchive, err := resolveVolumeArchive(sourceDir, savedEntry.Archive, mount.Source, i)
+		// The legacy index-named archive is only safe to try when we know
+		// which backup-time index it belongs to. A matched manifest entry
+		// carries it; a restore point with no manifest at all leaves the loop
+		// position as the only available guess. A manifest that exists but
+		// does NOT list this mount means the mount is new or changed — trying
+		// an index there would hand it another volume's archive.
+		legacyIndex := -1
+		switch {
+		case entryFound:
+			legacyIndex = savedEntry.Index
+		case len(savedManifest) == 0:
+			legacyIndex = i
+		}
+
+		volArchive, err := resolveVolumeArchive(sourceDir, savedEntry.Archive, mount.Source, legacyIndex)
 		if err != nil {
 			// Explain the absence when the manifest recorded a reason.
 			if !savedEntry.BackedUp && savedEntry.SkipReason != "" {

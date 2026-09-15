@@ -143,7 +143,9 @@ func TestVolumeArchiveBaseIsDeterministicAndDistinct(t *testing.T) {
 
 // TestResolveVolumeArchive covers the three-step lookup that keeps restore
 // points written before #352 restoring: the manifest's recorded name first,
-// then the stable-key name, then the legacy index name.
+// then the stable-key name, then the legacy index name. A negative legacyIndex
+// disables the legacy step, which is what the caller passes when the manifest
+// exists but does not list this mount.
 func TestResolveVolumeArchive(t *testing.T) {
 	t.Parallel()
 
@@ -153,7 +155,7 @@ func TestResolveVolumeArchive(t *testing.T) {
 		name            string
 		present         []string // files created in sourceDir
 		manifestArchive string
-		index           int
+		legacyIndex     int
 		want            string
 		wantErr         bool
 	}{
@@ -161,39 +163,56 @@ func TestResolveVolumeArchive(t *testing.T) {
 			name:            "manifest name wins",
 			present:         []string{volumeArchiveBase(source), "volume_3.tar"},
 			manifestArchive: volumeArchiveBase(source),
-			index:           3,
+			legacyIndex:     3,
 			want:            volumeArchiveBase(source),
 		},
 		{
 			name:            "manifest compression suffix falls back to the merged plain base",
 			present:         []string{volumeArchiveBase(source)},
 			manifestArchive: volumeArchiveBase(source) + ".zst",
-			index:           0,
+			legacyIndex:     0,
 			want:            volumeArchiveBase(source),
 		},
 		{
-			name:    "no manifest entry resolves by stable key",
-			present: []string{volumeArchiveBase(source)},
-			index:   0,
-			want:    volumeArchiveBase(source),
+			name:        "no manifest entry resolves by stable key",
+			present:     []string{volumeArchiveBase(source)},
+			legacyIndex: 0,
+			want:        volumeArchiveBase(source),
 		},
 		{
-			name:    "legacy index-named archive still resolves",
-			present: []string{"volume_2.tar"},
-			index:   2,
-			want:    "volume_2.tar",
+			name:        "legacy index-named archive still resolves",
+			present:     []string{"volume_2.tar"},
+			legacyIndex: 2,
+			want:        "volume_2.tar",
 		},
 		{
-			name:    "legacy gzip suffix still resolves",
-			present: []string{"volume_1.tar.gz"},
-			index:   1,
-			want:    "volume_1.tar.gz",
+			name:        "legacy gzip suffix still resolves",
+			present:     []string{"volume_1.tar.gz"},
+			legacyIndex: 1,
+			want:        "volume_1.tar.gz",
 		},
 		{
-			name:    "nothing present is an error",
-			present: nil,
-			index:   0,
-			wantErr: true,
+			// The backup-time index is authoritative; the caller must never
+			// pass the current loop position, which a recreate can shift.
+			name:        "the recorded index is the one probed",
+			present:     []string{"volume_0.tar", "volume_5.tar"},
+			legacyIndex: 5,
+			want:        "volume_5.tar",
+		},
+		{
+			// A manifest that does not list this mount disables the fallback:
+			// resolving an index there would hand this mount a DIFFERENT
+			// volume's archive, which is exactly the #352 mis-pairing.
+			name:        "disabled index fallback does not resolve a legacy archive",
+			present:     []string{"volume_0.tar", "volume_1.tar"},
+			legacyIndex: -1,
+			wantErr:     true,
+		},
+		{
+			name:        "nothing present is an error",
+			present:     nil,
+			legacyIndex: 0,
+			wantErr:     true,
 		},
 	}
 
@@ -205,7 +224,7 @@ func TestResolveVolumeArchive(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := resolveVolumeArchive(dir, tc.manifestArchive, source, tc.index)
+			got, err := resolveVolumeArchive(dir, tc.manifestArchive, source, tc.legacyIndex)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %q", got)
