@@ -81,7 +81,7 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 // prevListingSet parses the "prev_listing_paths" setting (injected by the
 // runner for differential/incremental classic folder backups) into a lookup
 // set of item-relative paths. Returns nil when the setting is absent or empty,
-// so tarDirectoryFilteredWithPrev degrades to its mtime-only behaviour.
+// so tarDirectoryFilteredReporting degrades to its mtime-only behaviour.
 func prevListingSet(settings map[string]any) map[string]struct{} {
 	raw, ok := settings["prev_listing_paths"]
 	if !ok || raw == nil {
@@ -126,7 +126,7 @@ func pathsToSet(paths []string) map[string]struct{} {
 // per-volume lookup keyed by mount source host path -> volume-relative path
 // set recorded in the parent restore point's per-volume effective listing.
 // Returns nil when the setting is absent, so pathChangedSinceWithPrev and
-// tarDirectoryFilteredWithPrev degrade to their mtime-only behaviour. Both the
+// tarDirectoryFilteredReporting degrade to their mtime-only behaviour. Both the
 // typed map[string][]string (direct runner->engine calls) and the JSON-decoded
 // map[string]any forms are accepted.
 func prevVolumeListingSet(settings map[string]any) map[string]map[string]struct{} {
@@ -179,4 +179,20 @@ func prevVolumeResolvedSources(settings map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+// recordSkippedFiles adds paths the classic tar path could not archive intact
+// to result.Meta under MetaSkippedFiles, appending to whatever a previous call
+// recorded so a container with several volumes reports all of them (issue
+// #393). An empty slice records nothing, so a healthy backup carries no key at
+// all and every existing Meta consumer is unaffected.
+func recordSkippedFiles(result *BackupResult, skipped []string) {
+	if result == nil || len(skipped) == 0 {
+		return
+	}
+	if result.Meta == nil {
+		result.Meta = map[string]any{}
+	}
+	existing, _ := result.Meta[MetaSkippedFiles].([]string)
+	result.Meta[MetaSkippedFiles] = append(existing, skipped...)
 }
