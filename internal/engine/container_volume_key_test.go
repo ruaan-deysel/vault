@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -369,6 +370,164 @@ func TestMergeContainerChainKeepsReorderedVolumesSeparate(t *testing.T) {
 			for _, nw := range tc.notWant {
 				if containsName(names, nw) {
 					t.Errorf("merged archive leaked %s from the other volume: %v", nw, names)
+				}
+			}
+		})
+	}
+}
+
+// writeStepVolume tars a one-file tree into stepDir under the given archive
+// base name, the way one chain step's backup would have written it.
+func writeStepVolume(t *testing.T, stepDir, archiveBase, fileName string) {
+	t.Helper()
+	tree := filepath.Join(stepDir, "tree-"+archiveBase)
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, fileName), []byte(fileName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarDirectory(context.Background(), tree, filepath.Join(stepDir, archiveBase), nil, CompressionNone); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(tree); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeStepManifest writes a step's volumes.json for the given source ->
+// archive-name pairs.
+func writeStepManifest(t *testing.T, stepDir string, archiveBySource map[string]string) {
+	t.Helper()
+	manifest := make([]volumeManifestEntry, 0, len(archiveBySource))
+	i := 0
+	for source, archive := range archiveBySource {
+		manifest = append(manifest, volumeManifestEntry{
+			Index: i, Source: source, Destination: "/mnt" + source, BackedUp: true, Archive: archive,
+		})
+		i++
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stepDir, "volumes.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMergeContainerChainSpanningTheNamingChange is the regression test for the
+// mixed-version chain. A base full written BEFORE #352 is index-named; a later
+// differential written after it is stable-key named. Grouping the merge by raw
+// filename would leave the two as separate archives, so restore would take the
+// differential alone and drop every unchanged file the base full held — the
+// issue #320 data-loss class, reintroduced across an upgrade. Canonicalising
+// each step's archive names through its volumes.json must overlay them.
+func TestMergeContainerChainSpanningTheNamingChange(t *testing.T) {
+	t.Parallel()
+
+	const confSrc = "/srv/config"
+	const dataSrc = "/srv/data"
+
+	cases := []struct {
+		name string
+		// setup returns the chain's step dirs, oldest first.
+		setup func(t *testing.T) []string
+	}{
+		{
+			name: "index-named full then stable-key differential",
+			setup: func(t *testing.T) []string {
+				full := t.TempDir()
+				writeStepVolume(t, full, "volume_0.tar", "conf-base.txt")
+				writeStepVolume(t, full, "volume_1.tar", "data-base.txt")
+				writeStepManifest(t, full, map[string]string{
+					confSrc: "volume_0.tar",
+					dataSrc: "volume_1.tar",
+				})
+
+				diff := t.TempDir()
+				writeStepVolume(t, diff, volumeArchiveBase(confSrc), "conf-new.txt")
+				writeStepVolume(t, diff, volumeArchiveBase(dataSrc), "data-new.txt")
+				writeStepManifest(t, diff, map[string]string{
+					confSrc: volumeArchiveBase(confSrc),
+					dataSrc: volumeArchiveBase(dataSrc),
+				})
+				return []string{full, diff}
+			},
+		},
+		{
+			// The same chain with the mounts reordered in the differential.
+			// Under index naming the differential's volume_0 was the DATA
+			// volume, so a filename merge would union the two volumes.
+			name: "index-named full then reordered stable-key differential",
+			setup: func(t *testing.T) []string {
+				full := t.TempDir()
+				writeStepVolume(t, full, "volume_0.tar", "conf-base.txt")
+				writeStepVolume(t, full, "volume_1.tar", "data-base.txt")
+				writeStepManifest(t, full, map[string]string{
+					confSrc: "volume_0.tar",
+					dataSrc: "volume_1.tar",
+				})
+
+				// Recreate reordered the mounts; stable-key names are
+				// unaffected, which is the whole point.
+				diff := t.TempDir()
+				writeStepVolume(t, diff, volumeArchiveBase(dataSrc), "data-new.txt")
+				writeStepVolume(t, diff, volumeArchiveBase(confSrc), "conf-new.txt")
+				writeStepManifest(t, diff, map[string]string{
+					dataSrc: volumeArchiveBase(dataSrc),
+					confSrc: volumeArchiveBase(confSrc),
+				})
+				return []string{full, diff}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stepDirs := tc.setup(t)
+			outDir := t.TempDir()
+			if err := MergeContainerChainStaging(context.Background(), stepDirs, outDir); err != nil {
+				t.Fatalf("MergeContainerChainStaging() error = %v", err)
+			}
+
+			for _, v := range []struct {
+				name    string
+				src     string
+				want    []string
+				notWant []string
+			}{
+				{name: "config volume", src: confSrc, want: []string{"conf-base.txt", "conf-new.txt"}, notWant: []string{"data-base.txt", "data-new.txt"}},
+				{name: "data volume", src: dataSrc, want: []string{"data-base.txt", "data-new.txt"}, notWant: []string{"conf-base.txt", "conf-new.txt"}},
+			} {
+				t.Run(v.name, func(t *testing.T) {
+					// Restore resolves via the newest manifest, which is
+					// stable-key named, so that is where the merged data
+					// must land.
+					archive := filepath.Join(outDir, volumeArchiveBase(v.src))
+					if _, err := os.Stat(archive); err != nil {
+						t.Fatalf("merged archive for %s missing: %v", v.src, err)
+					}
+					names := listTarEntries(t, archive)
+					for _, w := range v.want {
+						if !containsName(names, w) {
+							t.Errorf("merged archive missing %s (base-full data dropped across the naming change): %v", w, names)
+						}
+					}
+					for _, nw := range v.notWant {
+						if containsName(names, nw) {
+							t.Errorf("merged archive leaked %s from the other volume: %v", nw, names)
+						}
+					}
+				})
+			}
+
+			// The index-named archives must not survive as separate merged
+			// outputs, or a restore against a legacy manifest would find a
+			// base-only archive.
+			for i := range 2 {
+				if _, err := os.Stat(filepath.Join(outDir, fmt.Sprintf("volume_%d.tar", i))); err == nil {
+					t.Errorf("merge left an un-canonicalised volume_%d.tar behind", i)
 				}
 			}
 		})
