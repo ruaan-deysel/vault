@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // eioReader yields good bytes and then fails the way a bad block on the flash
@@ -277,4 +279,140 @@ func TestRecordSkippedFiles(t *testing.T) {
 	t.Run("a nil result is tolerated", func(t *testing.T) {
 		recordSkippedFiles(nil, []string{"a"})
 	})
+}
+
+// failAfter is an io.Writer that accepts limit bytes and then refuses. It
+// stands in for the disk filling up or the destination going away mid-archive
+// — the writer failures the archive paths must surface rather than swallow.
+type failAfter struct {
+	remaining int
+	err       error
+}
+
+func (w *failAfter) Write(p []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, w.err
+	}
+	if len(p) <= w.remaining {
+		w.remaining -= len(p)
+		return len(p), nil
+	}
+	n := w.remaining
+	w.remaining = 0
+	return n, w.err
+}
+
+// A skipped file is a warning; a failed write is a corrupt archive. These
+// assert writeTarEntry never confuses the two.
+func TestWriteTarEntryReportsWriterFailures(t *testing.T) {
+	errDisk := errors.New("no space left on device")
+
+	cases := []struct {
+		name  string
+		limit int
+		size  int64
+		src   func() io.Reader
+		want  string
+	}{
+		{
+			name:  "the staged path's header write fails",
+			limit: 0,
+			size:  4,
+			src:   func() io.Reader { return strings.NewReader("abcd") },
+			want:  "writing tar header",
+		},
+		{
+			name: "the staged path's content write fails",
+			// One tar block: enough for the header, nothing for the body.
+			limit: 512,
+			size:  4,
+			src:   func() io.Reader { return strings.NewReader("abcd") },
+			want:  "writing file",
+		},
+		{
+			name:  "the streamed path's header write fails",
+			limit: 0,
+			size:  maxStagedFileSize + 1,
+			src:   func() io.Reader { return &zeroReader{remaining: 0} },
+			want:  "writing tar header",
+		},
+		{
+			name: "the streamed path's zero-fill repair fails",
+			// The header lands, the source is short, and the pad that would
+			// make the entry honest cannot be written.
+			limit: 512,
+			size:  maxStagedFileSize + 1,
+			src:   func() io.Reader { return &zeroReader{remaining: 0} },
+			want:  "writing file",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tw := tar.NewWriter(&failAfter{remaining: tc.limit, err: errDisk})
+			header := &tar.Header{Name: "f", Mode: 0o644, Size: tc.size, Typeflag: tar.TypeReg}
+
+			skipped, err := writeTarEntry(context.Background(), tw, "f", header, tc.src())
+			if err == nil {
+				t.Fatalf("a write failure must fail the backup, got skipped=%v", skipped)
+			}
+			if skipped {
+				t.Error("a write failure is not a skipped file — the archive is broken, not incomplete")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q should contain %q", err, tc.want)
+			}
+			if !errors.Is(err, errDisk) {
+				t.Errorf("error %q should wrap the underlying writer error", err)
+			}
+		})
+	}
+}
+
+func TestWriteTarEntryStreamedPathHonoursCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tw := tar.NewWriter(&bytes.Buffer{})
+	header := &tar.Header{Name: "big", Mode: 0o644, Size: maxStagedFileSize + 1, Typeflag: tar.TypeReg}
+
+	skipped, err := writeTarEntry(ctx, tw, "big", header, &zeroReader{remaining: maxStagedFileSize + 1})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if skipped {
+		t.Error("a cancelled backup has not skipped a file, it has been cancelled")
+	}
+}
+
+func TestZeroPadSurfacesShortWrites(t *testing.T) {
+	errDisk := errors.New("device gone")
+	// Accept part of the pad, then fail: the loop must not spin on the
+	// remaining bytes once the writer has given up.
+	if err := zeroPad(&failAfter{remaining: 100, err: errDisk}, 64*1024); !errors.Is(err, errDisk) {
+		t.Errorf("zeroPad err = %v, want the writer's error", err)
+	}
+	if err := zeroPad(&bytes.Buffer{}, 96*1024); err != nil {
+		t.Errorf("zeroPad over a healthy writer: %v", err)
+	}
+}
+
+// A source directory that has gone away is a backup failure, not an empty
+// archive — the classic and incremental variants must both say so.
+func TestTarDirectoryReportingRejectsMissingSource(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+	dest := filepath.Join(t.TempDir(), "out.tar")
+	ctx := context.Background()
+
+	if _, err := tarDirectoryReporting(ctx, missing, dest, nil, "none"); err == nil {
+		t.Error("tarDirectoryReporting should fail on a missing source directory")
+	} else if !strings.Contains(err.Error(), "opening source root") {
+		t.Errorf("error %q should name the source root", err)
+	}
+
+	if _, err := tarDirectoryFilteredReporting(ctx, missing, dest, time.Time{}, nil, "none", nil); err == nil {
+		t.Error("tarDirectoryFilteredReporting should fail on a missing source directory")
+	} else if !strings.Contains(err.Error(), "opening source root") {
+		t.Errorf("error %q should name the source root", err)
+	}
 }

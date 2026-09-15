@@ -1,9 +1,14 @@
 package runner
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ruaan-deysel/vault/internal/db"
 	"github.com/ruaan-deysel/vault/internal/engine"
 )
 
@@ -98,4 +103,71 @@ func TestSkippedFilesMessage(t *testing.T) {
 			t.Errorf("message should not name past the cap: %q", msg)
 		}
 	})
+}
+
+// TestRunJobReportsSkippedFilesAsPartial is the end-to-end half of #393: an
+// item that succeeded but could not read every file must not be reported as a
+// clean "completed" run, because that hides the gap from the operator who
+// would only discover it at restore time.
+func TestRunJobReportsSkippedFilesAsPartial(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000-mode file, so the unreadable-file case cannot be staged")
+	}
+
+	r, database, storageDir := setupTestRunner(t)
+	dest := createLocalDest(t, database, storageDir)
+
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "readable.txt"), []byte("fine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := filepath.Join(source, "locked.txt")
+	if err := os.WriteFile(unreadable, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o644) })
+
+	jobID, err := database.CreateJob(db.Job{
+		Name: "skip-job", StorageDestID: dest.ID, BackupTypeChain: "full", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	settings, _ := json.Marshal(map[string]any{"path": source})
+	if _, err := database.AddJobItem(db.JobItem{
+		JobID: jobID, ItemType: "folder", ItemName: "src", Settings: string(settings),
+	}); err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	r.RunJob(jobID)
+
+	runs, err := database.GetJobRuns(jobID, 10)
+	if err != nil {
+		t.Fatalf("ListJobRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	if runs[0].Status != "partial" {
+		t.Errorf("status = %q, want \"partial\" — an unreadable file must not read as a clean backup", runs[0].Status)
+	}
+
+	// The warning has to name the file, or the operator has no way to act.
+	logs, err := database.TailRunLogEntries(context.Background(), runs[0].ID, 200)
+	if err != nil {
+		t.Fatalf("ListRunLogs: %v", err)
+	}
+	found := false
+	for _, entry := range logs {
+		if strings.Contains(entry.Message, "locked.txt") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no run-log entry named the unreadable file")
+	}
 }
