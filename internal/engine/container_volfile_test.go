@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,5 +192,87 @@ func TestContainerVolumeFileDest(t *testing.T) {
 	}
 	if !IsSyntheticContainerKey(containerTemplateKey) {
 		t.Error("the template is engine metadata and must not appear in a picker")
+	}
+}
+
+// Picking a parent directory in the file picker must bring the single-file
+// mounts nested under it along — the picker draws them as one tree, so a
+// membership test against the exact path would silently drop them.
+func TestRestoreChunkedVolumes_FileMountSelectedByParent(t *testing.T) {
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	source := filepath.Join(t.TempDir(), "app.conf")
+	if err := os.WriteFile(source, []byte("k=v"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := chunkFileIntoRepo(repo, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+		containerVolFilePrefix + "/config/app.conf": entry,
+	}}
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/ts",
+		"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/config/app.conf"}]
+	}`, source))
+
+	if err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, []string{"/config"}, false, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "app.conf")); err != nil {
+		t.Errorf("picking /config should have restored the nested file mount: %v", err)
+	}
+}
+
+// A pre-existing symlink at the restore target must not be followed: the
+// parent is validated, but the final component could point anywhere on the
+// host and the write would escape the approved roots (CWE-59).
+func TestRestoreChunkedVolumeFileRefusesSymlinkTarget(t *testing.T) {
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	source := filepath.Join(t.TempDir(), "app.conf")
+	if err := os.WriteFile(source, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := chunkFileIntoRepo(repo, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	victimDir := t.TempDir()
+	victim := filepath.Join(victimDir, "precious")
+	if err := os.WriteFile(victim, []byte("do not touch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "app.conf")
+	if err := os.Symlink(victim, target); err != nil {
+		t.Fatal(err)
+	}
+
+	err = restoreChunkedVolumeFile(repo, entry, target)
+	if err == nil {
+		t.Fatal("restoring through a symlink should be refused")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error %q should say the symlink was the reason", err)
+	}
+	data, readErr := os.ReadFile(victim)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "do not touch" {
+		t.Errorf("the symlink's target was overwritten: %q", data)
 	}
 }

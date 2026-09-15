@@ -14,9 +14,9 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -2709,6 +2709,13 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if dest, ok := ContainerVolumeDest(k); ok && !IsSkippedVolumeEntry(v) {
 			allDests = append(allDests, dest)
 		}
+		// Single-file mounts are destinations too, and they nest: a container
+		// that mounts both /config and /config/app.conf must route a pick of
+		// app.conf to the file mount, not extract it from the /config volume
+		// whose archive never held it (issue #380).
+		if dest, ok := ContainerVolumeFileDest(k); ok {
+			allDests = append(allDests, dest)
+		}
 	}
 	for k, v := range m.Files {
 		if !strings.HasPrefix(k, containerVolPrefix) {
@@ -2780,8 +2787,11 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		}
 		// The picker names the mount by its container-internal path, so a
 		// selection that does not include this file skips it — the same rule
-		// the volume loop applies (issue #275).
-		if len(selection) > 0 && !slices.Contains(selection, dest) {
+		// the volume loop applies (issue #275). It goes through the shared
+		// helper rather than a membership test so that picking a parent
+		// directory brings the file mounts nested under it along, which is
+		// what the tree in the picker implies.
+		if _, wanted := containerVolumeIncludes(selection, dest, allDests); !wanted {
 			log.Printf("engine: chunked restore: skipping file mount %s — it is not in the selection", dest)
 			continue
 		}
@@ -2824,8 +2834,17 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if mode == 0 {
 		mode = 0o644
 	}
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — path is validated by normalizeRestorePath
+	// normalizeRestorePath validated the PARENT. Without O_NOFOLLOW the final
+	// component is still free to be a pre-existing symlink pointing anywhere
+	// on the host, and the open would follow it straight out of the approved
+	// roots and truncate whatever it found (CWE-22/CWE-59). O_NOFOLLOW closes
+	// the race as well as the check: there is no window between testing the
+	// path and opening it.
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, mode) // #nosec G304 — parent validated by normalizeRestorePath, final component pinned by O_NOFOLLOW
 	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return fmt.Errorf("refusing to restore file mount through the symlink at %s", path)
+		}
 		return err
 	}
 	for _, id := range entry.Chunks {
