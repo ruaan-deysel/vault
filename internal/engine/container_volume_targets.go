@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -68,12 +69,18 @@ func ContainerVolumeTargets(sourceDir, restoreDestination string) ([]ContainerVo
 		if !found {
 			continue
 		}
+		// ContainerHandler.Restore treats both of these as fatal. Here they
+		// mean the caller cannot know where this volume landed, so skipping
+		// it silently would hide a mismatch behind a prune that simply did
+		// not run — say so instead.
 		target, targetErr := volumeRestoreTarget(restoreDest, mount.Type, mount.Name, mount.Source)
 		if targetErr != nil {
+			log.Printf("engine: cannot resolve a restore target for volume %s — it is excluded from the chain prune: %v", mount.Source, targetErr)
 			continue
 		}
 		normalized, normErr := normalizeRestorePath(target)
 		if normErr != nil {
+			log.Printf("engine: restore target %s for volume %s is not an approved path — it is excluded from the chain prune: %v", target, mount.Source, normErr)
 			continue
 		}
 		out = append(out, ContainerVolumeTarget{

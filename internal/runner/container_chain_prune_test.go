@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/engine"
@@ -30,7 +31,13 @@ func tarTree(t *testing.T, src, dest string) {
 		if err != nil || rel == "." {
 			return err
 		}
-		hdr, err := tar.FileInfoHeader(info, "")
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			if link, err = os.Readlink(p); err != nil {
+				return err
+			}
+		}
+		hdr, err := tar.FileInfoHeader(info, link)
 		if err != nil {
 			return err
 		}
@@ -75,6 +82,14 @@ func writeVolumeStep(t *testing.T, stepDir, archiveName, source string, files ma
 		p := filepath.Join(tree, name)
 		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			t.Fatal(err)
+		}
+		// A "->target" value makes the entry a symlink, so a step can carry
+		// the entry type the prune has to tell apart.
+		if target, isLink := strings.CutPrefix(content, "->"); isLink {
+			if err := os.Symlink(target, p); err != nil {
+				t.Skipf("filesystem does not support symlinks: %v", err)
+			}
+			continue
 		}
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -187,6 +202,19 @@ func TestPruneContainerChainResurrected(t *testing.T) {
 			newestList: true,
 		},
 		{
+			// A symlink's tar header records size 0 while its Lstat size is
+			// the length of its target, so the size guard can never match
+			// one. Being a symlink at the archived path is the ownership
+			// evidence instead.
+			name:       "a deleted symlink is pruned despite never matching on size",
+			fullFiles:  map[string]string{"keep.txt": "keep", "link": "->keep.txt"},
+			diffFiles:  map[string]string{"keep.txt": "keep"},
+			onDisk:     map[string]string{"keep.txt": "keep", "link": "->keep.txt"},
+			wantGone:   []string{"link"},
+			wantKept:   []string{"keep.txt"},
+			newestList: true,
+		},
+		{
 			// Degradation: without the newest step's authoritative listing
 			// there is no keep set, so the pure-union behaviour is preserved
 			// rather than guessed at.
@@ -215,6 +243,12 @@ func TestPruneContainerChainResurrected(t *testing.T) {
 				p := filepath.Join(target, name)
 				if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 					t.Fatal(err)
+				}
+				if linkTarget, isLink := strings.CutPrefix(content, "->"); isLink {
+					if err := os.Symlink(linkTarget, p); err != nil {
+						t.Skipf("filesystem does not support symlinks: %v", err)
+					}
+					continue
 				}
 				if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 					t.Fatal(err)

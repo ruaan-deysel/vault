@@ -3646,8 +3646,9 @@ func (r *Runner) pruneContainerVolume(vol engine.ContainerVolumeTarget, stepDirs
 	// unreadable means we cannot know its writes, so the volume is skipped
 	// rather than guessed at.
 	type writtenEntry struct {
-		isDir bool
-		size  int64
+		isDir     bool
+		isSymlink bool
+		size      int64
 	}
 	written := make(map[string]writtenEntry)
 	for i, dir := range stepDirs[:len(stepDirs)-1] {
@@ -3666,7 +3667,7 @@ func (r *Runner) pruneContainerVolume(vol engine.ContainerVolumeTarget, stepDirs
 			// directory the newest listing still holds is matched by the
 			// keep set rather than being offered up for removal.
 			rel := strings.TrimSuffix(f.Path, "/")
-			written[rel] = writtenEntry{isDir: f.IsDir, size: f.Size}
+			written[rel] = writtenEntry{isDir: f.IsDir, isSymlink: f.IsSymlink, size: f.Size}
 		}
 	}
 	if len(written) == 0 {
@@ -3696,6 +3697,20 @@ func (r *Runner) pruneContainerVolume(vol engine.ContainerVolumeTarget, stepDirs
 		}
 		if we.isDir {
 			pruneDirs = append(pruneDirs, rel)
+			continue
+		}
+		if we.isSymlink {
+			// A symlink's tar header records size 0 while its Lstat size is
+			// the length of its target, so the size guard below can never
+			// match one. Being a symlink at the archived path is the
+			// ownership evidence instead. A sidecar written before the
+			// index recorded symlinks reports isSymlink false, so those
+			// backups' symlinks stay unpruned as they always were.
+			if info, statErr := root.Lstat(rel); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				if err := root.Remove(rel); err == nil {
+					pruned++
+				}
+			}
 			continue
 		}
 		// Ownership guard: only remove a regular file whose size matches the
