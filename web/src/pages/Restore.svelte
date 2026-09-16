@@ -34,7 +34,21 @@
   onMount(() => {
     loadJobs()
     const unsub = onWsMessage((msg) => {
-      if (msg.type === 'job_run_completed' || msg.type === 'import_completed') {
+      if (msg.type === 'job_run_completed') {
+        loadJobs()
+        if (msg.run_type === 'restore') {
+          const total = msg.items_total || msg.items_done || 0
+          const done = msg.items_done || 0
+          const failed = msg.items_failed || 0
+          if (msg.status === 'completed') {
+            showToast(`Restore completed successfully (${done}/${total} items restored)`, 'success')
+          } else if (msg.status === 'partial') {
+            showToast(`Restore partially completed (${done}/${total} restored, ${failed} failed)`, 'warning')
+          } else {
+            showToast(`Restore failed (${failed} items failed)`, 'error')
+          }
+        }
+      } else if (msg.type === 'import_completed') {
         loadJobs()
       }
     })
