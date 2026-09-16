@@ -146,7 +146,7 @@ func (h *FolderHandler) Backup(ctx context.Context, item BackupItem, destDir str
 	// Authoritative point-in-time listing (full effective file set after
 	// exclusions) — lets chain restore prune files deleted or newly excluded
 	// since the base full backup (issue #231). Best-effort like the index.
-	if err := WriteEffectiveListing(srcPath, archivePath, exclusions); err != nil {
+	if err := WriteEffectiveListing(srcPath, archivePath, exclusions, skippedFiles); err != nil {
 		_ = err
 	} else {
 		result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))

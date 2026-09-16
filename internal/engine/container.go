@@ -1230,6 +1230,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 						return fmt.Errorf("archiving volume %s: %w", mount.Source, archiveErr)
 					}
 				}
+				rawVolSkipped := append([]string(nil), volSkipped...)
 				for i := range volSkipped {
 					volSkipped[i] = filepath.Join(mount.Source, volSkipped[i])
 				}
@@ -1243,7 +1244,7 @@ func (h *ContainerHandler) Backup(ctx context.Context, item BackupItem, destDir 
 				// file set after exclusions) — lets the NEXT differential detect
 				// NEW files with stale mtimes (issue #320). Best-effort, mirroring
 				// folder.go's WriteEffectiveListing usage.
-				if err := WriteEffectiveListing(resolvedSource, volDest, volExclusions); err != nil {
+				if err := WriteEffectiveListing(resolvedSource, volDest, volExclusions, rawVolSkipped); err != nil {
 					log.Printf("engine: warning: failed to write volume listing for %s: %v", mount.Source, err)
 				} else {
 					result.Files = append(result.Files, backupFileInfo(volDest+ListingSuffix))

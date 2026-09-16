@@ -227,7 +227,7 @@ func (h *PluginHandler) Backup(ctx context.Context, item BackupItem, destDir str
 		// not parity decoration: the NEXT run loads it as its parent listing,
 		// and without it the runner has no listing to load and degrades the
 		// run to a full archive.
-		if err := WriteEffectiveListing(configDir, archivePath, exclusions); err == nil {
+		if err := WriteEffectiveListing(configDir, archivePath, exclusions, skippedFiles); err == nil {
 			result.Files = append(result.Files, backupFileInfo(archivePath+ListingSuffix))
 		}
 	}

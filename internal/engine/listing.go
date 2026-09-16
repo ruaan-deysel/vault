@@ -20,13 +20,25 @@ const ListingSuffix = ".listing.json"
 
 // WriteEffectiveListing walks srcPath with the same exclusion semantics as
 // the archive walk and writes the full effective listing sidecar next to the
-// archive. Best-effort from the engine's perspective — callers may log and
-// ignore failures; without a listing, chain restore simply skips the prune
-// pass (its prior behaviour).
-func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) error {
+// archive. Files the archiver skipped (e.g. unreadable bad blocks or permission
+// errors) can be passed in skipped; they are omitted from the listing so
+// subsequent differential/incremental runs do not treat them as already
+// captured (issues #320, #393). Best-effort from the engine's perspective — callers
+// may log and ignore failures; without a listing, chain restore simply skips
+// the prune pass (its prior behaviour).
+func WriteEffectiveListing(srcPath, archivePath string, exclusions []string, skipped ...[]string) error {
 	// Resolve symlinks so cache-only Unraid shares are traversed correctly.
 	if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
 		srcPath = resolved
+	}
+
+	var skippedSet map[string]struct{}
+	if len(skipped) > 0 && len(skipped[0]) > 0 {
+		skippedSet = make(map[string]struct{}, len(skipped[0]))
+		for _, s := range skipped[0] {
+			clean := filepath.ToSlash(filepath.Clean(s))
+			skippedSet[clean] = struct{}{}
+		}
 	}
 
 	idx := TarIndex{Version: tarIndexVersion, Archive: filepath.Base(archivePath)}
@@ -48,6 +60,12 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 			}
 			return nil
 		}
+		slashRel := filepath.ToSlash(rel)
+		if skippedSet != nil {
+			if _, ok := skippedSet[slashRel]; ok {
+				return nil
+			}
+		}
 		// Match the archive walk's eligibility: special file types are never
 		// archived, so they must not appear in the authoritative listing
 		// either (a listed-but-unarchivable path would shield a stale file
@@ -56,7 +74,7 @@ func WriteEffectiveListing(srcPath, archivePath string, exclusions []string) err
 			return nil
 		}
 		idx.Files = append(idx.Files, TarIndexEntry{
-			Path:    filepath.ToSlash(rel),
+			Path:    slashRel,
 			Size:    info.Size(),
 			Mode:    fmt.Sprintf("%04o", info.Mode().Perm()),
 			ModTime: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),

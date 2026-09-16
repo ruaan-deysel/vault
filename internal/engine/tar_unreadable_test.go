@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -414,5 +415,49 @@ func TestTarDirectoryReportingRejectsMissingSource(t *testing.T) {
 		t.Error("tarDirectoryFilteredReporting should fail on a missing source directory")
 	} else if !strings.Contains(err.Error(), "opening source root") {
 		t.Errorf("error %q should name the source root", err)
+	}
+}
+
+// TestWriteEffectiveListingOmitsSkippedFiles ensures that files skipped during
+// archiving (e.g. unreadable bad blocks) are not recorded in the effective listing,
+// so subsequent incremental runs retry them (issues #320, #393).
+func TestWriteEffectiveListingOmitsSkippedFiles(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(t.TempDir(), "archive.tar")
+
+	if err := os.WriteFile(filepath.Join(dir, "good.txt"), []byte("good"), 0644); err != nil {
+		t.Fatalf("WriteFile good.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.txt"), []byte("bad"), 0644); err != nil {
+		t.Fatalf("WriteFile bad.txt: %v", err)
+	}
+
+	// Exclude bad.txt via the skipped slice.
+	if err := WriteEffectiveListing(dir, archive, nil, []string{"bad.txt"}); err != nil {
+		t.Fatalf("WriteEffectiveListing: %v", err)
+	}
+
+	listingPath := archive + ListingSuffix
+	data, err := os.ReadFile(listingPath)
+	if err != nil {
+		t.Fatalf("ReadFile listing: %v", err)
+	}
+
+	var idx TarIndex
+	if err := json.Unmarshal(data, &idx); err != nil {
+		t.Fatalf("Unmarshal listing: %v", err)
+	}
+
+	foundGood := false
+	for _, f := range idx.Files {
+		if f.Path == "bad.txt" {
+			t.Errorf("listing includes skipped file bad.txt")
+		}
+		if f.Path == "good.txt" {
+			foundGood = true
+		}
+	}
+	if !foundGood {
+		t.Errorf("listing did not include good.txt")
 	}
 }
