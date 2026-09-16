@@ -296,8 +296,9 @@
       <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       <span class="text-sm">{error}</span>
     </div>
+  {:else}
     <!-- Active & Queued Operations -->
-    {#if progress.queue && progress.queue.length > 0}
+    {#if (progress.running && progress.activeRun) || (progress.queue && progress.queue.length > 0)}
       <div class="bg-surface-2 border border-border rounded-xl p-4 mb-6 shadow-sm">
         <div class="flex items-center justify-between gap-2 mb-3">
           <div class="flex items-center gap-2">
@@ -305,10 +306,31 @@
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"></span>
               <span class="relative inline-flex rounded-full h-2 w-2 bg-warning"></span>
             </span>
-            <h2 class="text-xs font-semibold text-text uppercase tracking-wider">Active & Queued Operations ({progress.queue.length})</h2>
+            <h2 class="text-xs font-semibold text-text uppercase tracking-wider">Active & Queued Operations ({(progress.running && progress.activeRun ? 1 : 0) + (progress.queue?.length || 0)})</h2>
           </div>
         </div>
         <div class="divide-y divide-border/60">
+          {#if progress.running && progress.activeRun}
+            <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
+              <div class="flex items-center gap-2.5 min-w-0">
+                {#if progress.activeRun.run_type === 'restore'}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">Restore</span>
+                {:else}
+                  <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 shrink-0">Backup</span>
+                {/if}
+
+                <span class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider rounded-md bg-info/10 text-info border border-info/20 flex items-center gap-1 shrink-0">
+                  <svg aria-hidden="true" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Running
+                </span>
+
+                <span class="font-medium text-text truncate">{progress.activeRun.job_name || `Job #${progress.activeRun.job_id}`}</span>
+                {#if progress.activeRun.started_at}
+                  <span class="text-xs text-text-muted shrink-0">· {relTime(progress.activeRun.started_at)}</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
           {#each progress.queue as entry (entry.id || entry.job_id + (entry.queued_at || ''))}
             <div class="py-2.5 flex items-center justify-between gap-3 text-sm">
               <div class="flex items-center gap-2.5 min-w-0">
