@@ -3,6 +3,7 @@
   import { api } from '../lib/api.js'
   import { getRawHash } from '../lib/router.svelte.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
+  import { handleProgressMessage, restoreFromStatus } from '../lib/progress.svelte.js'
   import Toast from '../components/Toast.svelte'
   import Spinner from '../components/Spinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -33,7 +34,11 @@
 
   onMount(() => {
     loadJobs()
+    api.getRunnerStatus().then(status => {
+      restoreFromStatus(status)
+    }).catch(() => {})
     const unsub = onWsMessage((msg) => {
+      handleProgressMessage(msg)
       if (msg.type === 'job_run_completed') {
         loadJobs()
         if (msg.run_type === 'restore') {

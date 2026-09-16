@@ -3,7 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { api } from '../lib/api.js'
   import { onWsMessage } from '../lib/ws.svelte.js'
-  import { getProgress } from '../lib/progress.svelte.js'
+  import { getProgress, restoreFromStatus } from '../lib/progress.svelte.js'
   import { isRestoreActive } from '../lib/restore-sync.js'
   import { formatDate, formatBytes, itemDisplayLabel, itemTypeIcon, itemTypeColor, itemTypeLabel, effectiveItemType, commonItemType } from '../lib/utils.js'
   import PathBrowser from './PathBrowser.svelte'
@@ -78,6 +78,7 @@
   async function reconcileRestoring() {
     try {
       const status = await api.getRunnerStatus()
+      restoreFromStatus(status)
       if (status?.active && status.run_type === 'restore') {
         restoring = true
         restoringJobId = status.job_id
