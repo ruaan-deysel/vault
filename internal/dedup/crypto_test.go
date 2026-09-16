@@ -182,3 +182,16 @@ func TestCryptoManifestBlobTooShortFails(t *testing.T) {
 	}
 }
 
+func TestCryptoManifestBlobInvalidMasterKey(t *testing.T) {
+	shortMaster := bytes.Repeat([]byte{0x88}, 16)
+	plain := []byte(`{"version":1}`)
+
+	if _, err := EncryptManifestBlob(shortMaster, plain); err == nil {
+		t.Fatal("EncryptManifestBlob accepted short master key")
+	}
+	if _, err := DecryptManifestBlob(shortMaster, []byte("some-ciphertext-data")); err == nil {
+		t.Fatal("DecryptManifestBlob accepted short master key")
+	}
+}
+
+

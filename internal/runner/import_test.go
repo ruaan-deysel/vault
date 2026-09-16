@@ -1073,3 +1073,179 @@ func TestWriteManifestEncrypted(t *testing.T) {
 		t.Fatalf("expected transparently decrypted manifest, got %+v", scannedDedup)
 	}
 }
+
+func TestScanEncryptedDedupFailureModes(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := createNamedLocalDest(t, database, "dest-failure-modes", storageDir)
+
+	// 1. Dedup envelope exists, but _vault/repo.json does not exist.
+	runDir1 := filepath.Join(storageDir, "job1", "2026-04-01_120000")
+	if err := os.MkdirAll(runDir1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env1, err := encodeManifestEnvelope("dedup", "aes-256-gcm", []byte("some-cipher"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), env1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	scanned, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned) != 1 || scanned[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when repo.json missing, got %+v", scanned)
+	}
+
+	// 2. Init repo, but encrypt with wrong/corrupted data so DecryptManifest fails.
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey); err != nil {
+		t.Fatal(err)
+	}
+	storage.CloseAdapter(adapter)
+
+	// Write invalid ciphertext in dedup envelope
+	env2, err := encodeManifestEnvelope("dedup", "aes-256-gcm", []byte("not-valid-gcm-ciphertext-12345678901234567890"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), env2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	scanned2, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned2) != 1 || scanned2[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when DecryptManifest fails, got %+v", scanned2)
+	}
+
+	// 3. Corrupt base64 in envelope
+	corruptEnv := []byte(`{"vault_manifest_enc":1,"key":"dedup","algo":"aes-256-gcm","payload":"not-valid-base64!"}`)
+	if err := os.WriteFile(filepath.Join(runDir1, "manifest.json"), corruptEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanned3, err := r.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatalf("ScanStorageManifests: %v", err)
+	}
+	if len(scanned3) != 1 || scanned3[0]["encrypted"] != true {
+		t.Fatalf("expected placeholder when decodeManifestEnvelope fails, got %+v", scanned3)
+	}
+}
+
+func TestImportEncryptedManifestEdgeCases(t *testing.T) {
+	t.Parallel()
+	r, database, storageDir := setupTestRunner(t)
+	r.serverKey = testServerKey()
+
+	dest := createNamedLocalDest(t, database, "dest-import-edges", storageDir)
+
+	// 1. Missing storage_path
+	imported, err := r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": ""},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for empty storage_path, got %d, err: %v", imported, err)
+	}
+
+	// 2. Non-existent storage destination ID
+	imported, err = r.ImportBackups(99999, []map[string]any{
+		{"encrypted": true, "storage_path": "job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for missing dest, got %d, err: %v", imported, err)
+	}
+
+	// 3. Missing manifest.json file
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "job/nonexistent"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported for missing manifest file, got %d, err: %v", imported, err)
+	}
+
+	// 4. File is plaintext JSON, not envelope
+	runDir := filepath.Join(storageDir, "plain-job", "run1")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), []byte(`{"version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "plain-job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported when not envelope, got %d, err: %v", imported, err)
+	}
+
+	// 5. Decrypted manifest has invalid JSON
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := dedup.InitRepo(database, adapter, dest.ID, r.serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage.CloseAdapter(adapter)
+
+	badPlaintextCipher, err := repo.EncryptManifest([]byte("not-valid-json!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badEnv, err := encodeManifestEnvelope("dedup", "aes-256-gcm", badPlaintextCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badRunDir := filepath.Join(storageDir, "bad-json-job", "run1")
+	if err := os.MkdirAll(badRunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badRunDir, "manifest.json"), badEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "bad-json-job/run1"},
+	})
+	if err != nil || imported != 0 {
+		t.Fatalf("expected 0 imported when decrypted JSON invalid, got %d, err: %v", imported, err)
+	}
+
+	// 6. Successful dedup placeholder import
+	validManifest := []byte(`{"version":1,"job_name":"dedup-placeholder-job","items":[{"name":"c1","type":"container"}]}`)
+	validCipher, err := repo.EncryptManifest(validManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validEnv, err := encodeManifestEnvelope("dedup", "aes-256-gcm", validCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validRunDir := filepath.Join(storageDir, "dedup-placeholder-job", "run1")
+	if err := os.MkdirAll(validRunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(validRunDir, "manifest.json"), validEnv, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	imported, err = r.ImportBackups(dest.ID, []map[string]any{
+		{"encrypted": true, "storage_path": "dedup-placeholder-job/run1"},
+	})
+	if err != nil || imported != 1 {
+		t.Fatalf("expected 1 imported for dedup placeholder, got %d, err: %v", imported, err)
+	}
+}
+

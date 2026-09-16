@@ -32,6 +32,13 @@ func TestManifestEnvelopeDetect(t *testing.T) {
 		t.Fatal("detectManifestEnvelope reported true for unknown envelope version")
 	}
 
+	// Probe succeeds but full unmarshal fails
+	mismatchedJSON := []byte(`{"vault_manifest_enc":1,"key":123}`)
+	isEnv, _ = detectManifestEnvelope(mismatchedJSON)
+	if isEnv {
+		t.Fatal("detectManifestEnvelope reported true for type-mismatched JSON")
+	}
+
 	// Valid envelope
 	rawCipher := []byte("secret ciphertext bytes")
 	envBytes, err := encodeManifestEnvelope("dedup", "aes-256-gcm", rawCipher)
