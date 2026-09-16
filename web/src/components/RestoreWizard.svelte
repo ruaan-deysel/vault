@@ -383,6 +383,7 @@
     showDestOverride = false
     cleanDestination = true
     preflightResult = null
+    picker.clear()
   }
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
@@ -392,7 +393,10 @@
   // declines to clear in that case; the wizard says so rather than leaving a
   // ticked box that does nothing (issue #321).
   let hasPartialSelection = $derived(
-    Array.from(picker.values()).some(entry => entry?.selected && entry.selected.size > 0)
+    Array.from(picker.entries()).some(([key, entry]) => {
+      const item = selectedItems.get(key)
+      return item && entry?.selected && entry.selected.size > 0 && item.jobs?.some(j => j.id === selectedPoint?.jobId)
+    })
   )
 
   function parseMetadata(meta) {
