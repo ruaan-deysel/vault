@@ -1854,8 +1854,8 @@ func TestEffectiveAppdataPrefixes(t *testing.T) {
 	if !hasDefaultCache {
 		t.Errorf("expected custom path to retain /mnt/cache/appdata fallback, got %v", p4)
 	}
-	if hasDefaultUser {
-		t.Errorf("expected custom path not to retain /mnt/user/appdata, got %v", p4)
+	if !hasDefaultUser {
+		t.Errorf("expected custom path to retain /mnt/user/appdata fallback, got %v", p4)
 	}
 }
 

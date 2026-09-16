@@ -92,8 +92,10 @@ func effectiveAppdataPrefixes(customPath string) []string {
 		prefixes = append(prefixes, p)
 	}
 
-	// Retain the cache-pool appdata fallback (/mnt/cache/appdata).
-	addPrefix("/mnt/cache/appdata")
+	// Retain the built-in appdata prefixes (/mnt/cache/appdata, /mnt/user/appdata).
+	for _, p := range appdataPrefixes {
+		addPrefix(p)
+	}
 
 	// Unraid shares can often be accessed through /mnt/user/<share> or /mnt/cache/<share>
 	// (or pool drives). If the custom path is under /mnt/user/, also add the /mnt/cache/ counterpart.
