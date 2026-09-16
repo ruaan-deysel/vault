@@ -1726,6 +1726,8 @@ func (r *Runner) runJobInternal(jobID int64, opts runOptions) {
 					itemChecksums[s.dbItem.ItemName] = checksums
 				}
 				if s.result != nil {
+					// Defensive symmetry with the non-deferred path (line 1462);
+					// deferred remote upload is currently disabled for dedup destinations.
 					if v, ok := s.result.Meta[metaDedupVerified].(bool); ok && v {
 						dedupVerified = true
 					}
