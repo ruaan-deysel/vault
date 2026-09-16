@@ -178,3 +178,33 @@ describe('queue', () => {
   })
 })
 
+describe('storage file download', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('downloads storage file as blob when response is ok', async () => {
+    const fakeBlob = new Blob(['binary data'], { type: 'application/octet-stream' })
+    const fetch = vi.fn(async () => new Response(fakeBlob, {
+      status: 200,
+      headers: { 'content-disposition': 'attachment; filename="test.tar.zst"' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    const blob = await api.downloadStorageFile(42, 'backups/test.tar.zst')
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/storage/42/files?path=backups%2Ftest.tar.zst')
+    expect(blob).toBeInstanceOf(Blob)
+  })
+
+  it('throws error with message from error json when response is not ok', async () => {
+    const fetch = vi.fn(async () => new Response('{"error":"file not found: missing"}', {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/missing.tar.zst'))
+      .rejects.toThrow('file not found: missing')
+  })
+})
+

@@ -1079,6 +1079,9 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	if statErr == nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size, 10))
 	}
+	filename := path.Base(cleaned)
+	escapedFilename := strings.ReplaceAll(filename, `"`, `\"`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, escapedFilename))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, rc); err != nil {
