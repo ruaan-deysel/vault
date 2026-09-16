@@ -486,7 +486,7 @@
     if (passphrase) {
       payload.passphrase = passphrase
     }
-    payload.clean_destination = cleanDestination
+    payload.clean_destination = cleanDestination && !hasPartialSelection
 
     // Feature B: per-item partial restore. Build file_paths map from any
     // picker entries that have a non-empty selection. Items without an
