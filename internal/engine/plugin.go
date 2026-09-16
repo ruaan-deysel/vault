@@ -85,7 +85,6 @@ func PluginPath(name string) string {
 	return pluginPath(name)
 }
 
-
 // PluginHandler implements Handler for Unraid plugin backup/restore.
 // Each plugin consists of a .plg installer file and an optional per-plugin
 // configuration directory under /boot/config/plugins/<name>/.

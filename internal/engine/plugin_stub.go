@@ -48,4 +48,3 @@ func (h *PluginHandler) RestoreChunked(_ context.Context, _ BackupItem, _ *dedup
 func PluginPath(_ string) string {
 	return ""
 }
-

@@ -4036,7 +4036,7 @@ func classicDiffListingType(itemType string) bool {
 }
 
 // applyClassicDiffListing resolves the changed_since / prev-listing settings
-// for a classic (non-dedup) differential/incremental folder or container item.
+// for a classic (non-dedup) differential/incremental folder, container, or plugin item.
 // When the parent's effective listing is available it is attached so the engine
 // detects NEW files with stale mtimes (issue #320); when it is unavailable the
 // changed_since gate is CLEARED so the engine degrades to a FULL archive —
