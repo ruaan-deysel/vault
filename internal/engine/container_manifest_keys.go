@@ -24,7 +24,7 @@ import (
 // spurious "0 B" file (issue #333).
 func IsSyntheticContainerKey(key string) bool {
 	switch key {
-	case containerInspectKey, containerImageMetaKey, ContainerDBDumpKey, ContainerDBReplayKey:
+	case containerInspectKey, containerImageMetaKey, containerTemplateKey, ContainerDBDumpKey, ContainerDBReplayKey:
 		return true
 	}
 	return false
