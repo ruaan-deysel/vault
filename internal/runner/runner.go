@@ -3498,16 +3498,32 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 	if destPath == "" {
 		if jobItems, itemsErr := r.db.GetJobItems(newest.JobID); itemsErr == nil {
 			for _, ji := range jobItems {
-				if ji.ItemName == itemName && ji.ItemType == "folder" {
-					var s map[string]any
-					if json.Unmarshal([]byte(ji.Settings), &s) == nil {
-						if p, ok := s["path"].(string); ok {
-							destPath = p
+				if ji.ItemName == itemName {
+					if ji.ItemType == "folder" {
+						var s map[string]any
+						if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+							if p, ok := s["path"].(string); ok {
+								destPath = p
+							}
 						}
+						break
+					} else if ji.ItemType == "plugin" {
+						var s map[string]any
+						if json.Unmarshal([]byte(ji.Settings), &s) == nil {
+							if p, ok := s["path"].(string); ok && p != "" {
+								destPath = p
+							}
+						}
+						if destPath == "" {
+							destPath = engine.PluginPath(itemName)
+						}
+						break
 					}
-					break
 				}
 			}
+		}
+		if destPath == "" {
+			destPath = engine.PluginPath(itemName)
 		}
 	}
 	if destPath == "" {
@@ -4002,14 +4018,6 @@ func (r *Runner) loadParentVolumeListingPaths(parentRP *db.RestorePoint, dest db
 	return out, resolved
 }
 
-// applyClassicDiffListing resolves the changed_since / prev-listing settings
-// for a classic (non-dedup) differential/incremental folder or container item.
-// When the parent's effective listing is available it is attached so the engine
-// detects NEW files with stale mtimes (issue #320); when it is unavailable the
-// changed_since gate is CLEARED so the engine degrades to a FULL archive —
-// never silent mtime-only filtering, which would drop a NEW stale-mtime file
-// (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
-// forward via the parent manifest in the engine and never reach this helper.
 // classicDiffListingType reports whether an item type participates in the
 // parent-listing flow: a differential/incremental capture that needs the
 // parent's effective listing to spot new files with stale mtimes, and that
@@ -4023,6 +4031,14 @@ func classicDiffListingType(itemType string) bool {
 	}
 }
 
+// applyClassicDiffListing resolves the changed_since / prev-listing settings
+// for a classic (non-dedup) differential/incremental folder or container item.
+// When the parent's effective listing is available it is attached so the engine
+// detects NEW files with stale mtimes (issue #320); when it is unavailable the
+// changed_since gate is CLEARED so the engine degrades to a FULL archive —
+// never silent mtime-only filtering, which would drop a NEW stale-mtime file
+// (e.g. cp -a), the literal issue #320 data-loss class. Dedup items carry
+// forward via the parent manifest in the engine and never reach this helper.
 func applyClassicDiffListing(settings map[string]any, itemType string, listingPaths []string, volumeListingPaths map[string][]string, volumeResolvedSources map[string]string) {
 	switch itemType {
 	case "folder", "plugin":

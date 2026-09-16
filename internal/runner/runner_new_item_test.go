@@ -503,3 +503,71 @@ func TestRestoreMergedChainGenericSkipsHistoricalSteps(t *testing.T) {
 		t.Errorf("step 2 should have been found, got %v", err)
 	}
 }
+
+// TestPruneChainResurrected_PluginDestinationResolution verifies that pruneChainResurrected
+// resolves the plugin directory when destination is empty and item is a plugin.
+func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
+	t.Parallel()
+
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	storageDir := t.TempDir()
+	storageConfig := fmt.Sprintf(`{"path":%q}`, storageDir)
+	storageID, err := database.CreateStorageDestination(db.StorageDestination{
+		Name:   "local",
+		Type:   "local",
+		Config: storageConfig,
+	})
+	if err != nil {
+		t.Fatalf("CreateStorageDestination: %v", err)
+	}
+
+	jobID, err := database.CreateJob(db.Job{
+		Name:          "plugin-prune-job",
+		StorageDestID: storageID,
+		Schedule:      "@daily",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	pluginDest := t.TempDir()
+	settingsJSON := fmt.Sprintf(`{"path":%q}`, pluginDest)
+	_, err = database.AddJobItem(db.JobItem{
+		JobID:    jobID,
+		ItemType: "plugin",
+		ItemName: "test-plugin",
+		Settings: settingsJSON,
+	})
+	if err != nil {
+		t.Fatalf("AddJobItem: %v", err)
+	}
+
+	baseRP := db.RestorePoint{
+		ID:          1,
+		JobID:       jobID,
+		BackupType:  "full",
+		StoragePath: "prune-test/1_full",
+		Metadata:    `{"item_sizes":{"other":100}}`,
+		CreatedAt:   time.Now().Add(-time.Hour),
+	}
+	childRP := db.RestorePoint{
+		ID:                   2,
+		JobID:                jobID,
+		BackupType:           "incremental",
+		StoragePath:          "prune-test/2_inc",
+		ParentRestorePointID: 1,
+		Metadata:             `{"item_sizes":{"test-plugin":10}}`,
+		CreatedAt:            time.Now(),
+	}
+
+	r := New(database, ws.NewHub(), nil)
+
+	// Should resolve pluginDest from JobItem settings without panicking or returning prematurely.
+	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "test-plugin", "", "", time.Now())
+}
+

@@ -79,6 +79,13 @@ func pluginPath(name string) string {
 	return filepath.Join(pluginsDir, name)
 }
 
+// PluginPath returns the canonical config directory for a plugin under
+// /boot/config/plugins/. Exported for runner chain prune and restore path resolution.
+func PluginPath(name string) string {
+	return pluginPath(name)
+}
+
+
 // PluginHandler implements Handler for Unraid plugin backup/restore.
 // Each plugin consists of a .plg installer file and an optional per-plugin
 // configuration directory under /boot/config/plugins/<name>/.
