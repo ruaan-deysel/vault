@@ -157,9 +157,14 @@ export const api = {
   downloadStorageFile: async (id, path) => {
     const { url, options } = buildApiRequest('GET', `/storage/${id}/files?path=${encodeURIComponent(path)}`, {})
     const res = await fetch(url, options)
+    if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || `HTTP ${res.status}`)
+      const text = await res.text().catch(() => '')
+      let data = null
+      if (text) {
+        try { data = JSON.parse(text) } catch { /* non-JSON body */ }
+      }
+      throw new Error((data && data.error) || text || `HTTP ${res.status}`)
     }
     return res.blob()
   },

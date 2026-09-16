@@ -1092,11 +1092,7 @@ func TestStorageDownloadFile_Success(t *testing.T) {
 		t.Fatalf("write test file: %v", err)
 	}
 
-	serverKey := bytes.Repeat([]byte{0xee}, 32)
-	hub := ws.NewHub()
-	go hub.Run()
-	r := runner.New(d, hub, serverKey)
-	h := NewStorageHandler(d, r, serverKey)
+	h := NewStorageHandler(d, nil, nil)
 
 	idStr := strconv.FormatInt(destID, 10)
 	targetPath := `backups/archive-"sample".tar.zst`

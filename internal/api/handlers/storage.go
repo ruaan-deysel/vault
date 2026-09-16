@@ -1080,7 +1080,10 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size, 10))
 	}
 	filename := path.Base(cleaned)
-	escapedFilename := strings.ReplaceAll(filename, `"`, `\"`)
+	filename = strings.ReplaceAll(filename, "\r", "")
+	filename = strings.ReplaceAll(filename, "\n", "")
+	escapedFilename := strings.ReplaceAll(filename, `\`, `\\`)
+	escapedFilename = strings.ReplaceAll(escapedFilename, `"`, `\"`)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, escapedFilename))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)

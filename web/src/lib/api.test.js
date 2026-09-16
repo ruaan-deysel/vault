@@ -206,5 +206,27 @@ describe('storage file download', () => {
     await expect(api.downloadStorageFile(42, 'backups/missing.tar.zst'))
       .rejects.toThrow('file not found: missing')
   })
+
+  it('throws authorization error on 401 response', async () => {
+    const fetch = vi.fn(async () => new Response('Unauthorized', {
+      status: 401,
+      headers: { 'content-type': 'text/plain' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/test.tar.zst'))
+      .rejects.toThrow('Not authorized — your session or API key may have expired.')
+  })
+
+  it('falls back to text body when response error is non-JSON', async () => {
+    const fetch = vi.fn(async () => new Response('Bad Gateway from proxy', {
+      status: 502,
+      headers: { 'content-type': 'text/plain' },
+    }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(api.downloadStorageFile(42, 'backups/test.tar.zst'))
+      .rejects.toThrow('Bad Gateway from proxy')
+  })
 })
 
