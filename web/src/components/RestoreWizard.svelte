@@ -393,10 +393,6 @@
 
   let needsPassphrase = $derived(selectedPoint?.encryption === 'age')
 
-  // A partial restore writes only the files the user picked, so clearing the
-  // destination would delete everything they did not pick. The backend
-  // declines to clear in that case; the wizard says so rather than leaving a
-  // ticked box that does nothing (issue #321).
   // Only a container is stopped, removed, and recreated by a restore, so only
   // a container needs the remap acknowledgement (issue #336).
   let hasContainerItem = $derived(selectedItemsArray.some(item => item.type === 'container'))
@@ -406,6 +402,10 @@
   // button, and it resets so re-entering the choice asks again.
   let needsRemapAcknowledgement = $derived(hasContainerItem && showDestOverride)
 
+  // A partial restore writes only the files the user picked, so clearing the
+  // destination would delete everything they did not pick. The backend
+  // declines to clear in that case; the wizard says so rather than leaving a
+  // ticked box that does nothing (issue #321).
   let hasPartialSelection = $derived(
     Array.from(picker.entries()).some(([key, entry]) => {
       const item = selectedItems.get(key)
