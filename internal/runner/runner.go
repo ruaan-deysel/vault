@@ -2544,9 +2544,9 @@ func (r *Runner) backupItem(ctx context.Context, runID int64, item engine.Backup
 // BackupResult whose Meta carries the manifest ID for the runner to
 // persist on the resulting restore_points row.
 //
-// When verify is set the freshly written chunks are read back and re-hashed
-// before the item is reported successful, which is the dedup equivalent of
-// the classic path's post-upload checksum pass (issue #382).
+// When verify is set the chunks across the item's entire manifest closure
+// are read back and re-hashed before the item is reported successful, which
+// is the dedup equivalent of the classic path's post-upload checksum pass (issue #382).
 func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine.BackupItem, dest db.StorageDestination, parentRP *db.RestorePoint, handler engine.ChunkedHandler, verify bool) (*engine.BackupResult, map[string]string, error) {
 	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
 	if err != nil {
@@ -2720,6 +2720,12 @@ func (r *Runner) verifyChunkedItem(ctx context.Context, runID int64, item engine
 		}
 		bytesRead += int64(len(body))
 		checked++
+
+		// Heartbeat the stall watchdog so a large read-back on slow storage
+		// does not trigger a false stall-cancel (issue #110, #382).
+		r.lastProgressMu.Lock()
+		r.lastProgress = time.Now()
+		r.lastProgressMu.Unlock()
 	}
 
 	r.runLog(runID, runLogLevelInfo,
