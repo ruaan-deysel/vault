@@ -230,11 +230,18 @@ func TestPluginBackupChunkedForwardsChangedSince(t *testing.T) {
 	// A file changed after the cut-off, alongside one that did not.
 	writePluginFile(t, src, "fresh.conf", "fresh", time.Now())
 
+	var chunked []string
+	progress := func(_ string, _ int, msg string) {
+		if strings.HasPrefix(msg, "chunked ") {
+			chunked = append(chunked, strings.TrimPrefix(msg, "chunked "))
+		}
+	}
+
 	diffID, err := h.BackupChunked(ctx,
 		BackupItem{Name: "p", Type: "plugin", Settings: map[string]any{
 			"path":          src,
 			"changed_since": time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339),
-		}}, repo, &parent, nil)
+		}}, repo, &parent, progress)
 	if err != nil {
 		t.Fatalf("differential BackupChunked: %v", err)
 	}
@@ -253,6 +260,23 @@ func TestPluginBackupChunkedForwardsChangedSince(t *testing.T) {
 	}
 	if _, ok := diff.Files["fresh.conf"]; !ok {
 		t.Errorf("changed file missing from the differential: %+v", diff.Files)
+	}
+
+	hasFresh := false
+	hasOld := false
+	for _, c := range chunked {
+		if strings.HasSuffix(c, "fresh.conf") {
+			hasFresh = true
+		}
+		if strings.HasSuffix(c, "old.conf") {
+			hasOld = true
+		}
+	}
+	if !hasFresh {
+		t.Errorf("fresh.conf was not chunked: %v", chunked)
+	}
+	if hasOld {
+		t.Errorf("old.conf was re-chunked instead of carried forward: %v", chunked)
 	}
 }
 

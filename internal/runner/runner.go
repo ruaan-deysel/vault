@@ -3515,7 +3515,11 @@ func (r *Runner) pruneChainResurrected(chain []db.RestorePoint, itemName, destin
 							}
 						}
 						if destPath == "" {
-							destPath = engine.PluginPath(itemName)
+							pluginID := ji.ItemID
+							if pluginID == "" {
+								pluginID = itemName
+							}
+							destPath = engine.PluginPath(pluginID)
 						}
 						break
 					}

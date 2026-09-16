@@ -541,25 +541,76 @@ func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
 		JobID:    jobID,
 		ItemType: "plugin",
 		ItemName: "test-plugin",
+		ItemID:   "test-plugin-id",
 		Settings: settingsJSON,
 	})
 	if err != nil {
 		t.Fatalf("AddJobItem: %v", err)
 	}
 
+	basePath := "prune-test/1_full"
+	childPath := "prune-test/2_inc"
+
+	baseDir := filepath.Join(storageDir, filepath.FromSlash(basePath), "test-plugin")
+	childDir := filepath.Join(storageDir, filepath.FromSlash(childPath), "test-plugin")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		t.Fatalf("MkdirAll base: %v", err)
+	}
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatalf("MkdirAll child: %v", err)
+	}
+
+	resurrectedContent := []byte("resurrected file content")
+	survivingContent := []byte("surviving file content")
+	if err := os.WriteFile(filepath.Join(pluginDest, "resurrected.conf"), resurrectedContent, 0644); err != nil {
+		t.Fatalf("WriteFile resurrected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDest, "surviving.conf"), survivingContent, 0644); err != nil {
+		t.Fatalf("WriteFile surviving: %v", err)
+	}
+
+	baseIdx := engine.TarIndex{
+		Version: 1,
+		Files: []engine.TarIndexEntry{
+			{Path: "resurrected.conf", Size: int64(len(resurrectedContent))},
+			{Path: "surviving.conf", Size: int64(len(survivingContent))},
+		},
+	}
+	baseIdxData, err := json.Marshal(baseIdx)
+	if err != nil {
+		t.Fatalf("marshal base index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "config.tar.index.json"), baseIdxData, 0644); err != nil {
+		t.Fatalf("write base index: %v", err)
+	}
+
+	childListing := engine.TarIndex{
+		Version: 1,
+		Files: []engine.TarIndexEntry{
+			{Path: "surviving.conf", Size: int64(len(survivingContent))},
+		},
+	}
+	childListingData, err := json.Marshal(childListing)
+	if err != nil {
+		t.Fatalf("marshal child listing: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, "config.tar.listing.json"), childListingData, 0644); err != nil {
+		t.Fatalf("write child listing: %v", err)
+	}
+
 	baseRP := db.RestorePoint{
 		ID:          1,
 		JobID:       jobID,
 		BackupType:  "full",
-		StoragePath: "prune-test/1_full",
-		Metadata:    `{"item_sizes":{"other":100}}`,
+		StoragePath: basePath,
+		Metadata:    `{"item_sizes":{"test-plugin":100}}`,
 		CreatedAt:   time.Now().Add(-time.Hour),
 	}
 	childRP := db.RestorePoint{
 		ID:                   2,
 		JobID:                jobID,
 		BackupType:           "incremental",
-		StoragePath:          "prune-test/2_inc",
+		StoragePath:          childPath,
 		ParentRestorePointID: 1,
 		Metadata:             `{"item_sizes":{"test-plugin":10}}`,
 		CreatedAt:            time.Now(),
@@ -567,7 +618,13 @@ func TestPruneChainResurrected_PluginDestinationResolution(t *testing.T) {
 
 	r := New(database, ws.NewHub(), nil)
 
-	// Should resolve pluginDest from JobItem settings without panicking or returning prematurely.
 	r.pruneChainResurrected([]db.RestorePoint{baseRP, childRP}, "test-plugin", "", "", time.Now())
+
+	if _, err := os.Stat(filepath.Join(pluginDest, "resurrected.conf")); !os.IsNotExist(err) {
+		t.Errorf("resurrected.conf was not pruned: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pluginDest, "surviving.conf")); err != nil {
+		t.Errorf("surviving.conf was unexpectedly removed: %v", err)
+	}
 }
 
