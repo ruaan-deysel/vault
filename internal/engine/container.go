@@ -24,6 +24,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/safepath"
 )
 
 // maxExtractSize is the maximum size for a single file extracted from a tar
@@ -2781,8 +2782,8 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if !isVolFile {
 			continue
 		}
-		if len(v.Chunks) == 0 {
-			log.Printf("engine: chunked restore: %s has no chunks, skipping", k)
+		if (v.Size > 0 && len(v.Chunks) == 0) || v.Size == volumeSkippedSize {
+			log.Printf("engine: chunked restore: %s has no chunks (size %d), skipping", k, v.Size)
 			continue
 		}
 		// The picker names the mount by its container-internal path, so a
@@ -2828,19 +2829,26 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if err := os.MkdirAll(normalized, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", normalized, err)
 	}
-	path := filepath.Join(normalized, filepath.Base(target))
+	component, err := safepath.NormalizeComponent(filepath.Base(target))
+	if err != nil {
+		return fmt.Errorf("invalid file mount name %q: %w", target, err)
+	}
+	path, err := safepath.JoinUnderBase(normalized, component, false)
+	if err != nil {
+		return fmt.Errorf("invalid file mount path %q: %w", target, err)
+	}
 
 	mode := os.FileMode(entry.Mode)
 	if mode == 0 {
 		mode = 0o644
 	}
-	// normalizeRestorePath validated the PARENT. Without O_NOFOLLOW the final
+	// normalizeRestorePath validated the PARENT. Without openNoFollow the final
 	// component is still free to be a pre-existing symlink pointing anywhere
 	// on the host, and the open would follow it straight out of the approved
-	// roots and truncate whatever it found (CWE-22/CWE-59). O_NOFOLLOW closes
+	// roots and truncate whatever it found (CWE-22/CWE-59). openNoFollow closes
 	// the race as well as the check: there is no window between testing the
 	// path and opening it.
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, mode) // #nosec G304 — parent validated by normalizeRestorePath, final component pinned by O_NOFOLLOW
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — parent validated by normalizeRestorePath, joined via safepath.JoinUnderBase, final component pinned by openNoFollow
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
 			return fmt.Errorf("refusing to restore file mount through the symlink at %s", path)

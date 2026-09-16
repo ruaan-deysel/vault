@@ -494,3 +494,49 @@ func TestRestoreChunkedVolumeFileFailures(t *testing.T) {
 		}
 	})
 }
+
+func TestRestoreChunkedVolumes_EmptySingleFileMount(t *testing.T) {
+	t.Parallel()
+
+	repo, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "empty.conf")
+	if err := os.WriteFile(source, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := chunkFileIntoRepo(repo, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Mode = 0o640
+	if err := repo.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{
+		containerVolFilePrefix + "/empty.conf": entry,
+	}}
+	inspect := inspectFromJSON(t, fmt.Sprintf(`{
+		"Name": "/test-empty",
+		"Mounts": [{"Type": "bind", "Source": %q, "Destination": "/empty.conf"}]
+	}`, source))
+
+	if err := restoreChunkedVolumes(context.Background(), m, repo, inspect, dest, nil, false, nil); err != nil {
+		t.Fatalf("restoreChunkedVolumes: %v", err)
+	}
+
+	restored := filepath.Join(dest, "empty.conf")
+	info, err := os.Stat(restored)
+	if err != nil {
+		t.Fatalf("restored file does not exist: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("restored file size = %d, want 0", info.Size())
+	}
+}
+
+
