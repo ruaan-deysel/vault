@@ -398,7 +398,7 @@ func ResolveInfo(destinations []StorageConfig, override string) StagingInfo {
 	// followed by cache paths, then remaining local destinations, then system.
 	for _, p := range besideDests {
 		stagePath := filepath.Join(p, StageDirName)
-		ci := CascadeItem{Path: stagePath, Source: "local-storage"}
+		ci := CascadeItem{Path: stagePath, Source: "destination"}
 		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
 			ci.Available = true
 		}

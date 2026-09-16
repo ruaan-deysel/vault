@@ -616,6 +616,15 @@ func TestResolveInfoStageBesideWins(t *testing.T) {
 	if info.ResolvedPath != expectedPath {
 		t.Errorf("ResolvedPath = %q, want %q", info.ResolvedPath, expectedPath)
 	}
+	foundCascade := false
+	for _, c := range info.Cascade {
+		if c.Source == "destination" && c.Available && c.Path == expectedPath {
+			foundCascade = true
+		}
+	}
+	if !foundCascade {
+		t.Errorf("expected available cascade entry with Source 'destination' and path %q, got: %+v", expectedPath, info.Cascade)
+	}
 }
 
 func TestRankCandidatesByFreeSpace(t *testing.T) {
