@@ -624,7 +624,7 @@
   let hasPartialSelection = $derived(
     Array.from(picker.entries()).some(([key, entry]) => {
       const item = selectedItems.get(key)
-      const total = entry?.contents?.files?.length || 0
+      const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
       return item && entry?.selected && entry.selected.size > 0 && entry.selected.size < total && item.jobs?.some(j => j.id === selectedPoint?.jobId)
     })
   )
@@ -633,7 +633,7 @@
   let hasEmptySelection = $derived(
     step3ItemsArray.some(item => {
       const entry = picker.get(itemKey(item))
-      const total = entry?.contents?.files?.length || 0
+      const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)
       return entry?.contents && total > 0 && entry.selected.size === 0
     })
   )
@@ -718,7 +718,7 @@
     for (const [key, entry] of picker.entries()) {
       const item = selectedItems.get(key)
       if (item && entry?.contents && entry?.selected) {
-        const total = entry.contents.files?.length || 0
+        const total = entry.totalFiles ?? (entry.contents.files?.length || 0)
         if (entry.selected.size > 0 && entry.selected.size < total) {
           if (item.jobs.some(j => j.id === selectedPoint.jobId)) {
             filePaths[item.name] = Array.from(entry.selected)
@@ -1132,7 +1132,7 @@
       {#each step3ItemsArray as item (itemKey(item))}
         {@const entry = picker.get(itemKey(item))}
         {@const sel = entry?.selected?.size || 0}
-        {@const total = entry?.contents?.files?.length || 0}
+        {@const total = entry?.totalFiles ?? (entry?.contents?.files?.length || 0)}
         {@const emptyContents = !!entry?.contents && total === 0}
         {#if !supportsFilePicker(item.type)}
           <div class="bg-surface-2 border border-border rounded-xl p-3 text-sm flex items-center justify-between gap-3">
