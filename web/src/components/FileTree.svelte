@@ -1,4 +1,5 @@
 <script>
+  import { SvelteMap } from 'svelte/reactivity'
   import { formatBytes } from '../lib/utils.js'
 
   let {
@@ -10,16 +11,36 @@
     ontoggleexpand = () => {},
   } = $props()
 
-  function matchesSearch(node, query) {
-    if (!query) return true
-    const q = query.toLowerCase()
-    if (node.name.toLowerCase().includes(q) || node.path.toLowerCase().includes(q)) {
-      return true
+  // Precompute search match results in O(N) single-pass traversal per query change
+  let matchMap = $derived.by(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return null
+    const map = new SvelteMap()
+
+    function computeMatch(node) {
+      const selfMatch = node.name.toLowerCase().includes(q) || node.path.toLowerCase().includes(q)
+      let childMatch = false
+      if (node.isDir && node.children) {
+        for (const c of node.children) {
+          if (computeMatch(c)) {
+            childMatch = true
+          }
+        }
+      }
+      const matches = selfMatch || childMatch
+      map.set(node.path, { matches, childMatch })
+      return matches
     }
-    if (node.isDir && node.children) {
-      return node.children.some(child => matchesSearch(child, query))
+
+    for (const node of nodes) {
+      computeMatch(node)
     }
-    return false
+    return map
+  })
+
+  function matchesSearch(node) {
+    if (!matchMap) return true
+    return matchMap.get(node.path)?.matches ?? false
   }
 
   function getFolderState(node) {
@@ -46,10 +67,9 @@
   }
 
   function isExpanded(node) {
-    const q = search.trim().toLowerCase()
-    if (q) {
+    if (matchMap) {
       // In search mode, auto-expand if any descendant matches search
-      return expandedPaths.has(node.path) || (node.children && node.children.some(c => matchesSearch(c, q)))
+      return expandedPaths.has(node.path) || (matchMap.get(node.path)?.childMatch ?? false)
     }
     return expandedPaths.has(node.path)
   }
@@ -69,8 +89,7 @@
 </script>
 
 {#snippet renderNode(node, depth)}
-  {@const q = search.trim().toLowerCase()}
-  {#if matchesSearch(node, q)}
+  {#if matchesSearch(node)}
     {@const state = getFolderState(node)}
     {@const expanded = isExpanded(node)}
     <div
@@ -161,8 +180,7 @@
 {/snippet}
 
 {#if nodes && nodes.length > 0}
-  {@const q = search.trim().toLowerCase()}
-  {@const hasMatches = !q || nodes.some(n => matchesSearch(n, q))}
+  {@const hasMatches = !matchMap || nodes.some(n => matchesSearch(n))}
   {#if hasMatches}
     <div class="py-1" role="tree">
       {#each nodes as node (node.path)}
