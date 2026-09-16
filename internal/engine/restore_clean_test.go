@@ -3,11 +3,12 @@ package engine
 import (
 	"context"
 	"errors"
-	"github.com/ruaan-deysel/vault/internal/dedup"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/dedup"
 )
 
 func TestPathDepth(t *testing.T) {
