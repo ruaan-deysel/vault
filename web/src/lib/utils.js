@@ -581,6 +581,16 @@ export function splitPath(path) {
 }
 
 /**
+ * Normalizes a path by removing leading and trailing slashes and backslashes.
+ *
+ * @param {string | null | undefined} path
+ * @returns {string}
+ */
+export function normalizePath(path) {
+  return splitPath(path).join('/')
+}
+
+/**
  * Builds a hierarchical tree from a flat list of TarIndexEntry objects.
  *
  * Folders are sorted before files, and both are sorted alphabetically.

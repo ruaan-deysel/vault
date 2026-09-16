@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitPath, buildFileTree } from './utils.js'
+import { splitPath, normalizePath, buildFileTree } from './utils.js'
 
 describe('splitPath', () => {
   it('returns empty array for empty, null, or non-string input', () => {
@@ -18,6 +18,18 @@ describe('splitPath', () => {
   it('normalizes Windows backslashes', () => {
     expect(splitPath('a\\b\\c')).toEqual(['a', 'b', 'c'])
     expect(splitPath('\\var\\log\\app\\')).toEqual(['var', 'log', 'app'])
+  })
+})
+
+describe('normalizePath', () => {
+  it('strips leading and trailing slashes and backslashes', () => {
+    expect(normalizePath('/etc/config/')).toBe('etc/config')
+    expect(normalizePath('\\etc\\config\\')).toBe('etc/config')
+    expect(normalizePath('///a///b///c///')).toBe('a/b/c')
+    expect(normalizePath('foo/bar')).toBe('foo/bar')
+    expect(normalizePath('')).toBe('')
+    expect(normalizePath(null)).toBe('')
+    expect(normalizePath(undefined)).toBe('')
   })
 })
 

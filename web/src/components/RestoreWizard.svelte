@@ -147,6 +147,7 @@
       picker.set(key, {
         contents: null,
         tree: null,
+        totalFiles: 0,
         selected: new SvelteSet(),
         expandedPaths: new SvelteSet(),
         loading: false,
@@ -185,12 +186,15 @@
         const contents = await api.getRestorePointContents(selectedPoint.jobId, selectedPoint.id, item.name)
         const files = contents?.files || []
         const tree = buildFileTree(files)
+        const totalFiles = tree.reduce((sum, n) => sum + (n.descendantLeafCount || 0), 0)
         // Issue #323: All files / folders selected by default upon loading contents
         const selected = new SvelteSet()
-        for (const f of files) {
-          if (f?.path) selected.add(f.path)
+        for (const root of tree) {
+          for (const p of root.descendantLeafPaths) {
+            selected.add(p)
+          }
         }
-        updateEntry(item, { contents, tree, selected, loading: false })
+        updateEntry(item, { contents, tree, totalFiles, selected, loading: false })
       } catch (e) {
         updateEntry(item, { error: e?.message || 'failed to load file list', loading: false })
       }
@@ -232,18 +236,31 @@
   function selectAllFiles(item) {
     const key = itemKey(item)
     const entry = picker.get(key)
-    if (!entry?.contents?.files) return
+    if (!entry?.tree) return
     const q = entry.search.trim().toLowerCase()
     if (!q) {
-      for (const f of entry.contents.files) {
-        if (f?.path) entry.selected.add(f.path)
-      }
-    } else {
-      for (const f of entry.contents.files) {
-        if (f?.path && f.path.toLowerCase().includes(q)) {
-          entry.selected.add(f.path)
+      for (const root of entry.tree) {
+        for (const p of root.descendantLeafPaths) {
+          entry.selected.add(p)
         }
       }
+    } else {
+      function selectMatching(nodes) {
+        for (const n of nodes) {
+          if (!n.isDir) {
+            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
+              entry.selected.add(n.path)
+            }
+          } else {
+            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
+              for (const p of n.descendantLeafPaths) entry.selected.add(p)
+            } else if (n.children) {
+              selectMatching(n.children)
+            }
+          }
+        }
+      }
+      selectMatching(entry.tree)
     }
     updateEntry(item, {})
   }
@@ -251,16 +268,27 @@
   function deselectAllFiles(item) {
     const key = itemKey(item)
     const entry = picker.get(key)
-    if (!entry) return
+    if (!entry?.tree) return
     const q = entry.search.trim().toLowerCase()
     if (!q) {
       entry.selected.clear()
     } else {
-      for (const f of entry.contents?.files || []) {
-        if (f?.path && f.path.toLowerCase().includes(q)) {
-          entry.selected.delete(f.path)
+      function deselectMatching(nodes) {
+        for (const n of nodes) {
+          if (!n.isDir) {
+            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
+              entry.selected.delete(n.path)
+            }
+          } else {
+            if (n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) {
+              for (const p of n.descendantLeafPaths) entry.selected.delete(p)
+            } else if (n.children) {
+              deselectMatching(n.children)
+            }
+          }
         }
       }
+      deselectMatching(entry.tree)
     }
     updateEntry(item, {})
   }
