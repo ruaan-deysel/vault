@@ -74,8 +74,21 @@ func TestUniqueRunPath(t *testing.T) {
 	for attempt := 4; attempt <= maxRunPathAttempts; attempt++ {
 		occupy(fmt.Sprintf("%s-%d", base, attempt))
 	}
-	if got := uniqueRunPath(dest, base, 44); got != base+"-r44" {
-		t.Errorf("got %q, want the run-ID fallback %q", got, base+"-r44")
+	// An ambiguous error (e.g. permission error rather than NotExist) on candidate
+	// must fall back to the run ID instead of assuming the candidate is free.
+	unreadableParent := t.TempDir()
+	unreadableDir := filepath.Join(unreadableParent, "unreadable")
+	if err := os.MkdirAll(unreadableDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	candPath := filepath.Join(unreadableDir, "nightly", "2026-09-15_143000")
+	if err := os.MkdirAll(candPath, 0o000); err == nil {
+		t.Cleanup(func() { _ = os.Chmod(candPath, 0o755) })
+		unreadableCfg, _ := json.Marshal(map[string]string{"path": unreadableDir})
+		unreadableDest := db.StorageDestination{Name: "unreadable", Type: "local", Config: string(unreadableCfg)}
+		if got := uniqueRunPath(unreadableDest, base, 45); got != base+"-r45" {
+			t.Errorf("got %q, want fallback %q on ambiguous error", got, base+"-r45")
+		}
 	}
 }
 

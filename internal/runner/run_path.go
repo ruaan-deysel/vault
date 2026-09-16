@@ -47,12 +47,15 @@ func uniqueRunPath(dest db.StorageDestination, basePath string, runID int64) str
 			candidate = fmt.Sprintf("%s-%d", basePath, attempt)
 			continue
 		}
-		// "Not found" is the common answer and the one we want, but the
-		// adapters do not agree on how to spell it, so the destination root
-		// is probed instead: if that lists, the destination is healthy and
-		// the error really did mean the candidate is free.
+		if !storage.IsNotExist(listErr) {
+			log.Printf("runner: %s cannot list candidate %s (%v) — using %s rather than risk overwriting a run", dest.Name, candidate, listErr, fallback)
+			return fallback
+		}
+		// Candidate does not exist. Verify the destination root is listable so
+		// a completely missing/unmounted destination root (which also produces NotExist)
+		// falls back to the run ID instead.
 		if _, probeErr := adapter.List(""); probeErr != nil {
-			log.Printf("runner: %s cannot be listed (%v) — using %s rather than risk overwriting a run", dest.Name, probeErr, fallback)
+			log.Printf("runner: %s destination root cannot be listed (%v) — using %s rather than risk overwriting a run", dest.Name, probeErr, fallback)
 			return fallback
 		}
 		return candidate
