@@ -2045,8 +2045,8 @@
                     <p class="text-xs text-text-dim italic">Loading mount points…</p>
                   {:else if mounts === null}
                     <p class="text-xs text-text-dim italic">
-                      Mount points could not be read for this container. The backup still runs; every mount it
-                      has at that moment is included.
+                      Mount points could not be read for this container. The backup still runs and will discover
+                      mounts dynamically at backup time according to your exclusion rules.
                     </p>
                   {:else if mounts.length === 0}
                     <p class="text-xs text-text-dim italic">

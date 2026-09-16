@@ -22,7 +22,7 @@ Yes. A container backup includes the container image, its XML template, and ever
 
 ## What about a container that has no volumes at all?
 
-It is still worth backing up, and Vault backs it up. The image, the container configuration and the Unraid template are captured regardless of how many mounts the container has, which is everything needed to recreate it exactly as it was — so there is no need to keep a compose file or a note of the settings safe separately. The job wizard says so where it lists the mount points.
+It is still worth backing up, and Vault backs it up. The image, the container configuration and the Unraid template (when available) are captured regardless of how many mounts the container has, which is everything needed to recreate it exactly as it was — so there is no need to keep a compose file or a note of the settings safe separately. The job wizard says so where it lists the mount points.
 
 ## Can I run a job manually instead of on a schedule?
 
