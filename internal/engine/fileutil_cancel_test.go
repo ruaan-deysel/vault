@@ -174,4 +174,13 @@ func TestOpenRestoreDestination_Branches(t *testing.T) {
 	if err := copyFile(context.Background(), realFile, "..\\escape"); err == nil {
 		t.Fatal("expected error copying file to ..\\escape")
 	}
+
+	// 11. Destination leaf is an existing directory
+	existingDirLeaf := filepath.Join(dir, "sub", "existing_dir_leaf")
+	if err := os.MkdirAll(existingDirLeaf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openRestoreDestination(existingDirLeaf, existingDirLeaf, 0o644); err == nil {
+		t.Fatal("expected error opening destination when leaf is an existing directory")
+	}
 }

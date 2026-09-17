@@ -35,14 +35,7 @@ func openRestoreDestination(dst, normalizedDst string, perm os.FileMode) (*os.Fi
 		}
 	}
 	if matchingRoot == "" {
-		out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, perm) // #nosec G304
-		if err != nil {
-			if isSymlinkErr(err) {
-				return nil, fmt.Errorf("refusing to copy file through symlink at %s", normalizedDst)
-			}
-			return nil, fmt.Errorf("creating dest %s: %w", normalizedDst, err)
-		}
-		return out, nil
+		return nil, fmt.Errorf("restore destination %s is not under an approved root", normalizedDst)
 	}
 
 	targetPath := dst
@@ -68,9 +61,6 @@ func openRestoreDestination(dst, normalizedDst string, perm os.FileMode) (*os.Fi
 	}()
 
 	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("empty restore path components")
-	}
 
 	// Walk parent directories using descriptor-relative open with O_NOFOLLOW
 	for i := 0; i < len(parts)-1; i++ {

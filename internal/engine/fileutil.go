@@ -42,9 +42,6 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 	if err != nil {
 		return err
 	}
-	if !restorePathSafe(normalizedDst) || strings.Contains(normalizedDst, "../") || strings.Contains(normalizedDst, "..\\") {
-		return fmt.Errorf("suspicious destination path %q", normalizedDst)
-	}
 
 	out, err := openRestoreDestination(dst, normalizedDst, info.Mode())
 	if err != nil {

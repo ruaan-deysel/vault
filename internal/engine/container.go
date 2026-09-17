@@ -1818,12 +1818,12 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		if err != nil {
 			return err
 		}
+		if !restorePathSafe(targetPath) || strings.Contains(targetPath, "../") || strings.Contains(targetPath, "..\\") {
+			return fmt.Errorf("suspicious volume target path %q", targetPath)
+		}
 		normalizedTargetPath, err := normalizeRestorePath(targetPath)
 		if err != nil {
 			return err
-		}
-		if !restorePathSafe(normalizedTargetPath) || strings.Contains(normalizedTargetPath, "../") || strings.Contains(normalizedTargetPath, "..\\") {
-			return fmt.Errorf("suspicious volume target path %q", normalizedTargetPath)
 		}
 		targetPath = normalizedTargetPath
 
@@ -2287,12 +2287,12 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 	// destination (or an inspected mount source), so confirm it resolves within
 	// the approved restore roots before creating it; copyFile applies the same
 	// guard to the file path itself.
+	if !restorePathSafe(base) || strings.Contains(base, "../") || strings.Contains(base, "..\\") {
+		return "", fmt.Errorf("suspicious dump destination %q", base)
+	}
 	safeBase, err := normalizeRestorePath(base)
 	if err != nil {
 		return "", fmt.Errorf("resolving dump destination: %w", err)
-	}
-	if !restorePathSafe(safeBase) || strings.Contains(safeBase, "../") || strings.Contains(safeBase, "..\\") {
-		return "", fmt.Errorf("suspicious dump destination %q", safeBase)
 	}
 	if err := mkdirRestored(safeBase, 0750); err != nil {
 		return "", fmt.Errorf("creating dump destination %s: %w", safeBase, err)
@@ -2963,12 +2963,12 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
+		if !restorePathSafe(src) || strings.Contains(src, "../") || strings.Contains(src, "..\\") {
+			return fmt.Errorf("suspicious volume path %q", src)
+		}
 		normalizedSrc, err := normalizeRestorePath(src)
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
-		}
-		if !restorePathSafe(normalizedSrc) || strings.Contains(normalizedSrc, "../") || strings.Contains(normalizedSrc, "..\\") {
-			return fmt.Errorf("suspicious volume path %q", normalizedSrc)
 		}
 		src = normalizedSrc
 		if err := mkdirRestored(src, 0o750); err != nil {
@@ -3039,12 +3039,13 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 // exist yet on a restore to a fresh system, and Docker would otherwise
 // materialise a directory in its place when the container starts.
 func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, target string) error {
-	normalized, err := normalizeRestorePath(filepath.Dir(target))
+	parentDir := filepath.Dir(target)
+	if !restorePathSafe(parentDir) || strings.Contains(parentDir, "../") || strings.Contains(parentDir, "..\\") {
+		return fmt.Errorf("suspicious file mount parent directory %q", parentDir)
+	}
+	normalized, err := normalizeRestorePath(parentDir)
 	if err != nil {
 		return err
-	}
-	if !restorePathSafe(normalized) || strings.Contains(normalized, "../") || strings.Contains(normalized, "..\\") {
-		return fmt.Errorf("suspicious file mount parent directory %q", normalized)
 	}
 	if err := mkdirRestored(normalized, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", normalized, err)
