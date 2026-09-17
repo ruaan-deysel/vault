@@ -121,7 +121,7 @@ func TestOpenRestoreDestination_Branches(t *testing.T) {
 	}
 
 	// 6. Dot and redundant slashes in path
-	dotPath := filepath.Join(dir, "sub", ".", "dot.txt")
+	dotPath := filepath.Join(dir, "sub") + "/./dot.txt"
 	f3, err := openRestoreDestination(dotPath, dotPath, 0o644)
 	if err != nil {
 		t.Fatalf("openRestoreDestination with dot failed: %v", err)

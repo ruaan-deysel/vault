@@ -15,17 +15,14 @@ import (
 const openNoFollow = syscall.O_NOFOLLOW
 
 // isSymlinkErr reports whether err indicates an open failed because the target
-// is a symlink (O_NOFOLLOW).
+// is a symlink (O_NOFOLLOW). On Linux, O_DIRECTORY on a symlink returns ENOTDIR.
 func isSymlinkErr(err error) bool {
-	return errors.Is(err, syscall.ELOOP)
+	return errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // chtimesNoFollow updates the modification time without following a symlink.
 func chtimesNoFollow(path string, t time.Time) error {
-	ts, err := unix.TimeToTimespec(t)
-	if err != nil {
-		return err
-	}
+	ts := unix.NsecToTimespec(t.UnixNano())
 	times := []unix.Timespec{ts, ts}
 	return unix.UtimesNanoAt(unix.AT_FDCWD, path, times, unix.AT_SYMLINK_NOFOLLOW)
 }

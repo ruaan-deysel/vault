@@ -86,13 +86,18 @@ func TestRestoreSecurity_FolderRestoreUnsafeDestination(t *testing.T) {
 
 func TestRestoreSecurity_VMRestoreUnsafeDestination(t *testing.T) {
 	h := &VMHandler{}
+	dir := t.TempDir()
+	xmlPath := filepath.Join(dir, "domain.xml")
+	if err := os.WriteFile(xmlPath, []byte("<domain type='kvm'><name>test-vm</name></domain>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	item := BackupItem{
 		Name: "test-vm",
 		Settings: map[string]any{
 			"restore_destination": "../suspicious",
 		},
 	}
-	err := h.Restore(context.Background(), item, t.TempDir(), func(item string, pct int, msg string) {})
+	err := h.Restore(context.Background(), item, dir, func(item string, pct int, msg string) {})
 	if err == nil {
 		t.Fatal("VMHandler.Restore accepted suspicious destination")
 	}
@@ -188,6 +193,20 @@ func TestRestoreSecurity_UntarArchiveTypes(t *testing.T) {
 	}
 	if _, err := os.Stat(singleDest); err != nil {
 		t.Fatalf("single extracted file missing: %v", err)
+	}
+
+	// Test untarDirectoryFiltered when destination file collides with a directory
+	destCollisionDir := filepath.Join(dir, "dest_collision")
+	_ = os.MkdirAll(filepath.Join(destCollisionDir, "folder", "file.txt"), 0o755)
+	if err := untarDirectoryFiltered(ctx, tarPath, destCollisionDir, nil); err == nil {
+		t.Fatal("expected error when regular file collides with existing directory")
+	}
+
+	// Test untarFile when destination file collides with a directory
+	destFileCollisionDir := filepath.Join(dir, "single_collision")
+	_ = os.MkdirAll(destFileCollisionDir, 0o755)
+	if err := untarFile(ctx, tarPath, destFileCollisionDir); err == nil {
+		t.Fatal("expected error when untarFile destination is an existing directory")
 	}
 }
 
