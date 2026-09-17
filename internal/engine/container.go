@@ -3312,12 +3312,9 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 			return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
 		}
 
-		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, safeFileMode(header.Mode)) // #nosec G304 — destPath is validated by restorePathSafe and openNoFollow
+		f, err := openRestoreDestination(destPath, destPath, safeFileMode(header.Mode))
 		if err != nil {
-			if isSymlinkErr(err) {
-				return fmt.Errorf("refusing to restore file through symlink at %s", destPath)
-			}
-			return fmt.Errorf("creating file %s: %w", destPath, err)
+			return err
 		}
 		n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
 		if err != nil {
@@ -3854,12 +3851,9 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := mkdirRestored(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, safeFileMode(header.Mode)) // #nosec G304 — target validated by joinArchiveTarget + resolveWithinBase + restorePathSafe + openNoFollow
+			f, err := openRestoreDestination(target, target, safeFileMode(header.Mode))
 			if err != nil {
-				if isSymlinkErr(err) {
-					return fmt.Errorf("refusing to restore file through symlink at %s", target)
-				}
-				return fmt.Errorf("creating file %s: %w", target, err)
+				return err
 			}
 			n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
 			if err != nil {

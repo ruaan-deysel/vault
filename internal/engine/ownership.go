@@ -142,8 +142,15 @@ func applyModTimeFromTime(path string, t time.Time) {
 		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
 		return
 	}
-	if !t.IsZero() {
-		_ = os.Chtimes(path, t, t)
+	if t.IsZero() {
+		return
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		log.Printf("engine: restore: refusing to set mtime on symlink %q", path)
+		return
+	}
+	if err := chtimesNoFollow(path, t); err != nil {
+		log.Printf("engine: restore: setting mtime on %s: %v", path, err)
 	}
 }
 

@@ -11,8 +11,6 @@ var browseAllowedRoots = []string{"/mnt", "/boot"}
 
 var configurablePathRoots = []string{"/mnt", "/boot", "/tmp"}
 
-var restoreAllowedRoots = []string{"/mnt", "/boot", "/tmp", "/etc", "/opt", "/usr/local", "/var", "/home", "/private/var", "/private/tmp"}
-
 func normalizeConfigurablePath(path string) (string, error) {
 	return safepath.NormalizeAbsoluteUnderRoots(path, configurablePathRoots)
 }
@@ -28,5 +26,5 @@ func normalizeRestoreDestination(path string) (string, error) {
 			return "", fmt.Errorf("path traversal not allowed")
 		}
 	}
-	return safepath.NormalizeAbsoluteUnderRoots(path, restoreAllowedRoots)
+	return safepath.NormalizeAbsoluteUnderRoots(path, safepath.RestoreAllowedRoots())
 }

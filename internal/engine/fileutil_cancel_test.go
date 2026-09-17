@@ -49,7 +49,7 @@ func TestCopyFileWithProgress_RejectsSymlink(t *testing.T) {
 	}
 	symlinkDst := filepath.Join(dir, "link.img")
 	if err := os.Symlink(target, symlinkDst); err != nil {
-		t.Fatal(err)
+		t.Skipf("skipping: symlinks not supported on this filesystem: %v", err)
 	}
 	err := copyFile(context.Background(), src, symlinkDst)
 	if err == nil {
@@ -63,10 +63,17 @@ func TestCopyFileWithProgress_RejectsSymlink(t *testing.T) {
 	}
 	parentLink := filepath.Join(dir, "link_dir")
 	if err := os.Symlink(parentReal, parentLink); err != nil {
-		t.Fatal(err)
+		t.Skipf("skipping: symlinks not supported on this filesystem: %v", err)
 	}
 	err = copyFile(context.Background(), src, filepath.Join(parentLink, "file.img"))
 	if err == nil {
 		t.Fatal("expected error copying through symlinked parent directory, got nil")
+	}
+
+	// 3. Rejects symlinked intermediate ancestor directory
+	subDir := filepath.Join(parentLink, "nested", "deeper")
+	err = copyFile(context.Background(), src, filepath.Join(subDir, "file.img"))
+	if err == nil {
+		t.Fatal("expected error copying through symlinked intermediate ancestor directory, got nil")
 	}
 }

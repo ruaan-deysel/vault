@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -39,16 +38,6 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 		return fmt.Errorf("refusing to copy file through symlink at %s", dst)
 	}
 
-	parentRaw := filepath.Dir(dst)
-	if !restorePathSafe(parentRaw) || strings.Contains(parentRaw, "../") || strings.Contains(parentRaw, "..\\") {
-		return fmt.Errorf("suspicious destination parent %q", parentRaw)
-	}
-	if parentRaw != "/var" && parentRaw != "/tmp" {
-		if fi, pErr := os.Lstat(parentRaw); pErr == nil && fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to copy file through symlink at %s", parentRaw)
-		}
-	}
-
 	normalizedDst, err := normalizeRestorePath(dst)
 	if err != nil {
 		return err
@@ -57,12 +46,9 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 		return fmt.Errorf("suspicious destination path %q", normalizedDst)
 	}
 
-	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, info.Mode()) // #nosec G304 — normalizedDst validated by normalizeRestorePath, restorePathSafe, and openNoFollow
+	out, err := openRestoreDestination(dst, normalizedDst, info.Mode())
 	if err != nil {
-		if isSymlinkErr(err) {
-			return fmt.Errorf("refusing to copy file through symlink at %s", normalizedDst)
-		}
-		return fmt.Errorf("creating dest %s: %w", normalizedDst, err)
+		return err
 	}
 	defer func() {
 		if cerr := out.Close(); cerr != nil && err == nil {

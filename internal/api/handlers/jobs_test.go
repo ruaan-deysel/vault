@@ -1916,8 +1916,8 @@ func TestRestore_RejectsUnsafeDestinationAndFilePaths(t *testing.T) {
 	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
 	h.Restore(w, r)
 	// Passes path validation and fails later on missing item/restore target
-	if strings.Contains(w.Body.String(), "path traversal not allowed") {
-		t.Fatalf("Restore rejected valid container path: %s", w.Body.String())
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no items to restore") {
+		t.Fatalf("expected 400 no items to restore, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

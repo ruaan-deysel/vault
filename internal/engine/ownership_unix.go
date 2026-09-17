@@ -6,6 +6,9 @@ import (
 	"errors"
 	"os"
 	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // openNoFollow is O_NOFOLLOW on unix platforms to prevent symlink traversal.
@@ -15,6 +18,16 @@ const openNoFollow = syscall.O_NOFOLLOW
 // is a symlink (O_NOFOLLOW).
 func isSymlinkErr(err error) bool {
 	return errors.Is(err, syscall.ELOOP)
+}
+
+// chtimesNoFollow updates the modification time without following a symlink.
+func chtimesNoFollow(path string, t time.Time) error {
+	ts, err := unix.TimeToTimespec(t)
+	if err != nil {
+		return err
+	}
+	times := []unix.Timespec{ts, ts}
+	return unix.UtimesNanoAt(unix.AT_FDCWD, path, times, unix.AT_SYMLINK_NOFOLLOW)
 }
 
 // fileOwner returns the numeric owner of a stat result. The (-1, -1) pair
