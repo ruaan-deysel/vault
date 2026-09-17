@@ -305,7 +305,10 @@ func (h *PluginHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 			}
 			configDir = normalized
 		}
-		if err := os.MkdirAll(configDir, 0755); err != nil {
+		if !restorePathSafe(configDir) || strings.Contains(configDir, "../") || strings.Contains(configDir, "..\\") {
+			return fmt.Errorf("suspicious plugin config dir %q", configDir)
+		}
+		if err := mkdirRestored(configDir, 0755); err != nil {
 			return fmt.Errorf("creating config dir: %w", err)
 		}
 		include := extractRestoreFilePaths(item.Settings)

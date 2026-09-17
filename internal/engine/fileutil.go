@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // copyFile copies a file from src to dst, honouring ctx cancellation
@@ -34,9 +35,15 @@ func copyFileWithProgress(ctx context.Context, src, dst string, onProgress func(
 	if err != nil {
 		return err
 	}
+	if !restorePathSafe(normalizedDst) || strings.Contains(normalizedDst, "../") || strings.Contains(normalizedDst, "..\\") {
+		return fmt.Errorf("suspicious destination path %q", normalizedDst)
+	}
 
-	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode()) // #nosec G304 — normalizedDst validated by normalizeRestorePath
+	out, err := os.OpenFile(normalizedDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, info.Mode()) // #nosec G304 — normalizedDst validated by normalizeRestorePath, restorePathSafe, and openNoFollow
 	if err != nil {
+		if isSymlinkErr(err) {
+			return fmt.Errorf("refusing to copy file through symlink at %s", normalizedDst)
+		}
 		return fmt.Errorf("creating dest %s: %w", normalizedDst, err)
 	}
 	defer func() {

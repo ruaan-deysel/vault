@@ -230,6 +230,9 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 	if err != nil {
 		return err
 	}
+	if !restorePathSafe(normalizedDestPath) || strings.Contains(normalizedDestPath, "../") || strings.Contains(normalizedDestPath, "..\\") {
+		return fmt.Errorf("suspicious restore destination %q", normalizedDestPath)
+	}
 	destPath = normalizedDestPath
 
 	progress(item.Name, 30, "restoring to "+destPath)
@@ -239,7 +242,7 @@ func (h *FolderHandler) Restore(ctx context.Context, item BackupItem, sourceDir 
 		return fmt.Errorf("backup archive not found: %w", err)
 	}
 
-	if err := os.MkdirAll(destPath, 0750); err != nil {
+	if err := mkdirRestored(destPath, 0750); err != nil {
 		return fmt.Errorf("creating restore dir %s: %w", destPath, err)
 	}
 

@@ -1822,6 +1822,9 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		if err != nil {
 			return err
 		}
+		if !restorePathSafe(normalizedTargetPath) || strings.Contains(normalizedTargetPath, "../") || strings.Contains(normalizedTargetPath, "..\\") {
+			return fmt.Errorf("suspicious volume target path %q", normalizedTargetPath)
+		}
 		targetPath = normalizedTargetPath
 
 		// The manifest records what this mount was: a file-based bind mount
@@ -1831,14 +1834,14 @@ func (h *ContainerHandler) Restore(ctx context.Context, item BackupItem, sourceD
 		isFileMount := savedEntry.IsFile
 
 		if isFileMount {
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+			if err := mkdirRestored(filepath.Dir(targetPath), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", targetPath, err)
 			}
 			if err := untarFile(ctx, volArchive, targetPath); err != nil {
 				return fmt.Errorf("restoring volume file %s: %w", targetPath, err)
 			}
 		} else {
-			if err := os.MkdirAll(targetPath, 0750); err != nil {
+			if err := mkdirRestored(targetPath, 0750); err != nil {
 				return fmt.Errorf("creating volume dir %s: %w", targetPath, err)
 			}
 			// Replace the volume rather than merging into it, when the
@@ -2288,7 +2291,10 @@ func preserveDatabaseDump(ctx context.Context, dumpPath, restoreDest string, ins
 	if err != nil {
 		return "", fmt.Errorf("resolving dump destination: %w", err)
 	}
-	if err := os.MkdirAll(safeBase, 0750); err != nil {
+	if !restorePathSafe(safeBase) || strings.Contains(safeBase, "../") || strings.Contains(safeBase, "..\\") {
+		return "", fmt.Errorf("suspicious dump destination %q", safeBase)
+	}
+	if err := mkdirRestored(safeBase, 0750); err != nil {
 		return "", fmt.Errorf("creating dump destination %s: %w", safeBase, err)
 	}
 	dest := filepath.Join(base, restoreDumpName(inspect.Name, filepath.Base(dumpPath)))
@@ -2961,8 +2967,11 @@ func restoreChunkedVolumes(ctx context.Context, m dedup.Manifest, repo *dedup.Re
 		if err != nil {
 			return fmt.Errorf("restore volume %s: %w", dest, err)
 		}
+		if !restorePathSafe(normalizedSrc) || strings.Contains(normalizedSrc, "../") || strings.Contains(normalizedSrc, "..\\") {
+			return fmt.Errorf("suspicious volume path %q", normalizedSrc)
+		}
 		src = normalizedSrc
-		if err := os.MkdirAll(src, 0o750); err != nil {
+		if err := mkdirRestored(src, 0o750); err != nil {
 			return fmt.Errorf("mkdir volume %s: %w", src, err)
 		}
 		proxy := BackupItem{Name: dest, Type: "folder", Settings: map[string]any{}}
@@ -3034,7 +3043,10 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(normalized, 0o750); err != nil {
+	if !restorePathSafe(normalized) || strings.Contains(normalized, "../") || strings.Contains(normalized, "..\\") {
+		return fmt.Errorf("suspicious file mount parent directory %q", normalized)
+	}
+	if err := mkdirRestored(normalized, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", normalized, err)
 	}
 	component, err := safepath.NormalizeComponent(filepath.Base(target))
@@ -3260,6 +3272,11 @@ func tarFile(ctx context.Context, srcPath, destPath, compression string) (err er
 // the compression layer is auto-detected from the leading magic bytes. Used
 // for restoring file-based bind mounts.
 func untarFile(ctx context.Context, srcPath, destPath string) error {
+	cleanDest := filepath.Clean(destPath)
+	if !restorePathSafe(cleanDest) || strings.Contains(cleanDest, "../") || strings.Contains(cleanDest, "..\\") {
+		return fmt.Errorf("refusing to restore file to suspicious path %q", destPath)
+	}
+
 	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed volume archive name
 	if err != nil {
 		return fmt.Errorf("opening archive: %w", err)
@@ -3295,8 +3312,11 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 			return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
 		}
 
-		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode)) // #nosec G304 — destPath is restore destination from Docker container config
+		f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, safeFileMode(header.Mode)) // #nosec G304 — destPath is validated by restorePathSafe and openNoFollow
 		if err != nil {
+			if isSymlinkErr(err) {
+				return fmt.Errorf("refusing to restore file through symlink at %s", destPath)
+			}
 			return fmt.Errorf("creating file %s: %w", destPath, err)
 		}
 		n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
@@ -3316,7 +3336,7 @@ func untarFile(ctx context.Context, srcPath, destPath string) error {
 		// whose hook script comes back root-owned cannot run it.
 		applyMode(destPath, safeFileMode(header.Mode))
 		applyOwner(destPath, header.Uid, header.Gid)
-		_ = os.Chtimes(destPath, header.ModTime, header.ModTime)
+		applyModTimeFromTime(destPath, header.ModTime)
 		return nil
 	}
 }
@@ -3756,6 +3776,12 @@ type dirRestoreMeta struct {
 // after the existing decryption + decompression pipeline that the runner
 // has already staged.
 func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, include []string) error {
+	cleanDest := filepath.Clean(destDir)
+	destPrefix := cleanDest + string(filepath.Separator)
+	if !restorePathSafe(cleanDest) || strings.Contains(cleanDest, "../") || strings.Contains(cleanDest, "..\\") {
+		return fmt.Errorf("refusing to extract to suspicious directory %q", destDir)
+	}
+
 	includeSet := newIncludeSet(include)
 	inFile, err := os.Open(srcPath) // #nosec G304 — srcPath is sourceDir + fixed archive name, caller-controlled
 	if err != nil {
@@ -3798,6 +3824,10 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			return fmt.Errorf("path escape in archive entry %s: %w", header.Name, err)
 		}
 
+		if (target != cleanDest && !strings.HasPrefix(target, destPrefix)) || strings.Contains(target, "../") || strings.Contains(target, "..\\") || !restorePathSafe(target) {
+			return fmt.Errorf("refusing to extract suspicious archive entry %q", target)
+		}
+
 		switch header.Typeflag {
 		case tar.TypeDir:
 			// Created writable-and-traversable by the daemon whatever the
@@ -3821,11 +3851,14 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if header.Size > maxExtractSize {
 				return fmt.Errorf("file %s exceeds max extract size (%d > %d)", header.Name, header.Size, maxExtractSize)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+			if err := mkdirRestored(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, safeFileMode(header.Mode)) // #nosec G304 — target validated by joinArchiveTarget + resolveWithinBase (Zip Slip protected)
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, safeFileMode(header.Mode)) // #nosec G304 — target validated by joinArchiveTarget + resolveWithinBase + restorePathSafe + openNoFollow
 			if err != nil {
+				if isSymlinkErr(err) {
+					return fmt.Errorf("refusing to restore file through symlink at %s", target)
+				}
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}
 			n, err := contextCopy(ctx, f, io.LimitReader(tr, header.Size))
@@ -3845,7 +3878,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			// existing tree would otherwise keep the old permissions.
 			applyMode(target, safeFileMode(header.Mode))
 			applyOwner(target, header.Uid, header.Gid)
-			_ = os.Chtimes(target, header.ModTime, header.ModTime)
+			applyModTimeFromTime(target, header.ModTime)
 		case tar.TypeSymlink:
 			// Relative targets must resolve within destDir after following
 			// existing symlinks; absolute targets are container-internal and
@@ -3862,7 +3895,11 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 				log.Printf("engine: restore: skipping unsafe symlink %s -> %s: %v", header.Name, header.Linkname, err)
 				continue
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+			if !restorePathSafe(target) || strings.Contains(target, "../") || strings.Contains(target, "..\\") {
+				log.Printf("engine: restore: skipping symlink with suspicious target %q", target)
+				continue
+			}
+			if err := mkdirRestored(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
 			removeExistingNonDir(target)                                // overwrite semantics for links (#175)
@@ -3880,14 +3917,20 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 			if err := resolveWithinBase(destDir, linkTarget); err != nil {
 				return fmt.Errorf("path escape in hard link target %s: %w", header.Linkname, err)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+			if (linkTarget != cleanDest && !strings.HasPrefix(linkTarget, destPrefix)) || strings.Contains(linkTarget, "../") || strings.Contains(linkTarget, "..\\") || !restorePathSafe(linkTarget) {
+				return fmt.Errorf("refusing to link to suspicious target %q", linkTarget)
+			}
+			if (target != cleanDest && !strings.HasPrefix(target, destPrefix)) || strings.Contains(target, "../") || strings.Contains(target, "..\\") || !restorePathSafe(target) {
+				return fmt.Errorf("refusing to link from suspicious path %q", target)
+			}
+			if err := mkdirRestored(filepath.Dir(target), 0750); err != nil {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
 			removeExistingNonDir(target) // overwrite semantics for links (#175)
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hard link %s -> %s: %w", target, linkTarget, err)
 			}
-			_ = os.Chtimes(target, header.ModTime, header.ModTime)
+			applyModTimeFromTime(target, header.ModTime)
 		default:
 			continue
 		}
@@ -3900,7 +3943,7 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 		// restore needs the explicit chmod as much as a fresh one does.
 		applyMode(d.path, d.mode)
 		applyOwner(d.path, d.uid, d.gid)
-		_ = os.Chtimes(d.path, d.modTime, d.modTime)
+		applyModTimeFromTime(d.path, d.modTime)
 	}
 	return nil
 }
@@ -3912,6 +3955,9 @@ func untarDirectoryFiltered(ctx context.Context, srcPath, destDir string, includ
 // first pre-existing link (issue #175). Directories are never removed: a
 // dir-vs-link conflict is surfaced by the subsequent create call instead.
 func removeExistingNonDir(target string) {
+	if !restorePathSafe(target) || strings.Contains(target, "../") || strings.Contains(target, "..\\") {
+		return
+	}
 	if fi, err := os.Lstat(target); err == nil && !fi.IsDir() {
 		_ = os.Remove(target)
 	}

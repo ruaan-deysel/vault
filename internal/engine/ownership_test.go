@@ -439,6 +439,38 @@ func TestApplyModTime(t *testing.T) {
 	}
 }
 
+func TestApplyModTimeFromTime(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(f, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetTime := time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC)
+	applyModTimeFromTime(f, targetTime)
+	fi, err := os.Stat(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.ModTime().Equal(targetTime) {
+		t.Errorf("mtime = %v, want %v", fi.ModTime(), targetTime)
+	}
+
+	// Zero time should be ignored
+	applyModTimeFromTime(f, time.Time{})
+	fiAfter, _ := os.Stat(f)
+	if !fiAfter.ModTime().Equal(targetTime) {
+		t.Errorf("mtime changed after zero time: %v", fiAfter.ModTime())
+	}
+
+	// Suspicious path should be ignored
+	unsafe := dir + "/sub/../file.txt"
+	applyModTimeFromTime(unsafe, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	fiUnsafe, _ := os.Stat(f)
+	if !fiUnsafe.ModTime().Equal(targetTime) {
+		t.Errorf("mtime changed on suspicious path: %v", fiUnsafe.ModTime())
+	}
+}
+
 // mkdirRestored always leaves the daemon able to write inside what it creates,
 // whatever mode the backup recorded — the entries beneath it come next.
 func TestMkdirRestoredForcesOwnerWriteBit(t *testing.T) {

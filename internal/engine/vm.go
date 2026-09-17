@@ -614,9 +614,12 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 		if err != nil {
 			return fmt.Errorf("validating disk target path %q: %w", disk.TargetPath, err)
 		}
+		if !restorePathSafe(targetPath) || strings.Contains(targetPath, "../") || strings.Contains(targetPath, "..\\") {
+			return fmt.Errorf("validating disk target path %q: unsafe path", targetPath)
+		}
 
 		progress(item.Name, pct, fmt.Sprintf("restoring disk %d/%d", i+1, totalDisks))
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		if err := mkdirRestored(filepath.Dir(targetPath), 0755); err != nil {
 			return fmt.Errorf("creating dir for disk %s: %w", targetPath, err)
 		}
 		if err := copyFileWithProgress(ctx, srcFile, targetPath, func(copied int64) {
@@ -634,9 +637,12 @@ func (h *VMHandler) Restore(ctx context.Context, item BackupItem, sourceDir stri
 			if err != nil {
 				return fmt.Errorf("validating NVRAM target path %q: %w", plan.NVRAMTargetPath, err)
 			}
+			if !restorePathSafe(nvramTargetPath) || strings.Contains(nvramTargetPath, "../") || strings.Contains(nvramTargetPath, "..\\") {
+				return fmt.Errorf("validating NVRAM target path %q: unsafe path", nvramTargetPath)
+			}
 
 			progress(item.Name, 80, "restoring NVRAM")
-			if err := os.MkdirAll(filepath.Dir(nvramTargetPath), 0755); err != nil {
+			if err := mkdirRestored(filepath.Dir(nvramTargetPath), 0755); err != nil {
 				return fmt.Errorf("creating NVRAM dir: %w", err)
 			}
 			if err := copyFile(ctx, nvramSrc, nvramTargetPath); err != nil {

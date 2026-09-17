@@ -1825,6 +1825,102 @@ func TestRestore_UnknownItemInList(t *testing.T) {
 	}
 }
 
+func TestRestorePreflight_RejectsUnsafeDestination(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id := seedJob(t, d)
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: id, Status: "success", BackupType: "full"})
+	rpID, _ := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID:   runID,
+		JobID:      id,
+		BackupType: "full",
+	})
+
+	unsafeDests := []string{
+		"/mnt/../etc/passwd",
+		"../relative/path",
+		"/etc/passwd/../../root",
+		"/invalid/root/path",
+	}
+
+	for _, dest := range unsafeDests {
+		body, _ := json.Marshal(map[string]any{
+			"destination": dest,
+		})
+		w := httptest.NewRecorder()
+		r := withURLParam(withURLParam(newReq(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/preflight", id, rpID), body), "id", strconv.FormatInt(id, 10)), "rpid", strconv.FormatInt(rpID, 10))
+		h.RestorePointPreflight(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("RestorePointPreflight(%q) status = %d, want 400; body: %s", dest, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestRestore_RejectsUnsafeDestinationAndFilePaths(t *testing.T) {
+	h, d := newJobHandlerDB(t)
+	id := seedJob(t, d)
+	runID, _ := d.CreateJobRun(db.JobRun{JobID: id, Status: "success", BackupType: "full"})
+	rpID, _ := d.CreateRestorePoint(db.RestorePoint{
+		JobRunID:   runID,
+		JobID:      id,
+		BackupType: "full",
+	})
+
+	// Test unsafe destination
+	body, _ := json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"destination":      "/mnt/../etc/shadow",
+	})
+	w := httptest.NewRecorder()
+	r := withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Restore with unsafe destination status = %d, want 400", w.Code)
+	}
+
+	// Test unsafe file paths (traversal with ../)
+	body, _ = json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"file_paths": map[string][]string{
+			"item1": {"../escape.txt"},
+		},
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Restore with traversing file_paths status = %d, want 400", w.Code)
+	}
+
+	// Test unsafe file paths (traversal component /../)
+	body, _ = json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"file_paths": map[string][]string{
+			"item1": {"config/../../etc/passwd"},
+		},
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Restore with traversing file_paths component status = %d, want 400", w.Code)
+	}
+
+	// Test valid container-internal path passes path validation
+	body, _ = json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"file_paths": map[string][]string{
+			"item1": {"/config/settings.yml"},
+		},
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	// Passes path validation and fails later on missing item/restore target
+	if strings.Contains(w.Body.String(), "path traversal not allowed") {
+		t.Fatalf("Restore rejected valid container path: %s", w.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // NextRun
 // ---------------------------------------------------------------------------
