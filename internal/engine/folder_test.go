@@ -953,6 +953,33 @@ func TestFolderHandler_RestoreChunked_RejectsSymlinkTarget(t *testing.T) {
 	if err := h.RestoreChunked(ctx, item, r, midFile, dst, nil); err == nil {
 		t.Error("expected error when restoring file through pre-existing symlink")
 	}
+
+	// Pre-existing symlink as an empty directory target
+	dirLink := filepath.Join(dst, "symlink_dir")
+	outsideDir := filepath.Join(outside, "target_dir")
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, dirLink); err != nil {
+		t.Fatal(err)
+	}
+
+	mDir := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"symlink_dir": {
+				Mode:   uint32(os.ModeDir | 0o755),
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	midDir, err := r.PutManifest("test", mDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, midDir, dst, nil); err == nil {
+		t.Error("expected error when restoring directory through pre-existing symlink")
+	}
 }
 
 func TestFolderHandler_RestoreChunked_RejectsDirectorySymlinkTarget(t *testing.T) {

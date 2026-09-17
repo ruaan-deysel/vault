@@ -3045,7 +3045,9 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if err != nil {
 		return fmt.Errorf("invalid file mount path %q: %w", target, err)
 	}
-	if !strings.HasPrefix(path, normalized) || strings.Contains(path, "../") || !restorePathSafe(path) {
+	cleanNorm := filepath.Clean(normalized)
+	normPrefix := cleanNorm + string(filepath.Separator)
+	if (path != cleanNorm && !strings.HasPrefix(path, normPrefix)) || strings.Contains(path, "../") || !restorePathSafe(path) {
 		return fmt.Errorf("refusing to restore file mount to suspicious path %q", path)
 	}
 

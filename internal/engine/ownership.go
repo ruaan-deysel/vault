@@ -156,5 +156,8 @@ func mkdirRestored(path string, mode os.FileMode) error {
 	if !restorePathSafe(path) {
 		return fmt.Errorf("refusing to create suspicious path %q", path)
 	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to restore directory through symlink at %s", path)
+	}
 	return os.MkdirAll(path, mode.Perm()|0o700)
 }
