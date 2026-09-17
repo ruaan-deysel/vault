@@ -138,7 +138,7 @@ func applyMode(path string, mode os.FileMode) {
 // validates the path through restorePathSafe and swallows parse/stat errors
 // so time-setting never fails a restore whose bytes are already back.
 func applyModTime(path string, mtime string) {
-	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
+	if !restorePathSafe(path) {
 		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
 		return
 	}

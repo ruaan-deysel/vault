@@ -3,12 +3,14 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -527,6 +529,9 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if (full != cleanDest && !strings.HasPrefix(full, destPrefix)) || strings.Contains(full, "../") || !restorePathSafe(full) {
 			return fmt.Errorf("refusing to restore directory to suspicious path %q", full)
 		}
+		if err := resolveWithinBase(destPath, full); err != nil {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
 		mode := os.FileMode(m.Files[d].Mode)
 		if mode == 0 {
 			mode = 0o755
@@ -554,6 +559,9 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if !strings.HasPrefix(full, destPrefix) || strings.Contains(full, "../") || !restorePathSafe(full) {
 			return fmt.Errorf("refusing to restore to suspicious path %q", full)
 		}
+		if err := resolveWithinBase(destPath, full); err != nil {
+			return fmt.Errorf("restore %s: %w", fp, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
@@ -561,8 +569,11 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if mode == 0 {
 			mode = 0o644
 		}
-		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase and restorePathSafe
+		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase, resolveWithinBase, and openNoFollow
 		if err != nil {
+			if errors.Is(err, syscall.ELOOP) {
+				return fmt.Errorf("refusing to restore %s through symlink at %s", fp, full)
+			}
 			return err
 		}
 		for _, cid := range e.Chunks {
