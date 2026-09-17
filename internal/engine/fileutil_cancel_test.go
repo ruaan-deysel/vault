@@ -34,3 +34,39 @@ func TestCopyFileWithProgress_Cancelled(t *testing.T) {
 		t.Fatal("copy ran to completion despite cancellation")
 	}
 }
+
+func TestCopyFileWithProgress_RejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.img")
+	if err := os.WriteFile(src, []byte("test-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Rejects symlinked destination
+	target := filepath.Join(dir, "target.img")
+	if err := os.WriteFile(target, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkDst := filepath.Join(dir, "link.img")
+	if err := os.Symlink(target, symlinkDst); err != nil {
+		t.Fatal(err)
+	}
+	err := copyFile(context.Background(), src, symlinkDst)
+	if err == nil {
+		t.Fatal("expected error copying through symlink destination, got nil")
+	}
+
+	// 2. Rejects symlinked parent directory
+	parentReal := filepath.Join(dir, "real_dir")
+	if err := os.MkdirAll(parentReal, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentLink := filepath.Join(dir, "link_dir")
+	if err := os.Symlink(parentReal, parentLink); err != nil {
+		t.Fatal(err)
+	}
+	err = copyFile(context.Background(), src, filepath.Join(parentLink, "file.img"))
+	if err == nil {
+		t.Fatal("expected error copying through symlinked parent directory, got nil")
+	}
+}
