@@ -530,6 +530,13 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		if err := resolveWithinBase(destPath, full); err != nil {
 			return fmt.Errorf("restore mkdir %s: %w", d, err)
 		}
+		if info, err := os.Lstat(full); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing to restore directory %s through symlink at %s", d, full)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("restore mkdir %s: %w", d, err)
+		}
 		mode := os.FileMode(m.Files[d].Mode)
 		if mode == 0 {
 			mode = 0o755

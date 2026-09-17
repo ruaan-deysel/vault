@@ -954,3 +954,47 @@ func TestFolderHandler_RestoreChunked_RejectsSymlinkTarget(t *testing.T) {
 		t.Error("expected error when restoring file through pre-existing symlink")
 	}
 }
+
+func TestFolderHandler_RestoreChunked_RejectsDirectorySymlinkTarget(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+
+	dst := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	linkPath := filepath.Join(dst, "empty-dir")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skip("filesystem does not support symlinks")
+	}
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"empty-dir": {
+				IsDir: true,
+				Mode:  0o755,
+			},
+		},
+	}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": dst}}
+	if err := h.RestoreChunked(ctx, item, r, mid, dst, nil); err == nil {
+		t.Fatal("expected error when restoring directory through pre-existing symlink")
+	}
+
+	if got := modeOf(t, outside); got != 0o700 {
+		t.Errorf("outside dir mode = %04o, want 0700", got)
+	}
+}
