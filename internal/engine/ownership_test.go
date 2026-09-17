@@ -469,6 +469,22 @@ func TestApplyModTimeFromTime(t *testing.T) {
 	if !fiUnsafe.ModTime().Equal(targetTime) {
 		t.Errorf("mtime changed on suspicious path: %v", fiUnsafe.ModTime())
 	}
+
+	// Suspicious backslash traversal should be ignored
+	applyModTimeFromTime("..\\file.txt", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	// Symlink should be refused
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(f, link); err == nil {
+		applyModTimeFromTime(link, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+		fiTarget, _ := os.Stat(f)
+		if !fiTarget.ModTime().Equal(targetTime) {
+			t.Errorf("mtime followed symlink: %v", fiTarget.ModTime())
+		}
+	}
+
+	// Non-existent file should safely be handled
+	applyModTimeFromTime(filepath.Join(dir, "nonexistent.txt"), targetTime)
 }
 
 // mkdirRestored always leaves the daemon able to write inside what it creates,

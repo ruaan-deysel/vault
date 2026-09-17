@@ -77,3 +77,46 @@ func TestCopyFileWithProgress_RejectsSymlink(t *testing.T) {
 		t.Fatal("expected error copying through symlinked intermediate ancestor directory, got nil")
 	}
 }
+
+func TestOpenRestoreDestination_Branches(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Success on normal file beneath allowed root
+	target := filepath.Join(dir, "sub", "test.txt")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openRestoreDestination(target, target, 0o644)
+	if err != nil {
+		t.Fatalf("openRestoreDestination(%q) failed: %v", target, err)
+	}
+	_ = f.Close()
+
+	// 2. Direct child under root
+	rootChild := filepath.Join(t.TempDir(), "child.txt")
+	f2, err := openRestoreDestination(rootChild, rootChild, 0o644)
+	if err != nil {
+		t.Fatalf("openRestoreDestination(%q) failed: %v", rootChild, err)
+	}
+	_ = f2.Close()
+
+	// 3. Fallback when unapproved root
+	unapproved := "/unapproved/path/test.txt"
+	_, err = openRestoreDestination(unapproved, unapproved, 0o644)
+	if err == nil {
+		t.Fatal("expected error opening file under unapproved root")
+	}
+
+	// 4. Invalid relative traversal path
+	_, err = openRestoreDestination("/tmp/../outside/test.txt", "/tmp/../outside/test.txt", 0o644)
+	if err == nil {
+		t.Fatal("expected error with traversal in path")
+	}
+
+	// 5. Non-existent parent directory
+	missingParent := filepath.Join(dir, "missing_parent_dir", "test.txt")
+	_, err = openRestoreDestination(missingParent, missingParent, 0o644)
+	if err == nil {
+		t.Fatal("expected error when parent directory does not exist")
+	}
+}

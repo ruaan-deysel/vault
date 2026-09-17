@@ -1912,12 +1912,55 @@ func TestRestore_RejectsUnsafeDestinationAndFilePaths(t *testing.T) {
 			"item1": {"/config/settings.yml"},
 		},
 	})
+	// Test valid destination in preflight
+	validPreflightBody, _ := json.Marshal(map[string]any{
+		"destination": "/mnt/user/appdata",
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(withURLParam(newReq(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/preflight", id, rpID), validPreflightBody), "id", strconv.FormatInt(id, 10)), "rpid", strconv.FormatInt(rpID, 10))
+	h.RestorePointPreflight(w, r)
+	if strings.Contains(w.Body.String(), "invalid destination") {
+		t.Fatalf("RestorePointPreflight rejected valid destination: %s", w.Body.String())
+	}
+
+	// Test unsafe file paths (traversal with ..\)
+	body, _ = json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"file_paths": map[string][]string{
+			"item1": {"..\\escape.txt"},
+		},
+	})
 	w = httptest.NewRecorder()
 	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
 	h.Restore(w, r)
-	// Passes path validation and fails later on missing item/restore target
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no items to restore") {
-		t.Fatalf("expected 400 no items to restore, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Restore with backslash traversing file_paths status = %d, want 400", w.Code)
+	}
+
+	// Test unsafe file paths (trailing component /..)
+	body, _ = json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"file_paths": map[string][]string{
+			"item1": {"config/.."},
+		},
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Restore with trailing .. file_paths status = %d, want 400", w.Code)
+	}
+
+	// Test valid destination in Restore
+	validRestoreBody, _ := json.Marshal(map[string]any{
+		"restore_point_id": rpID,
+		"destination":      "/mnt/user/appdata",
+	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", validRestoreBody), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if strings.Contains(w.Body.String(), "invalid destination") {
+		t.Fatalf("Restore rejected valid destination: %s", w.Body.String())
 	}
 }
 
