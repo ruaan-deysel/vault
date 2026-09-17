@@ -3,14 +3,12 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
@@ -571,7 +569,7 @@ func (h *FolderHandler) RestoreChunked(ctx context.Context, item BackupItem, rep
 		}
 		out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — full is validated by safepath.JoinUnderBase, resolveWithinBase, and openNoFollow
 		if err != nil {
-			if errors.Is(err, syscall.ELOOP) {
+			if isSymlinkErr(err) {
 				return fmt.Errorf("refusing to restore %s through symlink at %s", fp, full)
 			}
 			return err

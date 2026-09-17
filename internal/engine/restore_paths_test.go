@@ -25,6 +25,8 @@ func TestNormalizeRestorePath(t *testing.T) {
 		{name: "mnt allowed", input: "/mnt/cache/vault", want: "/mnt/cache/vault"},
 		{name: "dev rejected", input: "/dev/null", wantErr: true},
 		{name: "relative rejected", input: "tmp/vault", wantErr: true},
+		{name: "traversal rejected", input: "/tmp/../etc/passwd", wantErr: true},
+		{name: "empty rejected", input: "   ", wantErr: true},
 	}
 
 	for _, tt := range tests {

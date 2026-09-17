@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -3062,7 +3061,7 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	// path and opening it.
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|openNoFollow, mode) // #nosec G304 — parent validated by normalizeRestorePath, joined via safepath.JoinUnderBase, final component pinned by openNoFollow
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
+		if isSymlinkErr(err) {
 			return fmt.Errorf("refusing to restore file mount through the symlink at %s", path)
 		}
 		return err
