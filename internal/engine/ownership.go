@@ -135,7 +135,7 @@ func applyMode(path string, mode os.FileMode) {
 
 // applyModTime sets a restored path's modification time. Restores go through
 // this rather than os.Chtimes directly: like applyMode and applyOwner, it
-// validates the path through restorePathSafe and swallows parse/stat errors
+// validates the path through restorePathSafe and swallows parse/chtimes errors
 // so time-setting never fails a restore whose bytes are already back.
 func applyModTime(path string, mtime string) {
 	if !restorePathSafe(path) {
