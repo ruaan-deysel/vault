@@ -1912,6 +1912,13 @@ func TestRestore_RejectsUnsafeDestinationAndFilePaths(t *testing.T) {
 			"item1": {"/config/settings.yml"},
 		},
 	})
+	w = httptest.NewRecorder()
+	r = withURLParam(newReq(http.MethodPost, "/api/v1/jobs/"+strconv.FormatInt(id, 10)+"/restore", body), "id", strconv.FormatInt(id, 10))
+	h.Restore(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no items to restore") {
+		t.Fatalf("expected 400 no items to restore, got %d: %s", w.Code, w.Body.String())
+	}
+
 	// Test valid destination in preflight
 	validPreflightBody, _ := json.Marshal(map[string]any{
 		"destination": "/mnt/user/appdata",
