@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -48,7 +49,7 @@ func (h *MountHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	session, err := h.mgr.Get(id)
 	if err != nil {
-		if err == db.ErrNotFound {
+		if errors.Is(err, db.ErrNotFound) {
 			respondError(w, http.StatusNotFound, "mount session not found")
 			return
 		}
@@ -77,7 +78,11 @@ func (h *MountHandler) MountRestorePoint(w http.ResponseWriter, r *http.Request)
 
 	session, err := h.mgr.MountRestorePoint(r.Context(), jobID, rpID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "job or restore point not found")
+			return
+		}
+		respondInternalError(w, err)
 		return
 	}
 
@@ -94,6 +99,10 @@ func (h *MountHandler) Unmount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mgr.Unmount(r.Context(), id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "mount session not found")
+			return
+		}
 		respondInternalError(w, err)
 		return
 	}

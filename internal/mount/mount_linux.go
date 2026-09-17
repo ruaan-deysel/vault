@@ -4,6 +4,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -379,11 +380,18 @@ func MountManifests(ctx context.Context, repo *dedup.Repo, manifests map[string]
 }
 
 func unmountPlatform(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
 	if uerr := exec.Command("fusermount3", "-u", path).Run(); uerr == nil {
 		return nil
 	}
 	if uerr := exec.Command("fusermount", "-u", path).Run(); uerr == nil {
 		return nil
 	}
-	return syscall.Unmount(path, 0)
+	err := syscall.Unmount(path, 0)
+	if err == nil || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+		return nil
+	}
+	return err
 }

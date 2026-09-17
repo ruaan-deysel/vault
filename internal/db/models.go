@@ -328,7 +328,7 @@ type MountSession struct {
 	StorageDestID  int64      `json:"storage_dest_id"`
 	StorageName    string     `json:"storage_name,omitempty"`
 	MountPath      string     `json:"mount_path"`
-	Status         string     `json:"status"` // active, stopped, crashed
+	Status         string     `json:"status"` // active, stopped, crashed, failed
 	StartedAt      time.Time  `json:"started_at"`
 	StoppedAt      *time.Time `json:"stopped_at,omitempty"`
 	LastActivityAt time.Time  `json:"last_activity_at"`

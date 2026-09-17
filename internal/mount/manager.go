@@ -391,7 +391,7 @@ func (m *Manager) Unmount(ctx context.Context, sessionID int64) error {
 	}
 
 	if !hasEntry && !sessionRowFound {
-		return fmt.Errorf("mount: session %d not found", sessionID)
+		return fmt.Errorf("mount: session %d not found: %w", sessionID, db.ErrNotFound)
 	}
 
 	if mountPath != "" {

@@ -155,8 +155,11 @@ func NewFileReader(repo *dedup.Repo, entry dedup.ManifestEntry, cache *ChunkCach
 		cache: cache,
 	}
 
-	if entry.Size <= 0 || len(entry.Chunks) == 0 {
+	if entry.Size <= 0 {
 		return fr, nil
+	}
+	if len(entry.Chunks) == 0 {
+		return nil, fmt.Errorf("mount: corrupt manifest entry: size %d but 0 chunks", entry.Size)
 	}
 
 	if len(entry.Chunks) == 1 {
