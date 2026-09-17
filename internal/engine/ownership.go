@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ruaan-deysel/vault/internal/dedup"
 )
@@ -106,6 +107,9 @@ func restorePathSafe(p string) bool {
 	if !filepath.IsAbs(p) {
 		return false
 	}
+	if strings.Contains(p, "../") || strings.Contains(p, "..\\") {
+		return false
+	}
 	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
 		if part == ".." {
 			return false
@@ -126,6 +130,20 @@ func applyMode(path string, mode os.FileMode) {
 	}
 	if err := os.Chmod(path, mode.Perm()); err != nil {
 		log.Printf("engine: restore: could not set mode on %s: %v", path, err)
+	}
+}
+
+// applyModTime sets a restored path's modification time. Restores go through
+// this rather than os.Chtimes directly: like applyMode and applyOwner, it
+// validates the path through restorePathSafe and swallows parse/stat errors
+// so time-setting never fails a restore whose bytes are already back.
+func applyModTime(path string, mtime string) {
+	if !restorePathSafe(path) || strings.Contains(path, "../") || strings.Contains(path, "..\\") {
+		log.Printf("engine: restore: refusing to set mtime on suspicious path %q", path)
+		return
+	}
+	if t, err := time.Parse(time.RFC3339, mtime); err == nil {
+		_ = os.Chtimes(path, t, t)
 	}
 }
 

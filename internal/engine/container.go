@@ -3046,6 +3046,9 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	if err != nil {
 		return fmt.Errorf("invalid file mount path %q: %w", target, err)
 	}
+	if !strings.HasPrefix(path, normalized) || strings.Contains(path, "../") || !restorePathSafe(path) {
+		return fmt.Errorf("refusing to restore file mount to suspicious path %q", path)
+	}
 
 	mode := os.FileMode(entry.Mode)
 	if mode == 0 {
@@ -3083,9 +3086,7 @@ func restoreChunkedVolumeFile(repo *dedup.Repo, entry dedup.ManifestEntry, targe
 	applyMode(path, mode)
 	uid, gid := entry.Owner()
 	applyOwner(path, uid, gid)
-	if t, err := time.Parse(time.RFC3339, entry.ModTime); err == nil {
-		_ = os.Chtimes(path, t, t)
-	}
+	applyModTime(path, entry.ModTime)
 	return nil
 }
 

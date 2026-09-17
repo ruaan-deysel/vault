@@ -821,3 +821,74 @@ func TestFolderBackupStagingOutsideSource(t *testing.T) {
 		t.Errorf("expected real_file.txt in archive")
 	}
 }
+
+func TestFolderHandler_RestoreChunked_RejectsUnsafeDestination(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+
+	m := dedup.Manifest{Files: map[string]dedup.ManifestEntry{}}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{}}
+	if err := h.RestoreChunked(ctx, item, r, mid, "/dev/victim", nil); err == nil {
+		t.Error("expected error for destination outside approved roots")
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, mid, "relative/path", nil); err == nil {
+		t.Error("expected error for relative destination path")
+	}
+
+	if err := h.RestoreChunked(ctx, item, r, mid, "", nil); err == nil {
+		t.Error("expected error for empty destination path")
+	}
+}
+
+func TestFolderHandler_RestoreChunked_RejectsSuspiciousManifestPath(t *testing.T) {
+	r, _, cleanup := dedup.NewTestRepoForEngine(t)
+	defer cleanup()
+
+	h := &FolderHandler{}
+	ctx := context.Background()
+	dst := t.TempDir()
+
+	m := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"../escape.txt": {
+				Mode:   0o644,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	mid, err := r.PutManifest("test", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := BackupItem{Name: "test", Type: "folder", Settings: map[string]any{"path": dst}}
+	if err := h.RestoreChunked(ctx, item, r, mid, dst, nil); err == nil {
+		t.Error("expected error for suspicious manifest file path containing ../")
+	}
+
+	mDir := dedup.Manifest{
+		Files: map[string]dedup.ManifestEntry{
+			"../escapedir": {
+				IsDir:  true,
+				Mode:   0o755,
+				Chunks: []dedup.ID{},
+			},
+		},
+	}
+	midDir, err := r.PutManifest("test", mDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.RestoreChunked(ctx, item, r, midDir, dst, nil); err == nil {
+		t.Error("expected error for suspicious manifest dir path containing ../")
+	}
+}

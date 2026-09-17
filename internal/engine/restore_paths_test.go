@@ -42,6 +42,25 @@ func TestNormalizeRestorePath(t *testing.T) {
 	}
 }
 
+func TestNormalizeRestorePath_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"/tmp/vault-restore", "/mnt/cache/vault"}
+	for _, p := range paths {
+		first, err := normalizeRestorePath(p)
+		if err != nil {
+			t.Fatalf("first normalizeRestorePath(%q): %v", p, err)
+		}
+		second, err := normalizeRestorePath(first)
+		if err != nil {
+			t.Fatalf("second normalizeRestorePath(%q): %v", first, err)
+		}
+		if second != first {
+			t.Fatalf("normalizeRestorePath not idempotent: got %q, want %q", second, first)
+		}
+	}
+}
+
 func TestNormalizeRestorePathRejectsSymlinkEscape(t *testing.T) {
 	t.Parallel()
 

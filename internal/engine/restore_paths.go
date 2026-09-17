@@ -17,6 +17,17 @@ var _ = normalizeVMRestorePlan
 func normalizeRestorePath(path string) (string, error) {
 	normalizedPath, err := safepath.NormalizeAbsoluteUnderRoots(path, restoreAllowedRoots)
 	if err != nil {
+		// If path was already resolved (e.g. /var -> /private/var on macOS),
+		// it may not match the un-evaluated roots in restoreAllowedRoots.
+		// Check if resolving its path puts it within approved roots.
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if filepath.IsAbs(cleanPath) {
+			if resolved, rErr := resolveRestorePath(cleanPath); rErr == nil {
+				if allowed, _ := restorePathWithinAllowedRoots(resolved); allowed {
+					return resolved, nil
+				}
+			}
+		}
 		return "", fmt.Errorf("invalid restore path %q: %w", path, err)
 	}
 
