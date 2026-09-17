@@ -119,4 +119,59 @@ func TestOpenRestoreDestination_Branches(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when parent directory does not exist")
 	}
+
+	// 6. Dot and redundant slashes in path
+	dotPath := filepath.Join(dir, "sub", ".", "dot.txt")
+	f3, err := openRestoreDestination(dotPath, dotPath, 0o644)
+	if err != nil {
+		t.Fatalf("openRestoreDestination with dot failed: %v", err)
+	}
+	_ = f3.Close()
+
+	// 7. Relative dst with absolute normalizedDst
+	f4, err := openRestoreDestination("relative/dot.txt", dotPath, 0o644)
+	if err != nil {
+		t.Fatalf("openRestoreDestination with relative dst failed: %v", err)
+	}
+	_ = f4.Close()
+
+	// 8. Intermediate directory is a symlink
+	realSubDir := filepath.Join(dir, "real_sub")
+	if err := os.MkdirAll(realSubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symSubDir := filepath.Join(dir, "sym_sub")
+	if err := os.Symlink(realSubDir, symSubDir); err == nil {
+		targetInSym := filepath.Join(symSubDir, "test.txt")
+		_, err = openRestoreDestination(targetInSym, targetInSym, 0o644)
+		if err == nil {
+			t.Fatal("expected error traversing intermediate symlink directory")
+		}
+	}
+
+	// 9. Destination leaf itself is a symlink
+	realFile := filepath.Join(dir, "real_file.txt")
+	if err := os.WriteFile(realFile, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symFile := filepath.Join(dir, "sym_file.txt")
+	if err := os.Symlink(realFile, symFile); err == nil {
+		_, err = openRestoreDestination(symFile, symFile, 0o644)
+		if err == nil {
+			t.Fatal("expected error opening destination leaf symlink")
+		}
+
+		// copyFile destination is a symlink
+		if err := copyFile(context.Background(), realFile, symFile); err == nil {
+			t.Fatal("expected error copying file into symlink destination")
+		}
+	}
+
+	// 10. copyFile rejects unsafe destinations
+	if err := copyFile(context.Background(), realFile, "../escape"); err == nil {
+		t.Fatal("expected error copying file to ../escape")
+	}
+	if err := copyFile(context.Background(), realFile, "..\\escape"); err == nil {
+		t.Fatal("expected error copying file to ..\\escape")
+	}
 }

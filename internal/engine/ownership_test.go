@@ -485,6 +485,9 @@ func TestApplyModTimeFromTime(t *testing.T) {
 
 	// Non-existent file should safely be handled
 	applyModTimeFromTime(filepath.Join(dir, "nonexistent.txt"), targetTime)
+
+	// Out-of-range timestamp should safely be handled
+	applyModTimeFromTime(f, time.Unix(1<<62, 0))
 }
 
 // mkdirRestored always leaves the daemon able to write inside what it creates,

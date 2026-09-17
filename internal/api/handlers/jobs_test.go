@@ -1917,10 +1917,21 @@ func TestRestore_RejectsUnsafeDestinationAndFilePaths(t *testing.T) {
 		"destination": "/mnt/user/appdata",
 	})
 	w = httptest.NewRecorder()
-	r = withURLParam(withURLParam(newReq(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/preflight", id, rpID), validPreflightBody), "id", strconv.FormatInt(id, 10)), "rpid", strconv.FormatInt(rpID, 10))
+	r = withURLParams(newReq(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/preflight", id, rpID), validPreflightBody), "id", strconv.FormatInt(id, 10), "rpid", strconv.FormatInt(rpID, 10))
 	h.RestorePointPreflight(w, r)
 	if strings.Contains(w.Body.String(), "invalid destination") {
 		t.Fatalf("RestorePointPreflight rejected valid destination: %s", w.Body.String())
+	}
+
+	// Test invalid destination in preflight
+	invalidPreflightBody, _ := json.Marshal(map[string]any{
+		"destination": "../invalid/dest",
+	})
+	w = httptest.NewRecorder()
+	r = withURLParams(newReq(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/restore-points/%d/preflight", id, rpID), invalidPreflightBody), "id", strconv.FormatInt(id, 10), "rpid", strconv.FormatInt(rpID, 10))
+	h.RestorePointPreflight(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid destination") {
+		t.Fatalf("expected 400 invalid destination, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Test unsafe file paths (traversal with ..\)
