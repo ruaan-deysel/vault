@@ -142,6 +142,12 @@ function normalizeChosenPoints(chosenPoints) {
   return map
 }
 
+/**
+ * Generates the default unique map key for a backup item based on type and name.
+ *
+ * @param {object} item
+ * @returns {string}
+ */
 export function defaultItemKey(item) {
   const type = item?.type || item?.item_type || ''
   const name = item?.name || item?.item_name || ''
