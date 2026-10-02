@@ -1538,7 +1538,11 @@
           </div>
           {#if s.showDestOverride}
             <div class="mt-2">
-              <PathBrowser value={s.restoreDestination} onchange={(v) => updateUnitSetting(unit.jobId, { restoreDestination: v })} label="Custom restore destination" />
+              <PathBrowser
+                bind:value={() => s.restoreDestination, (v) => updateUnitSetting(unit.jobId, { restoreDestination: v })}
+                onselect={(v) => updateUnitSetting(unit.jobId, { restoreDestination: v })}
+                label="Custom restore destination"
+              />
               <p class="text-xs text-text-dim mt-1">Files for {unit.jobName} will be written under this path instead of their original location.</p>
             </div>
             {#if hasContainer}
