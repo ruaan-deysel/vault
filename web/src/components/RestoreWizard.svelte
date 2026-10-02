@@ -427,10 +427,20 @@
               state: 'running',
               runId: msg.run_id || runEntry.runId,
             })
-            if (!selectedLogUnitJobId || selectedLogUnitJobId === msg.job_id) {
+            const curSelected = selectedLogUnitJobId ? unitRuns.get(selectedLogUnitJobId) : null
+            const curSelectedActive = curSelected && (curSelected.state === 'queued' || curSelected.state === 'running')
+            if (!selectedLogUnitJobId || selectedLogUnitJobId === msg.job_id || !curSelectedActive) {
               selectedLogUnitJobId = msg.job_id
               restoreLogsRunId = msg.run_id
               restoreLogs = []
+              if (msg.run_id) {
+                api.getRunLogs(msg.run_id, { limit: 500, tail: true }).then(res => {
+                  if (res?.entries) {
+                    restoreLogs = res.entries
+                    scrollToLogBottom()
+                  }
+                }).catch(() => {})
+              }
             }
           }
         }
@@ -526,10 +536,13 @@
     const run = progress.activeRun
     if (run && run.run_type === 'restore' && run.run_id && run.run_id !== restoreLogsRunId) {
       const submittedJobIds = new Set(Array.from(unitRuns.keys()))
+      const curSelected = selectedLogUnitJobId ? unitRuns.get(selectedLogUnitJobId) : null
+      const curSelectedActive = curSelected && (curSelected.state === 'queued' || curSelected.state === 'running')
       if (
         (submittedJobIds.size === 0 || submittedJobIds.has(run.job_id)) &&
-        (!selectedLogUnitJobId || selectedLogUnitJobId === run.job_id)
+        (!selectedLogUnitJobId || selectedLogUnitJobId === run.job_id || !curSelectedActive)
       ) {
+        selectedLogUnitJobId = run.job_id
         restoreLogsRunId = run.run_id
         api.getRunLogs(run.run_id, { limit: 500, tail: true }).then(res => {
           if (res?.entries) {
