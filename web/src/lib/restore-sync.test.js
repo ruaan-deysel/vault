@@ -34,6 +34,11 @@ describe('matchesJobId', () => {
     expect(matchesJobId(15, arr)).toBe(true)
     expect(matchesJobId(99, arr)).toBe(false)
   })
+
+  it('returns false for unsupported filter types', () => {
+    expect(matchesJobId(12, true)).toBe(false)
+    expect(matchesJobId(12, {})).toBe(false)
+  })
 })
 
 describe('isRestoreActive', () => {

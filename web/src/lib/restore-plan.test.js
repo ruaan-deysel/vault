@@ -7,6 +7,7 @@ import {
   getPointMembership,
   getPointCoverage,
   assignItemsToChosenPoints,
+  defaultItemKey,
   buildRestoreUnits,
   isPlanComplete,
 } from './restore-plan.js'
@@ -234,6 +235,33 @@ describe('restore-plan module', () => {
       const result = assignItemsToChosenPoints([itemPlex], chosen, customKeyFn)
       expect(result.assignments.has('custom:plex')).toBe(true)
       expect(result.assignments.get('custom:plex').item).toBe(itemPlex)
+    })
+
+    it('supports chosenPoints as Array or plain object and normalizes job_id', () => {
+      const arrayChosen = [{ job_id: 1, ...rpJob1 }]
+      const resArray = assignItemsToChosenPoints([itemPlex], arrayChosen)
+      expect(resArray.isComplete).toBe(true)
+      expect(resArray.units[0].jobId).toBe(1)
+
+      const objectChosen = { 1: { job_id: 1, ...rpJob1 } }
+      const resObj = assignItemsToChosenPoints([itemPlex], objectChosen)
+      expect(resObj.isComplete).toBe(true)
+      expect(resObj.units[0].jobId).toBe(1)
+    })
+
+    it('defaultItemKey formats type:name or falls back safely', () => {
+      expect(defaultItemKey({ type: 'container', name: 'app' })).toBe('container:app')
+      expect(defaultItemKey({ item_type: 'folder', item_name: 'media' })).toBe('folder:media')
+      expect(defaultItemKey(null)).toBe(':')
+    })
+
+    it('parses metadata when passed directly as an object or manifests-only', () => {
+      const rawObj = { item_manifests: { itemX: 'hash' } }
+      expect(parsePointMetadata(rawObj)).toBe(rawObj)
+      const mem = getPointMembership({ metadata: rawObj })
+      expect(mem.known).toBe(true)
+      expect(mem.itemNames.has('itemX')).toBe(true)
+      expect(getPointMembership(null).known).toBe(false)
     })
 
     it('supports helper functions buildRestoreUnits and isPlanComplete', () => {
