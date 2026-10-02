@@ -306,7 +306,7 @@ The Restore wizard supports selecting items that belong to different backup jobs
    - Restores are submitted and executed sequentially, streaming live progress and logs per job.
 
 !!! note
-    This wizard flow restores regular backup items. To recover the Vault configuration, database, or plugin state after a system failure, see [Disaster Recovery](disaster-recovery.md#recover-vault).
+    This wizard flow restores regular backup items. To recover the Vault configuration, database, or plugin state after a system failure, see [Disaster Recovery](disaster-recovery.md#recovering-with-the-wizard).
 
 ---
 
