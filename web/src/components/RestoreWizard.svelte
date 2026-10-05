@@ -496,7 +496,8 @@
             } else {
               Promise.all(activeUnits.map(async (u) => {
                 try {
-                  const runs = await api.getJobHistory(u.jobId, 5)
+                  const res = await api.getJobHistory(u.jobId, 5)
+                  const runs = Array.isArray(res) ? res : []
                   const matching = u.runId
                     ? runs.find(r => r.id === u.runId)
                     : runs.find(r => r.run_type === 'restore' && (!u.submittedAt || new Date(r.started_at).getTime() >= u.submittedAt - 10000))
@@ -1361,7 +1362,7 @@
     {:else}
       <RestorePointTimeline
         points={restorePoints}
-        chosenPointIds={chosenPoints}
+        chosenPoints={chosenPoints}
         selectedId={selectedPoint?.id ?? null}
         recommendedId={recommendedRpId}
         onSelect={(rp) => handlePointSelect(rp)}

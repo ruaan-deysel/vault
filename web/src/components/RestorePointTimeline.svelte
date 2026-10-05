@@ -6,7 +6,7 @@
   let {
     points = [],
     selectedId = null,
-    chosenPointIds = null,
+    chosenPoints = null,
     recommendedId = null,
     onSelect,
     onDelete,
@@ -21,15 +21,15 @@
 
   function isSelected(rp) {
     if (rp.id === selectedId) return true
-    if (chosenPointIds) {
-      if (chosenPointIds instanceof Set) return chosenPointIds.has(rp.id)
-      if (chosenPointIds instanceof Map) {
-        const chosen = chosenPointIds.get(rp.jobId ?? rp.job_id)
+    if (chosenPoints) {
+      if (chosenPoints instanceof Set) return chosenPoints.has(rp.id)
+      if (chosenPoints instanceof Map) {
+        const chosen = chosenPoints.get(rp.jobId ?? rp.job_id)
         return chosen?.id === rp.id || chosen === rp.id
       }
-      if (Array.isArray(chosenPointIds)) return chosenPointIds.includes(rp.id)
-      if (typeof chosenPointIds === 'object') {
-        const chosen = chosenPointIds[rp.jobId ?? rp.job_id]
+      if (Array.isArray(chosenPoints)) return chosenPoints.includes(rp.id)
+      if (typeof chosenPoints === 'object') {
+        const chosen = chosenPoints[rp.jobId ?? rp.job_id]
         return chosen?.id === rp.id || chosen === rp.id
       }
     }
