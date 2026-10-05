@@ -143,9 +143,9 @@ export async function setupVaultMockApi(page: Page) {
 
     if (path.endsWith('/restore')) {
       return route.fulfill({
-        status: 200,
+        status: 202,
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, run_id: 999 }),
+        body: JSON.stringify({ message: 'restore started', restore_point_id: 1001, items: 1 }),
       });
     }
 

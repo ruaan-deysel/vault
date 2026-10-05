@@ -79,13 +79,37 @@ test.describe('Restore Wizard Multi-Job Flow (#438)', () => {
     // Verify pre-flight checks passed
     await expect(page.getByLabel('passed').first()).toBeVisible();
 
+    // Intercept Job 1 restore request to verify sequential execution:
+    // Job 2 restore request must not start until Job 1 restore request completes.
+    let releaseJob1Restore: () => void = () => {};
+    const job1HoldPromise = new Promise<void>(resolve => {
+      releaseJob1Restore = resolve;
+    });
+
+    await page.route('**/jobs/1/restore', async (route) => {
+      await job1HoldPromise;
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'restore started', restore_point_id: 1001, items: 1 }),
+      });
+    });
+
     // Start restore action becomes enabled
     const startRestoreBtn = page.getByRole('button', { name: /^Start Restore/i });
     await expect(startRestoreBtn).toBeVisible();
     await expect(startRestoreBtn).toBeEnabled();
     await startRestoreBtn.click();
 
-    // Verify restore requests were submitted for both jobs with expected payloads
+    // Verify Job 1 was submitted first while Job 2 has not started yet
+    await expect.poll(() => restoreRequests.length).toBe(1);
+    expect(restoreRequests[0].url).toContain('/jobs/1/restore');
+    expect(restoreRequests.some(r => r.url.endsWith('/jobs/2/restore'))).toBe(false);
+
+    // Release Job 1 response
+    releaseJob1Restore();
+
+    // Now Job 2 request should be submitted sequentially
     await expect.poll(() => restoreRequests.length).toBe(2);
     const job1Req = restoreRequests.find(r => r.url.endsWith('/jobs/1/restore'));
     const job2Req = restoreRequests.find(r => r.url.endsWith('/jobs/2/restore'));
