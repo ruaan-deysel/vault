@@ -239,29 +239,29 @@
             </div>
 
             {#if coverage}
-              {#if coverage.isLegacy}
-                <div class="mt-2 text-xs text-text-dim flex items-center gap-1.5">
-                  <span class="px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">Item list not recorded for this backup</span>
-                </div>
-              {:else if selectedItems.length > 0}
-                <div class="mt-2 text-xs">
+              <div class="mt-2 text-xs">
+                {#if coverage.isLegacy}
+                  <div class="text-text-dim flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">Item list not recorded for this backup</span>
+                  </div>
+                {:else if selectedItems.length > 0}
                   {#if coverage.coversAll}
                     <span class="text-emerald-400 font-medium">Contains all {coverage.coverageCount} selected items</span>
                   {:else}
                     <span class="text-amber-400 font-medium">Contains {coverage.coverageCount} of {coverage.totalSelected} selected items</span>
                   {/if}
-                  {#if coverage.missingItems.length > 0}
-                    <div class="mt-1 space-y-0.5 text-text-dim">
-                      {#each coverage.missingItems as missing (`${missing.item?.type || missing.item?.item_type || 'item'}:${missing.name}`)}
-                        <div>
-                          <span class="text-text-muted">{missing.name}:</span>
-                          <span>{missing.reason}</span>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              {/if}
+                {/if}
+                {#if selectedItems.length > 0 && coverage.missingItems.length > 0}
+                  <div class="mt-1 space-y-0.5 text-text-dim">
+                    {#each coverage.missingItems as missing (`${missing.item?.type || missing.item?.item_type || 'item'}:${missing.name}`)}
+                      <div>
+                        <span class="text-text-muted">{missing.name}:</span>
+                        <span>{missing.reason}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             {/if}
 
             {#if rp.chain_status === 'broken'}
