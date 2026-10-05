@@ -901,8 +901,22 @@
     })
   }
 
-  let anyUnitHasEmptySelection = $derived(
-    restoreUnits.some(unit => unitHasEmptySelection(unit))
+
+  function isUnitBlocked(unit) {
+    if (!unit) return true
+    if (unit.items.length === 0 || unitHasEmptySelection(unit)) return true
+    if (unit.point?.chain_status === 'broken') return true
+    const s = getUnitSettings(unit.jobId)
+    const hasContainer = unit.items.some(i => i.type === 'container')
+    if (hasContainer && s.showDestOverride && !s.acknowledgeContainerRemap) return true
+    if (unit.point?.encryption === 'age' && !s.passphrase) return true
+    return false
+  }
+
+  let anyUnitBlocked = $derived(
+    selectedItems.size === 0 ||
+    restoreUnits.length === 0 ||
+    restoreUnits.some(unit => isUnitBlocked(unit))
   )
 
   let allUnitsPreflightPassing = $derived(
@@ -918,6 +932,17 @@
 
   let allUnitsPreflightFresh = $derived(
     restoreUnits.length > 0 && restoreUnits.every(unit => isUnitPreflightFresh(unit))
+  )
+
+  let canStartRestore = $derived(
+    !isRestoreRunning &&
+    !anyUnitBlocked &&
+    allUnitsPreflightPassing
+  )
+
+  let canRestoreAnyway = $derived(
+    !isRestoreRunning &&
+    !anyUnitBlocked
   )
 
   let recommendedRpId = $derived(restorePoints[0]?.id ?? null)
@@ -945,16 +970,7 @@
   }
 
   async function doRestore() {
-    if (selectedItems.size === 0 || restoreUnits.length === 0) return
-    if (anyUnitHasEmptySelection) return
-    if (restoreUnits.some(u => u.point?.chain_status === 'broken')) return
-
-    for (const unit of restoreUnits) {
-      const s = getUnitSettings(unit.jobId)
-      const hasContainer = unit.items.some(i => i.type === 'container')
-      if (hasContainer && s.showDestOverride && !s.acknowledgeContainerRemap) return
-      if (unit.point?.encryption === 'age' && !s.passphrase) return
-    }
+    if (anyUnitBlocked) return
 
     restoring = true
     restoreOutcome = null
@@ -1776,7 +1792,7 @@
     <!-- Actions bar -->
     <div class="flex items-center gap-4 flex-wrap">
       <button type="button" onclick={doRestore}
-        disabled={isRestoreRunning || anyUnitHasEmptySelection || restoreUnits.some(u => u.point?.chain_status === 'broken') || restoreUnits.some(u => u.point?.encryption === 'age' && !getUnitSettings(u.jobId).passphrase) || restoreUnits.some(u => u.items.some(i => i.type === 'container') && getUnitSettings(u.jobId).showDestOverride && !getUnitSettings(u.jobId).acknowledgeContainerRemap) || !allUnitsPreflightPassing}
+        disabled={!canStartRestore}
         class="w-full sm:w-auto px-6 py-2.5 text-sm font-medium text-white bg-vault hover:bg-vault-dark rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer">
         {#if isRestoreRunning}
           <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1802,7 +1818,7 @@
 
       {#if allUnitsPreflightFresh && !allUnitsPreflightPassing && !isRestoreRunning && !restoreUnits.some(u => u.point?.chain_status === 'broken')}
         <button type="button"
-          disabled={anyUnitHasEmptySelection || restoreUnits.some(u => u.items.some(i => i.type === 'container') && getUnitSettings(u.jobId).showDestOverride && !getUnitSettings(u.jobId).acknowledgeContainerRemap)}
+          disabled={!canRestoreAnyway}
           onclick={handleRestoreAnyway}
           class="text-xs text-text-dim hover:text-text underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline">
           Restore anyway
