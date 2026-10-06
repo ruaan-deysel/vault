@@ -33,7 +33,7 @@ test.describe('Jobs Management & Creation Wizard', () => {
     await expect(page.getByText('VM Backups').first()).toBeVisible();
   });
 
-  test('triggers Run Now and optimistic cancellation state', async ({ page }) => {
+  test('triggers Run Now and verifies queued execution state', async ({ page }) => {
     await page.goto('/#/jobs');
 
     // Find the Run Now button on the first job row

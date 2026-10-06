@@ -129,8 +129,6 @@ export const createInitialMockJobs = (): MockJob[] => [
   },
 ];
 
-export const mockJobs = createInitialMockJobs();
-
 export const mockJob1Points = [
   {
     id: 1001,
@@ -177,8 +175,6 @@ export const createInitialMockStorage = (): MockStorageDestination[] => [
     capacity: { free_bytes: 1000000000000, total_bytes: 4000000000000 },
   },
 ];
-
-export const mockStorage = createInitialMockStorage();
 
 /**
  * Intercepts Vault API endpoints to provide deterministic, hermetic responses for Playwright tests.
