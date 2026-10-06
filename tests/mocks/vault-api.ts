@@ -70,6 +70,9 @@ export interface MockStorageDestination {
   capacity?: { free_bytes: number; total_bytes: number };
 }
 
+/**
+ * Factory creating initial test backup jobs for isolated test sessions.
+ */
 export const createInitialMockJobs = (): MockJob[] => [
   {
     id: 1,
@@ -159,6 +162,9 @@ export const mockJob2Points = [
   },
 ];
 
+/**
+ * Factory creating initial test storage targets for isolated test sessions.
+ */
 export const createInitialMockStorage = (): MockStorageDestination[] => [
   {
     id: 1,
