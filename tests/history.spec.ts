@@ -17,8 +17,8 @@ test.describe('Backup History & Run Inspector', () => {
     await expect(page.getByRole('paragraph').filter({ hasText: 'Failed' })).toBeVisible();
 
     // Verify run cards in timeline
-    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups').first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'Docker & Appdata' }).first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'VM Backups' }).first()).toBeVisible();
     await expect(page.getByText('completed').first()).toBeVisible();
     await expect(page.getByText('failed').first()).toBeVisible();
   });
@@ -31,26 +31,26 @@ test.describe('Backup History & Run Inspector', () => {
     await expect(failedPill).toBeVisible();
     await failedPill.click();
 
-    await expect(page.locator('div.space-y-8').getByText('VM Backups').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata')).toHaveCount(0);
+    await expect(page.locator('main span', { hasText: 'VM Backups' }).first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'Docker & Appdata' })).toHaveCount(0);
 
     // Filter by "Completed" status
     const completedPill = page.getByRole('button', { name: 'Completed', exact: true });
     await completedPill.click();
 
-    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups')).toHaveCount(0);
+    await expect(page.locator('main span', { hasText: 'Docker & Appdata' }).first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'VM Backups' })).toHaveCount(0);
 
     // Reset status to "All"
     const allPill = page.getByRole('button', { name: 'All', exact: true }).first();
     await allPill.click();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups').first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'VM Backups' }).first()).toBeVisible();
 
     // Search query
     const searchInput = page.getByPlaceholder(/search runs/i);
     await searchInput.fill('Docker');
-    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups')).toHaveCount(0);
+    await expect(page.locator('main span', { hasText: 'Docker & Appdata' }).first()).toBeVisible();
+    await expect(page.locator('main span', { hasText: 'VM Backups' })).toHaveCount(0);
   });
 
   test('expands run details and inspects execution logs', async ({ page }) => {

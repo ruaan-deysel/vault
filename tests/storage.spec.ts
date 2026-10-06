@@ -9,15 +9,15 @@ test.describe('Storage Management & Target Setup Wizard', () => {
   test('renders storage destinations with capacity and dedup indicators', async ({ page }) => {
     await page.goto('/#/storage');
 
-    await expect(page.getByRole('heading', { name: 'Storage Destinations' })).toBeVisible();
-    await expect(page.getByText('Local Array Backup').first()).toBeVisible();
+    const localCard = page.locator('div', { has: page.getByRole('heading', { name: 'Local Array Backup' }) }).first();
+    await expect(localCard).toBeVisible();
 
     // Verify type badge and path
-    await expect(page.locator('span.uppercase', { hasText: 'local' })).toBeVisible();
-    await expect(page.getByText('/mnt/user/backups').first()).toBeVisible();
+    await expect(localCard.getByText('local', { exact: true })).toBeVisible();
+    await expect(localCard.getByText('/mnt/user/backups')).toBeVisible();
 
     // Verify deduplication badge
-    await expect(page.getByText(/Dedup/i).first()).toBeVisible();
+    await expect(localCard.getByText(/Dedup/i)).toBeVisible();
   });
 
   test('guides user through Add Storage modal with connection test for local and S3', async ({ page }) => {
