@@ -123,13 +123,15 @@ test.describe('Jobs Management & Creation Wizard', () => {
     await deleteBtn.click();
 
     // Delete confirmation dialog appears
-    await expect(page.getByText(/Are you sure you want to delete/i)).toBeVisible();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(/Are you sure you want to delete/i)).toBeVisible();
 
-    // Confirm deletion
-    const confirmBtn = page.getByRole('button', { name: /delete job/i }).last();
+    // Confirm deletion inside dialog
+    const confirmBtn = dialog.getByRole('button', { name: /delete job/i });
     await confirmBtn.click();
 
     // Job deleted toast and removed from list
     await expect(page.getByText(/Job deleted/i)).toBeVisible();
+    await expect(page.getByText('VM Backups')).toHaveCount(0);
   });
 });

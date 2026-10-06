@@ -13,7 +13,7 @@ test.describe('Storage Management & Target Setup Wizard', () => {
     await expect(page.getByText('Local Array Backup').first()).toBeVisible();
 
     // Verify type badge and path
-    await expect(page.getByText('local', { exact: false }).first()).toBeVisible();
+    await expect(page.locator('span.uppercase', { hasText: 'local' })).toBeVisible();
     await expect(page.getByText('/mnt/user/backups').first()).toBeVisible();
 
     // Verify deduplication badge
@@ -103,11 +103,10 @@ test.describe('Storage Management & Target Setup Wizard', () => {
   test('refreshes destination capacity on demand', async ({ page }) => {
     await page.goto('/#/storage');
 
-    const refreshCapBtn = page.getByRole('button', { name: /refresh capacity/i }).first();
-    if (await refreshCapBtn.isVisible()) {
-      await refreshCapBtn.click();
-      await expect(page.getByText(/capacity refreshed/i)).toBeVisible();
-    }
+    const refreshCapBtn = page.getByRole('button', { name: 'Refresh' }).first();
+    await expect(refreshCapBtn).toBeVisible();
+    await refreshCapBtn.click();
+    await expect(page.getByText(/capacity refreshed/i)).toBeVisible();
   });
 
   test('deletes a storage destination with confirmation dialog', async ({ page }) => {

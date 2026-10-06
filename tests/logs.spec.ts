@@ -22,7 +22,7 @@ test.describe('Activity Logs & Run Log Viewer', () => {
 
     // Error entry visible, info/warn hidden
     await expect(page.getByText('Failed to reach remote endpoint')).toBeVisible();
-    await expect(page.getByText('Storage capacity above 75%')).not.toBeVisible();
+    await expect(page.getByText('Storage capacity above 75%')).toHaveCount(0);
 
     // Reset Level to All
     await levelSelect.selectOption({ label: 'All' });
@@ -32,7 +32,7 @@ test.describe('Activity Logs & Run Log Viewer', () => {
     const searchInput = page.getByPlaceholder(/filter logs/i);
     await searchInput.fill('remote endpoint');
     await expect(page.getByText('Failed to reach remote endpoint')).toBeVisible();
-    await expect(page.getByText('Docker & Appdata')).not.toBeVisible();
+    await expect(page.getByText('Docker & Appdata')).toHaveCount(0);
 
     await searchInput.fill('');
     await expect(page.getByText('Docker & Appdata').first()).toBeVisible();

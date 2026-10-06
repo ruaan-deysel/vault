@@ -40,23 +40,24 @@ test.describe('Settings Configuration & Management', () => {
     await page.goto('/#/settings');
 
     // Appearance mode options
-    const lightBtn = page.getByRole('button', { name: /light/i }).first();
-    const darkBtn = page.getByRole('button', { name: /dark/i }).first();
+    const lightBtn = page.getByRole('button', { name: 'Light', exact: true });
+    const darkBtn = page.getByRole('button', { name: 'Dark', exact: true });
 
-    if (await lightBtn.isVisible() && await darkBtn.isVisible()) {
-      await lightBtn.click();
-      await expect(page.locator('html')).toHaveClass(/light/);
+    await expect(lightBtn).toBeVisible();
+    await expect(darkBtn).toBeVisible();
 
-      await darkBtn.click();
-      await expect(page.locator('html')).not.toHaveClass(/light/);
-    }
+    await lightBtn.click();
+    await expect(page.locator('html')).not.toHaveClass(/dark/);
+
+    await darkBtn.click();
+    await expect(page.locator('html')).toHaveClass(/dark/);
   });
 
   test('configures and tests Discord notification webhook', async ({ page }) => {
     await page.goto('/#/settings');
 
     // Go to Notifications tab
-    await page.getByRole('button', { name: 'Notifications' }).click();
+    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
     await expect(page.getByText('Discord Notifications')).toBeVisible();
 
     // Enter Webhook URL
@@ -65,7 +66,7 @@ test.describe('Settings Configuration & Management', () => {
     await discordInput.fill('https://discord.com/api/webhooks/123456/abcdef');
 
     // Click test button next to webhook input
-    const testBtn = discordInput.locator('xpath=following-sibling::button');
+    const testBtn = discordInput.locator('..').getByRole('button', { name: 'Test' });
     await expect(testBtn).toBeEnabled();
     await testBtn.click();
 
@@ -77,11 +78,10 @@ test.describe('Settings Configuration & Management', () => {
     await page.goto('/#/settings');
 
     const diagDownloadBtn = page.getByRole('button', { name: /Download Diagnostics/i });
-    if (await diagDownloadBtn.isVisible()) {
-      const downloadPromise = page.waitForEvent('download');
-      await diagDownloadBtn.click();
-      const download = await downloadPromise;
-      expect(download.suggestedFilename()).toContain('diagnostics');
-    }
+    await expect(diagDownloadBtn).toBeVisible();
+    const downloadPromise = page.waitForEvent('download');
+    await diagDownloadBtn.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toContain('diagnostics');
   });
 });

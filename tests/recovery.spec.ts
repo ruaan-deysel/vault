@@ -17,10 +17,9 @@ test.describe('Cold Disaster Recovery Wizard (#/recover)', () => {
     const snameInput = page.locator('#sname');
     await snameInput.fill('Disaster Recovery Storage');
 
-    const pathInput = page.locator('#path');
-    if (await pathInput.isVisible()) {
-      await pathInput.fill('/mnt/user/backups');
-    }
+    const pathInput = page.getByRole('textbox', { name: 'Path' });
+    await expect(pathInput).toBeVisible();
+    await pathInput.fill('/mnt/user/backups');
 
     // Submit step 1
     const connectBtn = page.getByRole('button', { name: 'Connect', exact: true });

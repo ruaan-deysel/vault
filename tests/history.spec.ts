@@ -32,14 +32,14 @@ test.describe('Backup History & Run Inspector', () => {
     await failedPill.click();
 
     await expect(page.locator('div.space-y-8').getByText('VM Backups').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata')).not.toBeVisible();
+    await expect(page.locator('div.space-y-8').getByText('Docker & Appdata')).toHaveCount(0);
 
     // Filter by "Completed" status
     const completedPill = page.getByRole('button', { name: 'Completed', exact: true });
     await completedPill.click();
 
     await expect(page.locator('div.space-y-8').getByText('Docker & Appdata').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups')).not.toBeVisible();
+    await expect(page.locator('div.space-y-8').getByText('VM Backups')).toHaveCount(0);
 
     // Reset status to "All"
     const allPill = page.getByRole('button', { name: 'All', exact: true }).first();
@@ -50,7 +50,7 @@ test.describe('Backup History & Run Inspector', () => {
     const searchInput = page.getByPlaceholder(/search runs/i);
     await searchInput.fill('Docker');
     await expect(page.locator('div.space-y-8').getByText('Docker & Appdata').first()).toBeVisible();
-    await expect(page.locator('div.space-y-8').getByText('VM Backups')).not.toBeVisible();
+    await expect(page.locator('div.space-y-8').getByText('VM Backups')).toHaveCount(0);
   });
 
   test('expands run details and inspects execution logs', async ({ page }) => {
@@ -58,11 +58,10 @@ test.describe('Backup History & Run Inspector', () => {
 
     // Click run card for Docker & Appdata
     const dockerRunCard = page.locator('div[role="button"]', { hasText: 'Docker & Appdata' }).first();
-    if (await dockerRunCard.isVisible()) {
-      await dockerRunCard.click();
+    await expect(dockerRunCard).toBeVisible();
+    await dockerRunCard.click();
 
-      // Verify logs inspector renders logs
-      await expect(page.getByText(/Starting job Docker & Appdata|Job started/i).first()).toBeVisible();
-    }
+    // Verify logs inspector renders logs
+    await expect(page.getByText('Deduplication savings 53%')).toBeVisible();
   });
 });

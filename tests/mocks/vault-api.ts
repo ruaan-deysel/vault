@@ -209,6 +209,7 @@ export async function setupVaultMockApi(page: Page) {
       duration_seconds: 900,
       dedup_ratio: '1.8x',
       error_message: null,
+      log: '[INFO] Backup completed successfully\n[INFO] 120 files scanned\n[INFO] Deduplication savings 53%',
     },
     {
       id: 902,
@@ -559,7 +560,7 @@ export async function setupVaultMockApi(page: Page) {
     }
 
     // Jobs Collection (List / Create)
-    if (path.endsWith('/jobs') || path.includes('/jobs?')) {
+    if (path.endsWith('/jobs')) {
       if (method === 'POST') {
         const payload = request.postDataJSON();
         const createdJob: MockJob = {
@@ -745,7 +746,7 @@ export async function setupVaultMockApi(page: Page) {
     }
 
     // Storage List / Create
-    if (path.endsWith('/storage') || path.includes('/storage?')) {
+    if (path.endsWith('/storage')) {
       if (method === 'POST') {
         const payload = request.postDataJSON();
         const createdStorage: MockStorageDestination = {
