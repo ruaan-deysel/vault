@@ -556,7 +556,7 @@ export async function setupVaultMockApi(page: Page) {
     }
 
     // Jobs Collection (List / Create)
-    if (path.endsWith('/jobs')) {
+    if (path === '/api/v1/jobs') {
       if (method === 'POST') {
         const payload = request.postDataJSON();
         const createdJob: MockJob = {
@@ -742,7 +742,7 @@ export async function setupVaultMockApi(page: Page) {
     }
 
     // Storage List / Create
-    if (path.endsWith('/storage')) {
+    if (path === '/api/v1/storage') {
       if (method === 'POST') {
         const payload = request.postDataJSON();
         const createdStorage: MockStorageDestination = {
@@ -967,7 +967,7 @@ export async function setupVaultMockApi(page: Page) {
       });
     }
 
-    if (path.endsWith('/settings')) {
+    if (path === '/api/v1/settings') {
       if (method === 'PUT') {
         const payload = request.postDataJSON();
         settingsState = { ...settingsState, ...payload };
