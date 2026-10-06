@@ -291,7 +291,11 @@ func TestRemoveEmptyMountRoot(t *testing.T) {
 
 func TestCleanupStaleKeepsDirWhenUnmountFails(t *testing.T) {
 	_, legacy, _ := redirectRoots(t)
-	stubUnmount(t, func(string) error { return errors.New("device busy") })
+	var unmounted []string
+	stubUnmount(t, func(p string) error {
+		unmounted = append(unmounted, p)
+		return errors.New("device busy")
+	})
 	d, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -314,6 +318,9 @@ func TestCleanupStaleKeepsDirWhenUnmountFails(t *testing.T) {
 	}
 
 	NewManager(d, nil, nil).CleanupStale(t.Context())
+	if len(unmounted) != 1 || unmounted[0] != dir {
+		t.Errorf("unmounted = %v, want [%s]", unmounted, dir)
+	}
 	if _, err := os.Lstat(dir); err != nil {
 		t.Errorf("session dir removed although unmount failed: %v", err)
 	}
