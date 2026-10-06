@@ -259,8 +259,9 @@ func sweepSessionDirs(root string) bool {
 	return true
 }
 
-// RemoveEmptyMountRoot removes root when it is a real, empty directory. It
-// never follows symlinks or removes contents; a missing root is not an error.
+// RemoveEmptyMountRoot removes root when it is a real directory holding
+// nothing but empty mount-<id> session directories. It never follows symlinks
+// or removes other content; a missing root is not an error.
 func RemoveEmptyMountRoot(root string) error {
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -272,6 +273,7 @@ func RemoveEmptyMountRoot(root string) error {
 	if !info.IsDir() {
 		return nil
 	}
+	sweepSessionDirs(root)
 	return os.Remove(root)
 }
 

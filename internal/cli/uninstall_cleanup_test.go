@@ -209,7 +209,7 @@ func TestRunUninstallCleanupRemovesOnlyEmptyFUSERoots(t *testing.T) {
 	emptyRoot := filepath.Join(tmpRoot, "mnt", "vault-fuse")
 	busyRoot := filepath.Join(tmpRoot, "mnt", "addons", "vault-fuse")
 	busyFile := filepath.Join(busyRoot, "mount-1", "file.txt")
-	for _, dir := range []string{configDir, emptyRoot, filepath.Dir(busyFile)} {
+	for _, dir := range []string{configDir, filepath.Join(emptyRoot, "mount-7"), filepath.Dir(busyFile)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%s): %v", dir, err)
 		}
