@@ -9,7 +9,7 @@ test.describe('Storage Management & Target Setup Wizard', () => {
   test('renders storage destinations with capacity and dedup indicators', async ({ page }) => {
     await page.goto('/#/storage');
 
-    const localCard = page.locator('div', { has: page.getByRole('heading', { name: 'Local Array Backup' }) }).first();
+    const localCard = page.locator('div.rounded-xl', { has: page.getByRole('heading', { name: 'Local Array Backup' }) });
     await expect(localCard).toBeVisible();
 
     // Verify type badge and path

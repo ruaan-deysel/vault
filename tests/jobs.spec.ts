@@ -31,6 +31,16 @@ test.describe('Jobs Management & Creation Wizard', () => {
     // Clear search
     await searchInput.fill('');
     await expect(page.getByText('VM Backups').first()).toBeVisible();
+
+    // Filter by "Disabled" status
+    await page.getByRole('button', { name: 'Disabled', exact: true }).click();
+    await expect(page.getByText('No jobs match these filters.')).toBeVisible();
+    await expect(page.getByText('Docker & Appdata')).not.toBeVisible();
+
+    // Filter by "Enabled" status
+    await page.getByRole('button', { name: 'Enabled', exact: true }).click();
+    await expect(page.getByText('Docker & Appdata').first()).toBeVisible();
+    await expect(page.getByText('VM Backups').first()).toBeVisible();
   });
 
   test('triggers Run Now and verifies queued execution state', async ({ page }) => {
