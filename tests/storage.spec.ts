@@ -126,5 +126,6 @@ test.describe('Storage Management & Target Setup Wizard', () => {
 
     // Success toast shown
     await expect(page.getByText(/storage deleted/i)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Local Array Backup' })).not.toBeVisible();
   });
 });
