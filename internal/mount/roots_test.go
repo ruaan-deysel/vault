@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -203,8 +204,17 @@ func TestCleanupLegacyRoot(t *testing.T) {
 	})
 }
 
+// stubUnmount replaces the platform unmount for the test. Not parallel-safe.
+func stubUnmount(t *testing.T, fn func(string) error) {
+	t.Helper()
+	old := unmountPath
+	unmountPath = fn
+	t.Cleanup(func() { unmountPath = old })
+}
+
 func TestCleanupStaleRemovesOnlyContainedSessionDirs(t *testing.T) {
 	_, legacy, _ := redirectRoots(t)
+	stubUnmount(t, func(string) error { return nil })
 	d, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -277,4 +287,59 @@ func TestRemoveEmptyMountRoot(t *testing.T) {
 		t.Errorf("empty root: %v", err)
 	}
 	assertAbsent(t, empty)
+}
+
+func TestCleanupStaleKeepsDirWhenUnmountFails(t *testing.T) {
+	_, legacy, _ := redirectRoots(t)
+	stubUnmount(t, func(string) error { return errors.New("device busy") })
+	d, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	destID, err := d.CreateStorageDestination(db.StorageDestination{Name: "d", Type: "local", Config: `{"path":"/tmp/x"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := d.CreateJob(db.Job{Name: "j", StorageDestID: destID, BackupTypeChain: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(legacy, "mount-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateMountSession(db.MountSession{JobID: jobID, StorageDestID: destID, MountPath: dir}); err != nil {
+		t.Fatal(err)
+	}
+
+	NewManager(d, nil, nil).CleanupStale(t.Context())
+	if _, err := os.Lstat(dir); err != nil {
+		t.Errorf("session dir removed although unmount failed: %v", err)
+	}
+}
+
+// A session whose unmount failed is marked stopped, so its leftover directory
+// under the current base is only reclaimed by the next start's sweep.
+func TestCleanupOrphanedSessionDirs(t *testing.T) {
+	redirectRoots(t)
+	m := NewManager(nil, nil, nil)
+	base := t.TempDir()
+	m.SetBaseMountDir(base)
+	orphan := filepath.Join(base, "mount-5")
+	busy := filepath.Join(base, "mount-6", "data")
+	foreign := filepath.Join(base, "user-dir")
+	for _, d := range []string{orphan, busy, foreign} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m.cleanupOrphanedSessionDirs()
+	assertAbsent(t, orphan)
+	for _, p := range []string{busy, foreign, base} {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s removed, want kept: %v", p, err)
+		}
+	}
 }

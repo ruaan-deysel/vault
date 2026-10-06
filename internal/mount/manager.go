@@ -152,6 +152,7 @@ func (m *Manager) sessionMountDir(targetDir string, sessID int64) (string, error
 // Start launches the periodic idle sweeper and cleans up stale mounts from previous daemon runs.
 func (m *Manager) Start(ctx context.Context) {
 	m.CleanupStale(ctx)
+	m.cleanupOrphanedSessionDirs()
 	m.cleanupLegacyRoot()
 	go m.runIdleSweeper(ctx)
 }
@@ -212,26 +213,50 @@ func (m *Manager) cleanupLegacyRoot() {
 	if filepath.Clean(base) == filepath.Clean(legacyMountRoot) {
 		return
 	}
-	info, err := os.Lstat(legacyMountRoot)
-	if err != nil || !info.IsDir() {
+	if !sweepSessionDirs(legacyMountRoot) {
 		return
-	}
-	entries, err := os.ReadDir(legacyMountRoot)
-	if err != nil {
-		log.Printf("WARN mount: read legacy mount root %s: %v", legacyMountRoot, err)
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() || !isSessionDirName(e.Name()) {
-			continue
-		}
-		removeEmptyDir(filepath.Join(legacyMountRoot, e.Name()))
 	}
 	if err := os.Remove(legacyMountRoot); err != nil {
 		log.Printf("INFO mount: keeping legacy mount root %s: %v", legacyMountRoot, err)
 		return
 	}
 	log.Printf("INFO mount: removed legacy mount root %s", legacyMountRoot)
+}
+
+// cleanupOrphanedSessionDirs removes empty mount-<id> directories left under
+// the current base by an earlier run. A session whose unmount failed is marked
+// stopped by CleanupStale, so without this sweep its directory would never be
+// retried. Live mount points are kept: os.Remove refuses a busy or non-empty
+// directory, and nothing is unmounted here because a `vault mount` CLI
+// session may share the base.
+func (m *Manager) cleanupOrphanedSessionDirs() {
+	m.mu.Lock()
+	base := m.baseMountDir
+	m.mu.Unlock()
+	if base != "" {
+		sweepSessionDirs(base)
+	}
+}
+
+// sweepSessionDirs removes the empty mount-<id> directories directly inside
+// root. It reports false when root is not a real directory or cannot be read.
+func sweepSessionDirs(root string) bool {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		log.Printf("WARN mount: read mount root %s: %v", root, err)
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !isSessionDirName(e.Name()) {
+			continue
+		}
+		removeEmptyDir(filepath.Join(root, e.Name()))
+	}
+	return true
 }
 
 // RemoveEmptyMountRoot removes root when it is a real, empty directory. It
@@ -596,6 +621,7 @@ func (m *Manager) Get(sessionID int64) (db.MountSession, error) {
 	return m.db.GetMountSession(sessionID)
 }
 
-func unmountPath(path string) error {
-	return unmountPlatform(path)
-}
+// unmountPath detaches a mount point. A variable so tests can simulate the
+// platform outcome: unprivileged Linux reports EPERM even for a plain,
+// unmounted directory.
+var unmountPath = unmountPlatform
