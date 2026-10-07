@@ -163,14 +163,6 @@ var (
 	zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
 
-// detectingReader sniffs the first few bytes of r and returns a reader that
-// transparently decompresses gzip or zstd streams. Plain (uncompressed) inputs
-// are passed through unchanged. The returned closer must be called to release
-// decompressor resources.
-//
-// This makes the engine forward-compatible with archives produced by any of
-// the runner's old (engine=always gzip + runner transport-wrap) format
-// combinations: `.tar`, `.tar.gz`, and `.tar.zst` all decode correctly here.
 // DecompressingReader wraps r so a gzip- or zstd-compressed archive body
 // (data.tar.zst, volume_1.tar.gz, …) reads as the plain tar stream; plain
 // input passes through. Detection is content-based. The returned func
@@ -179,6 +171,14 @@ func DecompressingReader(r io.Reader) (io.Reader, func() error, error) {
 	return detectingReader(r)
 }
 
+// detectingReader sniffs the first few bytes of r and returns a reader that
+// transparently decompresses gzip or zstd streams. Plain (uncompressed) inputs
+// are passed through unchanged. The returned closer must be called to release
+// decompressor resources.
+//
+// This makes the engine forward-compatible with archives produced by any of
+// the runner's old (engine=always gzip + runner transport-wrap) format
+// combinations: `.tar`, `.tar.gz`, and `.tar.zst` all decode correctly here.
 func detectingReader(r io.Reader) (io.Reader, func() error, error) {
 	br := bufio.NewReader(r)
 	head, err := br.Peek(4)
