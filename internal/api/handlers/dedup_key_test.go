@@ -143,3 +143,14 @@ func TestRestorePointContentsDedupKeyMismatch(t *testing.T) {
 		t.Fatalf("body = %v", body)
 	}
 }
+
+// TestRewrapDedupKeysWithoutRunner checks a handler without a runner refuses
+// cleanly.
+func TestRewrapDedupKeysWithoutRunner(t *testing.T) {
+	h := &StorageHandler{}
+	w := httptest.NewRecorder()
+	h.RewrapDedupKeys(w, httptest.NewRequest(http.MethodPost, "/api/v1/storage/dedup-keys/rewrap", strings.NewReader(`{}`)))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", w.Code)
+	}
+}

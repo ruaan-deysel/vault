@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,5 +265,88 @@ func TestReclaimRemovesEscrowAndHeaderBackups(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(vaultDir, "vault.db.latest")); err != nil {
 		t.Fatalf("the database backup in _vault/ was removed: %v", err)
+	}
+}
+
+// failingWriteAdapter refuses every write, to exercise escrow write failures.
+type failingWriteAdapter struct{ storage.Adapter }
+
+func (failingWriteAdapter) Write(string, io.Reader) error { return errors.New("storage is read-only") }
+
+// TestDedupKeyMismatchPaths covers the mismatch handling on the paths a
+// recovered server hits: the fallback with a wrong passphrase, restore, scan,
+// import, a failed escrow write, and an unreachable destination in the
+// recovery step.
+func TestDedupKeyMismatchPaths(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	_ = database.SetSetting("encryption_passphrase", "pw")
+	dest, jobID := dedupBackup(t, runnerWithKey(database, testServerKey()), database, t.TempDir())
+	_ = database.SetSetting("encryption_passphrase", "")
+	other := runnerWithKey(database, otherServerKey())
+
+	// Wrong passphrase: both causes stay in the chain.
+	_, err = OpenDedupRepoWithFallback(database, adapterFor(t, dest), dest.ID, otherServerKey(), "wrong")
+	if !errors.Is(err, dedup.ErrServerKeyMismatch) || !errors.Is(err, dedup.ErrPassphraseMismatch) {
+		t.Fatalf("wrong passphrase: %v", err)
+	}
+
+	// Restore on the mismatched key explains what to do.
+	rps, _ := database.ListRestorePoints(jobID)
+	err = other.RestoreItem(rps[0], "src", "folder", t.TempDir(), "")
+	if err == nil || !strings.Contains(err.Error(), "different vault.key") {
+		t.Fatalf("restore: %v, want the key-mismatch guidance", err)
+	}
+
+	// Scan and import cannot decrypt the dedup manifests without a key or
+	// passphrase; they report locked entries instead of failing.
+	found, err := other.ScanStorageManifests(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := 0
+	for _, m := range found {
+		if m["encrypted"] == true {
+			locked++
+		}
+	}
+	if locked == 0 {
+		t.Fatalf("scan: %+v, want locked placeholders", found)
+	}
+	if n, err := other.ImportBackups(dest.ID, found); err != nil || n != 0 {
+		t.Fatalf("import of locked backups = %d, %v; want 0 imported", n, err)
+	}
+	// With the passphrase the same scan reads them.
+	if found, _ = other.ScanStorageManifests(dest, "pw"); len(found) == 0 || found[0]["encrypted"] == true {
+		t.Fatalf("scan with passphrase: %+v", found)
+	}
+
+	// A failed escrow write is logged and not cached as confirmed.
+	_ = database.SetSetting("encryption_passphrase", "pw")
+	repo, err := dedup.OpenRepo(database, failingWriteAdapter{adapterFor(t, dest)}, dest.ID, testServerKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := runnerWithKey(database, testServerKey())
+	if _, err := repo.EnsurePassphraseEscrow("changed"); err == nil {
+		t.Fatal("write through a failing adapter succeeded")
+	}
+	_ = database.SetSetting("encryption_passphrase", "changed")
+	owner.ensureDedupEscrow(repo, dest)
+	if owner.escrowed[dest.ID] != "" {
+		t.Fatal("a failed escrow write was cached as confirmed")
+	}
+
+	// An unreachable destination is reported, not fatal for the rest.
+	bad, _ := database.CreateStorageDestination(db.StorageDestination{Name: "unreachable", Type: "sftp", Config: "{", DedupEnabled: true})
+	results, err := owner.RewrapDedupKeys("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(results); got[bad] != "error" || got[dest.ID] != "ok" {
+		t.Fatalf("recovery with an unreachable destination: %+v", results)
 	}
 }
