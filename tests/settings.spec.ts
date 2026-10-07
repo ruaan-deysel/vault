@@ -91,6 +91,8 @@ test.describe('Settings Configuration & Management', () => {
 
     await expect(page.getByRole('heading', { name: /Server key/ })).toBeVisible();
     await expect(page.getByText(/Anyone with this file and access to your backup storage/)).toBeVisible();
+    // The mock has no backup password, so the key is the only recovery path.
+    await expect(page.getByText(/No backup password is set, so this file is the only way/)).toBeVisible();
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download vault.key' }).click();

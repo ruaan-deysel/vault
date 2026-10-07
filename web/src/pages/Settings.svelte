@@ -1833,6 +1833,9 @@
               this file, or with the backup passphrase if one was set when they ran.
             </p>
             <p class="text-xs text-warning mt-1">Anyone with this file and access to your backup storage can read your deduplicated backups.</p>
+            {#if !encryptionEnabled}
+              <p class="text-xs text-danger mt-1">No backup password is set, so this file is the only way to open your deduplicated backups if this server is lost.</p>
+            {/if}
           </div>
           <button onclick={downloadServerKey} disabled={serverKeyDownloading} aria-label="Download vault.key" class="flex items-center gap-2 text-sm font-medium text-info hover:text-info/80 transition-colors shrink-0 disabled:opacity-50">
             {#if serverKeyDownloading}<InlineSpinner />{:else}<svg aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>{/if}
