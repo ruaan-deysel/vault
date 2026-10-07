@@ -203,11 +203,19 @@ func TestMiskeyedBackupWarns(t *testing.T) {
 
 	other := runnerWithKey(database, otherServerKey())
 	other.RunJob(jobID)
-	runs, _ := database.GetJobRuns(jobID, 1)
-	if len(runs) == 0 || runs[0].Status != "completed" {
+	// Both runs can start within the same second, so pick the newest by ID
+	// rather than trusting the started_at order.
+	runs, _ := database.GetJobRuns(jobID, 10)
+	var latest db.JobRun
+	for _, run := range runs {
+		if run.ID > latest.ID {
+			latest = run
+		}
+	}
+	if len(runs) < 2 || latest.Status != "completed" {
 		t.Fatalf("mis-keyed backup did not complete: %+v", runs)
 	}
-	entries, err := database.ListRunLogEntries(context.Background(), runs[0].ID, 0, 1000)
+	entries, err := database.ListRunLogEntries(context.Background(), latest.ID, 0, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
