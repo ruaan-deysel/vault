@@ -107,8 +107,10 @@ func (s *Session) IsDedup() bool {
 	return err == nil
 }
 
-// dedupRepo opens the destination's dedup repository on first use, after
-// rebuilding the chunk index from the index blobs kept on storage.
+// dedupRepo opens the destination's dedup repository on first use and
+// rebuilds the chunk index from the index blobs kept on storage. The
+// repository is opened first: unsealing its master key is cheap and proves
+// --key is right before scanning a possibly large index.
 func (s *Session) dedupRepo() (*dedup.Repo, error) {
 	if s.repo != nil {
 		return s.repo, nil
@@ -116,12 +118,14 @@ func (s *Session) dedupRepo() (*dedup.Repo, error) {
 	if len(s.serverKey) == 0 {
 		return nil, errors.New("this is a deduplicated backup: pass --key with the vault.key from the original server")
 	}
-	if err := dedup.NewIndex(s.db, s.adapter, s.destID).RebuildFromStorage(); err != nil {
-		return nil, fmt.Errorf("rebuild dedup index from storage: %w", err)
-	}
 	repo, err := dedup.OpenRepo(s.db, s.adapter, s.destID, s.serverKey)
 	if err != nil {
 		return nil, fmt.Errorf("open dedup repository (is --key the vault.key from the server that made these backups?): %w", err)
+	}
+	// A repository that has never stored a pack has no index folder yet;
+	// that is an empty index, not an error.
+	if err := dedup.NewIndex(s.db, s.adapter, s.destID).RebuildFromStorage(); err != nil && !storage.IsNotExist(err) {
+		return nil, fmt.Errorf("rebuild dedup index from storage: %w", err)
 	}
 	s.repo = repo
 	return repo, nil
