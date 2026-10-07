@@ -19,6 +19,10 @@ const TEST_TIMEOUT_MS = 60000
 // (VAULT_HTTP_TIMEOUT_CONTENTS in plugin/pages/include/api.php) < browser 130 s.
 export const RESTORE_POINT_CONTENTS_TIMEOUT_MS = 130000
 
+/**
+ * Send one API request with an abort timeout. Non-2xx responses throw an Error
+ * carrying the server's message and the HTTP `status`.
+ */
 async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const { url, options } = buildApiRequest(method, path, { body })
   const controller = new AbortController()

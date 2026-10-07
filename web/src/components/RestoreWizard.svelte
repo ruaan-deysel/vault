@@ -251,6 +251,7 @@
     return type === 'container' || type === 'folder' || type === 'plugin'
   }
 
+  // Open or close an item's file picker, loading its listing on first open.
   async function togglePickerOpen(item) {
     const cur = ensurePickerEntry(item)
     const willOpen = !cur.open
@@ -934,6 +935,8 @@
     })
   }
 
+  // True when a restore unit is not ready to submit (empty or pending file
+  // selection, broken chain, unacknowledged remap, missing passphrase).
   function isUnitBlocked(unit) {
     if (!unit) return true
     if (unit.items.length === 0 || unitHasEmptySelection(unit) || unitHasPendingFileList(unit)) return true
