@@ -2,11 +2,15 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,18 +24,23 @@ type deadlineRecorder struct {
 	write time.Time
 }
 
+// SetWriteDeadline records t so tests can assert what reached the writer.
 func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error { d.write = t; return nil }
 
 // The chi wrapper picks a different concrete type depending on which optional
 // interfaces the underlying writer implements; each must still unwrap.
 type deadlineHijacker struct{ *deadlineRecorder }
 
+// Hijack makes chi wrap this writer in its hijack-capable variant.
 func (deadlineHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) { return nil, nil, nil }
 
 type deadlinePusher struct{ *deadlineRecorder }
 
+// Push makes chi wrap this writer in its HTTP/2 variant.
 func (deadlinePusher) Push(string, *http.PushOptions) error { return nil }
 
+// TestExtendWriteDeadlineReachesConnThroughRequestLogger checks the deadline
+// unwraps through every chi wrapper variant QuietRequestLogger can install.
 func TestExtendWriteDeadlineReachesConnThroughRequestLogger(t *testing.T) {
 	const extend = 2 * time.Minute
 
@@ -68,6 +77,8 @@ func TestExtendWriteDeadlineReachesConnThroughRequestLogger(t *testing.T) {
 	}
 }
 
+// TestExtendWriteDeadlineServesWhenUnsupported checks a writer without
+// deadline support is still served normally.
 func TestExtendWriteDeadlineServesWhenUnsupported(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h := ExtendWriteDeadline(time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -158,5 +169,38 @@ func TestContentsHandlerTimeoutAnswersBeforeWriteDeadline(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusServiceUnavailable || body.Error == "" {
 		t.Fatalf("got %d %+v, want 503 with an error message", resp.StatusCode, body)
+	}
+}
+
+// failingDeadlineWriter reports an unexpected (non-ErrNotSupported) error
+// from SetWriteDeadline, e.g. a connection that is already closed.
+type failingDeadlineWriter struct{ *httptest.ResponseRecorder }
+
+// SetWriteDeadline always fails with a non-ErrNotSupported error.
+func (failingDeadlineWriter) SetWriteDeadline(time.Time) error { return errors.New("conn closed") }
+
+// TestExtendWriteDeadlineLogsUnexpectedErrorAndServes checks an unexpected
+// deadline error is logged by path only and the request is still served.
+func TestExtendWriteDeadlineLogsUnexpectedErrorAndServes(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	rec := failingDeadlineWriter{httptest.NewRecorder()}
+	h := ExtendWriteDeadline(time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/jobs/1/restore-points/2/contents?item=x", nil))
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("got %d %q, want 200 \"ok\"", rec.Code, rec.Body.String())
+	}
+	got := buf.String()
+	if !strings.Contains(got, "extend write deadline for /api/v1/jobs/1/restore-points/2/contents: conn closed") {
+		t.Fatalf("log = %q, want the path and error", got)
+	}
+	if strings.Contains(got, "item=x") {
+		t.Fatalf("log leaked the query string: %q", got)
 	}
 }
