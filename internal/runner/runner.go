@@ -2374,7 +2374,7 @@ func OpenDedupRepoWithFallback(d *db.DB, adapter storage.Adapter, destID int64, 
 			continue
 		}
 		seen[p] = true
-		escrowed, perr := dedup.OpenRepoWithPassphrase(d, adapter, destID, p)
+		escrowed, perr := dedup.OpenRepoFromEscrow(d, adapter, destID, p)
 		if perr == nil {
 			return escrowed, nil
 		}

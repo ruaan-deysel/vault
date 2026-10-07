@@ -35,7 +35,7 @@ func TestEscrowRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, "pw"); !errors.Is(err, ErrNoPassphraseEscrow) {
+	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "pw"); !errors.Is(err, ErrNoPassphraseEscrow) {
 		t.Fatalf("before escrow: %v, want ErrNoPassphraseEscrow", err)
 	}
 	wrote, err := r.EnsurePassphraseEscrow("pw")
@@ -49,7 +49,7 @@ func TestEscrowRoundTrip(t *testing.T) {
 		t.Fatalf("second EnsurePassphraseEscrow = %v, %v; want no write", wrote, err)
 	}
 
-	opened, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, "pw")
+	opened, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "pw")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +59,10 @@ func TestEscrowRoundTrip(t *testing.T) {
 	if got, err := opened.Get(id); err != nil || string(got) != "hello" {
 		t.Fatalf("Get through escrow = %q, %v", got, err)
 	}
-	if _, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, "wrong"); !errors.Is(err, ErrPassphraseMismatch) {
+	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "wrong"); !errors.Is(err, ErrPassphraseMismatch) {
 		t.Fatalf("wrong passphrase: %v, want ErrPassphraseMismatch", err)
 	}
-	if _, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, ""); !errors.Is(err, ErrNoPassphraseEscrow) {
+	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, ""); !errors.Is(err, ErrNoPassphraseEscrow) {
 		t.Fatalf("empty passphrase: %v", err)
 	}
 	if _, err := r.EnsurePassphraseEscrow(""); err == nil {
@@ -73,7 +73,7 @@ func TestEscrowRoundTrip(t *testing.T) {
 	if wrote, err := r.EnsurePassphraseEscrow("new"); err != nil || !wrote {
 		t.Fatalf("passphrase change = %v, %v", wrote, err)
 	}
-	if _, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, "pw"); !errors.Is(err, ErrPassphraseMismatch) {
+	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "pw"); !errors.Is(err, ErrPassphraseMismatch) {
 		t.Fatalf("old passphrase after change: %v", err)
 	}
 }
@@ -91,14 +91,14 @@ func TestEscrowFromAnotherRepositoryIsRejected(t *testing.T) {
 	if err := b.adapter.Write(escrowPath, bytes.NewReader(readFile(t, a, escrowPath))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenRepoWithPassphrase(b.db, b.adapter, b.storageID, "pw"); !errors.Is(err, ErrPassphraseMismatch) {
+	if _, err := OpenRepoFromEscrow(b.db, b.adapter, b.storageID, "pw"); !errors.Is(err, ErrPassphraseMismatch) {
 		t.Fatalf("foreign escrow: %v, want ErrPassphraseMismatch", err)
 	}
 	// Ensure replaces the foreign copy with this repository's own.
 	if wrote, err := b.EnsurePassphraseEscrow("pw"); err != nil || !wrote {
 		t.Fatalf("Ensure over a foreign escrow = %v, %v", wrote, err)
 	}
-	if _, err := OpenRepoWithPassphrase(b.db, b.adapter, b.storageID, "pw"); err != nil {
+	if _, err := OpenRepoFromEscrow(b.db, b.adapter, b.storageID, "pw"); err != nil {
 		t.Fatalf("own escrow after replace: %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestRewrapMasterAfterServerKeyLoss(t *testing.T) {
 		t.Fatalf("backup header is not the original: %v", err)
 	}
 	// The escrow keeps working after the rewrap.
-	if _, err := OpenRepoWithPassphrase(r.db, r.adapter, r.storageID, "pw"); err != nil {
+	if _, err := OpenRepoFromEscrow(r.db, r.adapter, r.storageID, "pw"); err != nil {
 		t.Fatalf("escrow after rewrap: %v", err)
 	}
 }

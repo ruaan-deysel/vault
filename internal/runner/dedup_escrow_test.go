@@ -77,14 +77,14 @@ func TestDedupBackupEscrowsUnderBackupPassphrase(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "master.escrow.age")); err != nil {
 		t.Fatalf("backup did not write the escrow: %v", err)
 	}
-	if _, err := dedup.OpenRepoWithPassphrase(database, adapterFor(t, dest), dest.ID, "first"); err != nil {
+	if _, err := dedup.OpenRepoFromEscrow(database, adapterFor(t, dest), dest.ID, "first"); err != nil {
 		t.Fatalf("escrow does not open with the backup passphrase: %v", err)
 	}
 
 	// A passphrase change is picked up by the next backup.
 	_ = database.SetSetting("encryption_passphrase", "second")
 	r.RunJob(jobID)
-	if _, err := dedup.OpenRepoWithPassphrase(database, adapterFor(t, dest), dest.ID, "second"); err != nil {
+	if _, err := dedup.OpenRepoFromEscrow(database, adapterFor(t, dest), dest.ID, "second"); err != nil {
 		t.Fatalf("escrow not updated after a passphrase change: %v", err)
 	}
 

@@ -124,10 +124,10 @@ func (r *Repo) EnsurePassphraseEscrow(passphrase string) (bool, error) {
 	return true, nil
 }
 
-// OpenRepoWithPassphrase opens a repository through its passphrase escrow
+// OpenRepoFromEscrow opens a repository through its passphrase escrow
 // instead of the server key. Nothing is written: use it to read when
 // vault.key is gone, and RewrapMaster to fix the repository for good.
-func OpenRepoWithPassphrase(d *db.DB, a storage.Adapter, storageID int64, passphrase string) (*Repo, error) {
+func OpenRepoFromEscrow(d *db.DB, a storage.Adapter, storageID int64, passphrase string) (*Repo, error) {
 	cfg, _, err := readRepoConfig(a)
 	if err != nil {
 		return nil, err
