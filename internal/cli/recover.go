@@ -150,7 +150,7 @@ func init() {
 	ef.StringVar(&recoverTo, "to", "", "local folder to extract into")
 	ef.BoolVar(&recoverRaw, "raw", false, "copy classic backup archives out as-is (decrypted) instead of unpacking them")
 	ef.BoolVar(&recoverOverwrite, "overwrite", false, "allow extracting into item folders that are not empty")
-	ef.StringVar(&recoverSafeNames, "safe-names", "auto", "rewrite names Windows cannot store: auto (on Windows only), on, off")
+	ef.StringVar(&recoverSafeNames, "safe-names", "auto", "rewrite names Windows cannot store: auto (on Windows only), on, off (always on under Windows)")
 	_ = recoverExtractCmd.MarkFlagRequired("point")
 	_ = recoverExtractCmd.MarkFlagRequired("to")
 

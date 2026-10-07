@@ -214,12 +214,15 @@ func (s *Session) FindPoint(ref string) (Point, error) {
 	return Point{}, fmt.Errorf("no backup at %q (run `vault recover list` to see what is available)", ref)
 }
 
-// chain returns the classic restore points to replay, oldest first, to rebuild
-// p: the last full backup before it plus, for an incremental, every increment
-// in between. Manifests record no parent pointer, so the chain is inferred
-// from the job's run order. Dedup points are self-contained.
+// chain returns the restore points to replay, oldest first, to rebuild a
+// classic item of p: the last full backup before it plus, for an incremental,
+// every increment in between. Manifests record no parent pointer, so the
+// chain is inferred from the job's run order. Callers use it only for items
+// without a dedup manifest (dedup items are self-contained), which is why it
+// does not look at p.IsDedup: a dedup destination can still hold classic
+// items such as VMs.
 func (s *Session) chain(p Point) ([]Point, error) {
-	if p.IsDedup() || (p.BackupType != "incremental" && p.BackupType != "differential") {
+	if p.BackupType != "incremental" && p.BackupType != "differential" {
 		return []Point{p}, nil
 	}
 	points, err := s.Points()

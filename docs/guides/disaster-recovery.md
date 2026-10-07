@@ -216,7 +216,9 @@ Keep that file private — it contains your storage credentials.
   container's Unraid template, configuration, image archive and (when
   enabled) database dump, for rebuilding the container on a new host.
 - **VMs and other items:** the stored files as-is (disk images, `domain.xml`,
-  NVRAM), decrypted and decompressed.
+  NVRAM), decrypted and decompressed. For an incremental or differential VM
+  backup each run's files go in their own folder, oldest first, because the
+  later disk images are deltas that need the earlier ones.
 - **Incremental and differential backups** are rebuilt from their whole
   chain, and files deleted before the chosen backup are removed again.
 - `--raw` copies a classic backup's archives out without unpacking them.
@@ -229,8 +231,9 @@ a trailing dot or space, device names such as `CON` — become `_`, and names
 that differ only by case get a `(2)` suffix. Every rename is listed in the
 report. Symbolic links are not recreated on Windows. On Linux and macOS,
 relative links that stay inside the item are recreated. Absolute links,
-device files and file ownership are never recreated. `--safe-names on|off`
-overrides the Windows naming rules on any platform.
+device files and file ownership are never recreated. `--safe-names on`
+applies the Windows naming rules on Linux and macOS too, for example before
+copying the files to a Windows share; on Windows they always apply.
 
 To put recovered data back on a new Vault server, use the [wizard](#recovering-with-the-wizard)
 instead: it restores containers, VMs and settings in place.

@@ -36,7 +36,8 @@ type ExtractOptions struct {
 	// instead of unpacking them.
 	Raw bool
 	// SafeNames rewrites names Windows cannot store. Nil means "only on
-	// Windows".
+	// Windows". It cannot be turned off on Windows, where an unsafe name
+	// such as "a:b" would be written as an alternate data stream.
 	SafeNames *bool
 	// Overwrite allows extracting into an item folder that is not empty.
 	Overwrite bool
@@ -96,7 +97,7 @@ func (s *Session) Extract(ctx context.Context, p Point, opts ExtractOptions) (Re
 		return Report{}, fmt.Errorf("create destination %s: %w", dest, err)
 	}
 	safe := defaultSafeNames()
-	if opts.SafeNames != nil {
+	if opts.SafeNames != nil && !safe {
 		safe = *opts.SafeNames
 	}
 	items, err := selectItems(p, opts.Items)
@@ -218,18 +219,22 @@ func (s *Session) extractItem(ctx context.Context, p Point, item Item, root stri
 			} else {
 				x.say("extracting %s (%s) to %s", item.Name, item.Type, root)
 			}
-			// Raw archives keep their stored names, so each chain step gets
-			// its own folder; otherwise a later step's data.tar would replace
-			// the full backup's.
+			// Files that are not unpacked keep their stored names, so in a
+			// chain each step gets its own folder. Otherwise a later step
+			// would replace the full backup's data.tar — or, for a VM, its
+			// disk image with the incremental delta.
 			rawDir := ""
-			if opts.Raw && len(chain) > 1 {
+			if (opts.Raw || len(trees) == 0) && len(chain) > 1 {
 				rawDir = path.Base(step.StoragePath)
 			}
 			if err := s.extractClassicStep(x, step, item, trees, opts.Raw, rawDir); err != nil {
 				return err
 			}
 		}
-		if len(chain) > 1 && !opts.Raw {
+		if len(chain) > 1 && len(trees) == 0 {
+			x.say("note: %s is %s; each run's files are in their own folder, oldest first, and must be combined with the original tools (for example qemu-img for VM disks)", item.Name, p.BackupType)
+		}
+		if len(chain) > 1 && len(trees) > 0 {
 			if err := s.pruneDeleted(x, chain[len(chain)-1], item, trees); err != nil {
 				return err
 			}
