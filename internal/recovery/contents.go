@@ -160,13 +160,15 @@ func isSidecar(name string) bool {
 
 // treeArchives returns the classic archives of an item that hold a file tree,
 // keyed by archiveKey. Other files (container images, VM disks, metadata) are
-// recovered as-is.
-func (s *Session) treeArchives(p Point, item Item) map[string]treeArchive {
+// recovered as-is. A container's volume map comes from its volumes.json; when
+// that file exists but cannot be read (or decrypted) it is an error, rather
+// than silently recovering the volume archives as opaque files.
+func (s *Session) treeArchives(p Point, item Item) (map[string]treeArchive, error) {
 	switch item.Type {
 	case "folder":
-		return map[string]treeArchive{"data.tar": {}}
+		return map[string]treeArchive{"data.tar": {}}, nil
 	case "plugin":
-		return map[string]treeArchive{"config.tar": {}}
+		return map[string]treeArchive{"config.tar": {}}, nil
 	case "container":
 		var vols []struct {
 			Destination string `json:"destination"`
@@ -175,19 +177,30 @@ func (s *Session) treeArchives(p Point, item Item) map[string]treeArchive {
 			IsFile      bool   `json:"is_file"`
 		}
 		out := map[string]treeArchive{}
+		found := false
 		for _, name := range []string{"volumes.json", "volumes.json.age"} {
-			if err := s.readJSON(path.Join(p.StoragePath, item.Name, name), &vols); err == nil {
+			err := s.readJSON(path.Join(p.StoragePath, item.Name, name), &vols)
+			if err == nil {
+				found = true
 				break
 			}
+			if !storage.IsNotExist(err) {
+				return nil, fmt.Errorf("read %s volume map %s: %w", item.Name, name, err)
+			}
+		}
+		if !found {
+			// No volume map recorded: the volume archives are recovered
+			// as stored files rather than unpacked.
+			return out, nil
 		}
 		for _, v := range vols {
 			if v.BackedUp && v.Archive != "" {
 				out[archiveKey(v.Archive)] = treeArchive{prefix: strings.TrimPrefix(v.Destination, "/"), isFile: v.IsFile}
 			}
 		}
-		return out
+		return out, nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
@@ -220,7 +233,10 @@ func (s *Session) classicContents(p Point, item Item) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	trees := s.treeArchives(p, item)
+	trees, err := s.treeArchives(p, item)
+	if err != nil {
+		return nil, err
+	}
 	byPath := map[string]Entry{}
 	add := func(sidecar string, idx engine.TarIndex) {
 		tree, ok := trees[archiveKey(sidecar)]

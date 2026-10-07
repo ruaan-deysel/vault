@@ -1,10 +1,13 @@
 package recovery
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +76,80 @@ func TestExtractVMChainKeepsEveryRun(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(rep.Items[0].Dir, "vdisk1.img")); err != nil || string(got) != "full disk" {
 		t.Fatalf("full run vdisk1.img = %q, %v", got, err)
+	}
+}
+
+// TestExtractContainerVolumeMap checks a container's volume map: unreadable
+// fails the item loudly, missing falls back to copying archives as stored,
+// and a readable one unpacks each volume (including a hard link) under the
+// volume's container path.
+func TestExtractContainerVolumeMap(t *testing.T) {
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	for _, h := range []*tar.Header{
+		{Name: "./settings.yml", Typeflag: tar.TypeReg, Mode: 0o644, Size: 2},
+		{Name: "./same.yml", Typeflag: tar.TypeLink, Linkname: "./sub/../settings.yml", Mode: 0o644},
+	} {
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			_, _ = tw.Write([]byte("ok"))
+		}
+	}
+	_ = tw.Close()
+	c := Item{Name: "app", Type: "container"}
+
+	cases := map[string]struct {
+		volumes string // "" = no volumes.json
+		check   func(t *testing.T, rep Report)
+	}{
+		"unreadable map": {volumes: "{not json", check: func(t *testing.T, rep Report) {
+			if !strings.Contains(rep.Items[0].Error, "volume map") {
+				t.Fatalf("item error = %q, want a volume map error", rep.Items[0].Error)
+			}
+		}},
+		"no map": {check: func(t *testing.T, rep Report) {
+			if rep.Failed() {
+				t.Fatalf("failed: %+v", rep)
+			}
+			if _, err := os.Stat(filepath.Join(rep.Items[0].Dir, "_vault-metadata", "volume_1.tar")); err == nil {
+				t.Fatal("archive went to _vault-metadata although the item has no tree")
+			}
+			if _, err := os.Stat(filepath.Join(rep.Items[0].Dir, "volume_1.tar")); err != nil {
+				t.Fatalf("archive not copied as stored: %v", err)
+			}
+		}},
+		"readable map": {volumes: `[{"destination":"/config","backed_up":true,"archive":"volume_1.tar"}]`, check: func(t *testing.T, rep Report) {
+			if rep.Failed() {
+				t.Fatalf("failed: %+v", rep)
+			}
+			for _, f := range []string{"settings.yml", "same.yml"} {
+				got, err := os.ReadFile(filepath.Join(rep.Items[0].Dir, "config", f))
+				if err != nil || string(got) != "ok" {
+					t.Errorf("config/%s = %q, %v", f, got, err)
+				}
+			}
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{"volume_1.tar": tarBuf.String()}
+			if tc.volumes != "" {
+				files["volumes.json"] = tc.volumes
+			}
+			writeClassicRun(t, root, "Apps", "2026-10-01_020000", "full", "2026-10-01T02:00:00Z", c, files)
+			s := openFixture(t, root)
+			p, err := s.FindPoint("Apps/latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rep, err := s.Extract(context.Background(), p, ExtractOptions{Dest: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.check(t, rep)
+		})
 	}
 }

@@ -206,7 +206,10 @@ func (s *Session) extractItem(ctx context.Context, p Point, item Item, root stri
 		if err != nil {
 			return err
 		}
-		trees := s.treeArchives(p, item)
+		trees, err := s.treeArchives(p, item)
+		if err != nil {
+			return err
+		}
 		if opts.Raw {
 			trees = nil
 		}
@@ -577,7 +580,12 @@ func (x *extractor) untar(r io.Reader, tree treeArchive) error {
 			}
 			x.fromTree[display] = true
 		case tar.TypeLink:
-			if err := x.copyHardlink(display, path.Join(tree.prefix, strings.TrimPrefix(hdr.Linkname, "./")), mode, hdr.ModTime); err != nil {
+			linkRel, err := cleanBackupPath(hdr.Linkname)
+			if err != nil {
+				x.skip(display, "hard link: "+err.Error())
+				continue
+			}
+			if err := x.copyHardlink(display, path.Join(tree.prefix, linkRel), mode, hdr.ModTime); err != nil {
 				x.skip(display, "hard link: "+err.Error())
 			} else {
 				x.fromTree[display] = true
