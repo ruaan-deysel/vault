@@ -2397,7 +2397,8 @@ type DedupKeyResult struct {
 	// Status is one of: "ok" (this server's key already opens it),
 	// "rewrapped" (unlocked with the backup passphrase and re-sealed with
 	// this server's key), "not_initialised" (no dedup backup yet),
-	// "locked_no_escrow", "locked_wrong_passphrase", or "error".
+	// "locked_needs_passphrase" (no passphrase was given, so nothing was
+	// tried), "locked_no_escrow", "locked_wrong_passphrase", or "error".
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
@@ -2447,6 +2448,8 @@ func (r *Runner) rewrapDedupKey(dest db.StorageDestination, passphrase string) (
 		return "ok", nil
 	case !errors.Is(err, dedup.ErrServerKeyMismatch):
 		return "error", err
+	case passphrase == "":
+		return "locked_needs_passphrase", errors.New("enter the backup passphrase to unlock this destination")
 	}
 	err = dedup.RewrapMaster(adapter, r.serverKey, passphrase, time.Now())
 	switch {
@@ -4918,6 +4921,9 @@ func (r *Runner) restoreSinglePointChunked(ctx context.Context, rp db.RestorePoi
 
 	repo, err := r.openDedupRepo(adapter, dest)
 	if err != nil {
+		if errors.Is(err, dedup.ErrServerKeyMismatch) {
+			return fmt.Errorf("open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+		}
 		return fmt.Errorf("open dedup repo: %w", err)
 	}
 
