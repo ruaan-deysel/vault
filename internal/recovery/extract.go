@@ -643,6 +643,11 @@ func (x *extractor) symlink(display, linkname string) string {
 	if err != nil || !isWithin(realRoot, realDir) {
 		return "its folder resolves outside the item, not recreated"
 	}
+	// A target that already exists may itself be reached through links
+	// extracted earlier: it has to resolve inside the item as well.
+	if realTarget, err := filepath.EvalSymlinks(filepath.Join(realDir, filepath.FromSlash(linkname))); err == nil && !isWithin(realRoot, realTarget) {
+		return "resolves outside the item, not recreated"
+	}
 	if info, err := os.Lstat(full); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			return "a file already exists at this path"

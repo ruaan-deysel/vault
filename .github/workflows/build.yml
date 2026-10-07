@@ -188,4 +188,7 @@ jobs:
       - name: Test portable packages and recover the fixture
         run: |
           VAULT_RECOVERY_FIXTURE="$(cygpath -w "$RUNNER_TEMP/fixture")" \
-            go test ./internal/recovery/... ./internal/fsstat/... ./internal/safepath/... ./internal/dedup/... ./internal/crypto/... -count=1 -v
+            go test ./internal/recovery/... ./internal/fsstat/... ./internal/dedup/... ./internal/crypto/... -count=1 -v
+          # safepath's other tests describe the daemon's Unix behaviour;
+          # JoinRemote is the part a Windows client relies on.
+          go test ./internal/safepath/ -run 'JoinRemote' -count=1 -v

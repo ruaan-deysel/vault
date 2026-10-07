@@ -84,9 +84,11 @@ func sourceTree(dir string) (files map[string]string, linuxOnly []string) {
 		"trailing-dot.":    "trailing dot\n",
 	}
 	linuxOnly = []string{"logs/run:01.log", "logs/what?.txt", "CON.txt", "trailing-dot."}
+	// A case twin of Mixed/Upper.txt. Which of the pair keeps its name
+	// depends on extraction order, so checkScenario asserts they land on
+	// different paths rather than that a particular one was renamed.
 	if runtime.GOOS == "linux" {
 		files["mixed/upper.txt"] = "lower twin\n"
-		linuxOnly = append(linuxOnly, "mixed/upper.txt")
 	}
 	return files, linuxOnly
 }
@@ -387,6 +389,14 @@ func checkScenario(t *testing.T, root string, sc scenario, safeNames bool) {
 		t.Errorf("report says %d files, want %d (skipped: %+v)", ir.Files, want, ir.Skipped)
 	}
 	if safeNames {
+		seen := map[string]string{}
+		for src := range sc.Want {
+			local := strings.ToLower(applyRenames(src, ir.Renamed))
+			if other, dup := seen[local]; dup {
+				t.Errorf("%s and %s both map to %s, which Windows treats as one name", src, other, local)
+			}
+			seen[local] = src
+		}
 		renamed := map[string]bool{}
 		for _, r := range ir.Renamed {
 			renamed[r.From] = true
@@ -454,6 +464,9 @@ func snapshotTree(t *testing.T, dir string) string {
 func TestExtractRawAndInclude(t *testing.T) {
 	if testing.Short() {
 		t.Skip("makes real backups")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("backups are made on the Unraid server; Windows recovers the Linux-built fixture (TestRecoverFixture)")
 	}
 	root := t.TempDir()
 	files := map[string]string{"dir/keep.txt": "kept\n", "dir/sub/deep.txt": "deep\n", "other.txt": "other\n"}
