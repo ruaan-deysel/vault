@@ -105,8 +105,10 @@ func (s *Session) Extract(ctx context.Context, p Point, opts ExtractOptions) (Re
 		return Report{}, err
 	}
 
+	// Windows-safe names include keeping case twins apart, even on a
+	// case-sensitive filesystem: the files may be copied to Windows later.
 	rep := Report{Point: p.StoragePath}
-	rootNames := newNamer(safe, caseInsensitiveFS())
+	rootNames := newNamer(safe, safe || caseInsensitiveFS())
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return rep, err
@@ -171,7 +173,7 @@ func (s *Session) extractItem(ctx context.Context, p Point, item Item, root stri
 	x := &extractor{
 		ctx:      ctx,
 		root:     root,
-		names:    newNamer(safe, caseInsensitiveFS()),
+		names:    newNamer(safe, safe || caseInsensitiveFS()),
 		report:   rep,
 		progress: opts.Progress,
 		written:  map[string]string{},
@@ -295,6 +297,11 @@ func (x *extractor) target(display string) (string, error) {
 	rel, err := x.names.local(display)
 	if err != nil {
 		return "", err
+	}
+	// The namer already confines rel; this is the explicit barrier (CWE-22)
+	// static analysis recognises, and a second line of defence.
+	if !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("%q is not a path inside the item folder", display)
 	}
 	full := filepath.Join(x.root, rel)
 	if !isWithin(x.root, full) {
@@ -581,6 +588,9 @@ func (x *extractor) untar(r io.Reader, tree treeArchive) error {
 			x.fromTree[display] = true
 		case tar.TypeLink:
 			linkRel, err := cleanBackupPath(hdr.Linkname)
+			if err == nil && !filepath.IsLocal(filepath.FromSlash(linkRel)) {
+				err = fmt.Errorf("target %q is outside the item", hdr.Linkname)
+			}
 			if err != nil {
 				x.skip(display, "hard link: "+err.Error())
 				continue
@@ -608,11 +618,12 @@ func (x *extractor) symlink(display, linkname string) string {
 	if runtime.GOOS == "windows" {
 		return "not recreated on Windows"
 	}
-	if linkname == "" || path.IsAbs(linkname) {
+	if linkname == "" || path.IsAbs(linkname) || filepath.IsAbs(linkname) {
 		return "absolute links are not recreated"
 	}
-	resolved := path.Join(path.Dir(display), linkname)
-	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+	// Where the link points, relative to the item root.
+	resolved := filepath.FromSlash(path.Join(path.Dir(display), linkname))
+	if !filepath.IsLocal(resolved) {
 		return "points outside the item, not recreated"
 	}
 	full, err := x.target(display)
@@ -622,6 +633,16 @@ func (x *extractor) symlink(display, linkname string) string {
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		return err.Error()
 	}
+	// The link is created in a real directory inside the item: resolve any
+	// links already on disk so an earlier entry cannot redirect this one.
+	realRoot, err := filepath.EvalSymlinks(x.root)
+	if err != nil {
+		return err.Error()
+	}
+	realDir, err := filepath.EvalSymlinks(filepath.Dir(full))
+	if err != nil || !isWithin(realRoot, realDir) {
+		return "its folder resolves outside the item, not recreated"
+	}
 	if info, err := os.Lstat(full); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			return "a file already exists at this path"
@@ -630,7 +651,7 @@ func (x *extractor) symlink(display, linkname string) string {
 			return err.Error()
 		}
 	}
-	if err := os.Symlink(filepath.FromSlash(linkname), full); err != nil {
+	if err := os.Symlink(filepath.FromSlash(linkname), filepath.Join(realDir, filepath.Base(full))); err != nil {
 		return err.Error()
 	}
 	return ""
