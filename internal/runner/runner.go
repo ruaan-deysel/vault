@@ -2389,7 +2389,9 @@ func OpenDedupRepoWithFallback(d *db.DB, adapter storage.Adapter, destID int64, 
 // openExistingDedupRepo is OpenDedupRepoWithFallback with this runner's
 // server key, trying the supplied passphrases and then the configured one.
 func (r *Runner) openExistingDedupRepo(adapter storage.Adapter, dest db.StorageDestination, passphrases ...string) (*dedup.Repo, error) {
-	return OpenDedupRepoWithFallback(r.db, adapter, dest.ID, r.serverKey, append(passphrases, r.resolvePassphrase())...)
+	// A fresh slice: appending to passphrases could write into a caller's
+	// backing array.
+	return OpenDedupRepoWithFallback(r.db, adapter, dest.ID, r.serverKey, slices.Concat(passphrases, []string{r.resolvePassphrase()})...)
 }
 
 // DedupKeyResult reports what RewrapDedupKeys did for one destination.
@@ -6132,6 +6134,16 @@ func (r *Runner) reclaimDedupAfterJobDelete(adapter storage.Adapter, jobID int64
 		}
 		if e != nil && !storage.IsNotExist(e) {
 			*errs = append(*errs, fmt.Errorf("remove dedup repo path %s: %w", sub, e))
+		}
+	}
+	// Header copies kept by a key rewrap (#451) hold a sealed master key too.
+	backups, err := dedup.HeaderBackups(adapter)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("list dedup header backups: %w", err))
+	}
+	for _, b := range backups {
+		if e := adapter.Delete(b); e != nil && !storage.IsNotExist(e) {
+			*errs = append(*errs, fmt.Errorf("remove dedup header backup %s: %w", b, e))
 		}
 	}
 	// Surface a failure to clear the dedup index too: leaving stale pack/chunk

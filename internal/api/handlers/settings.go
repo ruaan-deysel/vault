@@ -456,10 +456,6 @@ func (h *SettingsHandler) GetEncryptionStatus(w http.ResponseWriter, _ *http.Req
 	})
 }
 
-// GetEncryptionPassphrase returns the recoverable encryption passphrase.
-//
-//	GET /api/v1/settings/encryption/passphrase
-//
 // GetServerKey downloads the server key (vault.key) so it can be kept off the
 // server (issue #451). Dedup destinations are sealed with it; without it, or
 // a backup passphrase that was set when their last backup ran, they cannot
@@ -479,6 +475,9 @@ func (h *SettingsHandler) GetServerKey(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(h.serverKey)
 }
 
+// GetEncryptionPassphrase returns the recoverable encryption passphrase.
+//
+//	GET /api/v1/settings/encryption/passphrase
 func (h *SettingsHandler) GetEncryptionPassphrase(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 

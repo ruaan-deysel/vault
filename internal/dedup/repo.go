@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +30,30 @@ const RepoRoot = "_vault"
 // runner/db_backup.go), so cleanup of an orphaned repo must delete exactly
 // these subpaths and never the shared root (issue #183).
 func RepoSubpaths() []string {
-	return []string{repoConfigPath, packsRoot, indexRootPath}
+	return []string{repoConfigPath, escrowPath, packsRoot, indexRootPath}
+}
+
+// HeaderBackups lists the repo.json copies RewrapMaster keeps
+// (_vault/repo.json.<time>.bak). They hold a sealed master key, so whoever
+// removes the repository removes these too. Their names vary, hence a
+// listing rather than an entry in RepoSubpaths.
+func HeaderBackups(a storage.Adapter) ([]string, error) {
+	entries, err := a.List(RepoRoot)
+	if err != nil {
+		if storage.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	prefix := path.Base(repoConfigPath) + "."
+	for _, e := range entries {
+		base := path.Base(filepath.ToSlash(e.Path))
+		if !e.IsDir && strings.HasPrefix(base, prefix) && strings.HasSuffix(base, ".bak") {
+			out = append(out, RepoRoot+"/"+base)
+		}
+	}
+	return out, nil
 }
 
 const (

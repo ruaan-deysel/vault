@@ -232,3 +232,37 @@ func storageDirOf(t *testing.T, dest db.StorageDestination) string {
 	}
 	return cfg.Path
 }
+
+// TestReclaimRemovesEscrowAndHeaderBackups checks deleting the last dedup job
+// removes the escrow and repo.json backups — they hold the master key — and
+// still leaves the database backups that share _vault/.
+func TestReclaimRemovesEscrowAndHeaderBackups(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	dest := namedDedupDest(t, database, "reclaim")
+	dir := storageDirOf(t, dest)
+	vaultDir := filepath.Join(dir, "_vault")
+	for _, name := range []string{"repo.json", "master.escrow.age", "repo.json.20261007T030405Z.bak", "vault.db.latest"} {
+		_ = os.MkdirAll(vaultDir, 0o755)
+		if err := os.WriteFile(filepath.Join(vaultDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := runnerWithKey(database, testServerKey())
+	var errs []error
+	r.reclaimDedupAfterJobDelete(adapterFor(t, dest), 1, dest, &errs)
+	if len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	for _, gone := range []string{"repo.json", "master.escrow.age", "repo.json.20261007T030405Z.bak"} {
+		if _, err := os.Stat(filepath.Join(vaultDir, gone)); err == nil {
+			t.Errorf("%s survived the repository removal", gone)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(vaultDir, "vault.db.latest")); err != nil {
+		t.Fatalf("the database backup in _vault/ was removed: %v", err)
+	}
+}

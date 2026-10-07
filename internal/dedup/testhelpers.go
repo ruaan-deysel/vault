@@ -39,11 +39,11 @@ func (f *FakeAdapter) Write(path string, r io.Reader) error {
 	return nil
 }
 
-// Read returns the full contents at path.
 // errNotFound matches real adapters, which wrap fs.ErrNotExist so callers
 // can test with storage.IsNotExist.
 var errNotFound = fmt.Errorf("not found: %w", fs.ErrNotExist)
 
+// Read returns the full contents at path.
 func (f *FakeAdapter) Read(path string) (io.ReadCloser, error) {
 	b, ok := f.files[path]
 	if !ok {
