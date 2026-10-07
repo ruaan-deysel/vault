@@ -12,6 +12,15 @@ import (
 // these exported helpers are the single authority so a reader can never invent
 // its own rules and drift from what the engine wrote.
 
+// Exported names for the synthetic container keys that carry metadata, for
+// readers (such as `vault recover`) that surface that metadata rather than
+// skip it. Use these instead of re-declaring the literals.
+const (
+	ContainerInspectKey   = containerInspectKey
+	ContainerImageMetaKey = containerImageMetaKey
+	ContainerTemplateKey  = containerTemplateKey
+)
+
 // IsSyntheticContainerKey reports whether a container manifest key holds engine
 // metadata rather than restorable file content: __inspect, __image_meta,
 // __template, and the two database-dump keys a database_dump-enabled item adds.
@@ -22,15 +31,6 @@ import (
 // restore replays into the live server rather than extracting to a path; and
 // __dbdump_replay__ is a zero-value marker that would otherwise render as a
 // spurious "0 B" file (issue #333).
-// Exported names for the synthetic container keys that carry metadata, for
-// readers (such as `vault recover`) that surface that metadata rather than
-// skip it. Use these instead of re-declaring the literals.
-const (
-	ContainerInspectKey   = containerInspectKey
-	ContainerImageMetaKey = containerImageMetaKey
-	ContainerTemplateKey  = containerTemplateKey
-)
-
 func IsSyntheticContainerKey(key string) bool {
 	switch key {
 	case containerInspectKey, containerImageMetaKey, containerTemplateKey, ContainerDBDumpKey, ContainerDBReplayKey:
