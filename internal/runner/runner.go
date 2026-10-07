@@ -5617,9 +5617,17 @@ func logLevelForStatus(status string) string {
 // 1. Sealed passphrase in DB (decrypted with server key).
 // 2. Legacy plaintext passphrase in DB (migration compatibility).
 func (r *Runner) resolvePassphrase() string {
+	return ResolvePassphraseFrom(r.db, r.serverKey)
+}
+
+// ResolvePassphraseFrom returns the configured backup passphrase: the sealed
+// setting unsealed with serverKey, else the legacy plaintext setting. It
+// exists for daemon components that need the passphrase without a Runner
+// (the mount manager's dedup escrow fallback, #451).
+func ResolvePassphraseFrom(d *db.DB, serverKey []byte) string {
 	// Try sealed passphrase first.
-	if sealed, _ := r.db.GetSetting("encryption_passphrase_sealed", docsmeta.DefaultFor("encryption_passphrase_sealed")); sealed != "" && len(r.serverKey) > 0 {
-		passphrase, err := crypto.Unseal(r.serverKey, sealed)
+	if sealed, _ := d.GetSetting("encryption_passphrase_sealed", docsmeta.DefaultFor("encryption_passphrase_sealed")); sealed != "" && len(serverKey) > 0 {
+		passphrase, err := crypto.Unseal(serverKey, sealed)
 		if err != nil {
 			log.Printf("runner: failed to unseal passphrase: %v", err)
 		} else {
@@ -5628,7 +5636,7 @@ func (r *Runner) resolvePassphrase() string {
 	}
 
 	// Fall back to legacy plaintext (will be cleaned up on next SetEncryption call).
-	plaintext, _ := r.db.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase"))
+	plaintext, _ := d.GetSetting("encryption_passphrase", docsmeta.DefaultFor("encryption_passphrase"))
 	return plaintext
 }
 
