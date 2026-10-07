@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,65 @@ func TestRecoverCommandErrors(t *testing.T) {
 	// A config file and passphrase file that are fine work together.
 	if out, _, err := runRecover(t, "list", "--config-file", goodCfg, "--passphrase-file", pass); err != nil || !strings.Contains(out, "Docs/") {
 		t.Fatalf("list via --config-file = %q, %v", out, err)
+	}
+}
+
+// TestRecoverCommandOutputDetails covers the display branches: a locked run
+// in list, folders in contents, more than 20 renames, skipped entries, and
+// --safe-names off.
+func TestRecoverCommandOutputDetails(t *testing.T) {
+	root := t.TempDir()
+	run := filepath.Join(root, "Many", "2026-10-01_020000")
+	_ = os.MkdirAll(filepath.Join(run, "src"), 0o755)
+	manifest, _ := json.Marshal(map[string]any{
+		"version": 1, "job_name": "Many", "backup_type": "full", "encryption": "none",
+		"created_at": "2026-10-01T02:00:00Z", "items": []map[string]string{{"name": "src", "type": "folder"}},
+	})
+	_ = os.WriteFile(filepath.Join(run, "manifest.json"), manifest, 0o644)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	var index []map[string]any
+	_ = tw.WriteHeader(&tar.Header{Name: "dir/", Typeflag: tar.TypeDir, Mode: 0o755})
+	index = append(index, map[string]any{"path": "dir", "is_dir": true, "mode": "0755"})
+	for i := range 21 {
+		name := "dir/f:" + string(rune('a'+i)) + ".txt"
+		_ = tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: 1})
+		_, _ = tw.Write([]byte("x"))
+		index = append(index, map[string]any{"path": name, "size": 1, "mode": "0644"})
+	}
+	_ = tw.WriteHeader(&tar.Header{Name: "abs-link", Typeflag: tar.TypeSymlink, Linkname: "/etc/hosts"})
+	_ = tw.Close()
+	_ = os.WriteFile(filepath.Join(run, "src", "data.tar"), buf.Bytes(), 0o644)
+	idx, _ := json.Marshal(map[string]any{"version": 1, "archive": "data.tar", "files": index})
+	_ = os.WriteFile(filepath.Join(run, "src", "data.tar.index.json"), idx, 0o644)
+
+	locked := filepath.Join(root, "Secret", "2026-10-01_020000")
+	_ = os.MkdirAll(locked, 0o755)
+	_ = os.WriteFile(filepath.Join(locked, "manifest.json"), []byte(`{"vault_manifest_enc":1,"key":"age","algo":"age","payload":"AAAA"}`), 0o644)
+
+	out, errOut, err := runRecover(t, "list", "--path", root)
+	if err != nil || !strings.Contains(out, "locked (needs passphrase)") || !strings.Contains(errOut, "1 backup(s) are locked") {
+		t.Fatalf("list = %q / %q, %v", out, errOut, err)
+	}
+	out, _, err = runRecover(t, "contents", "--path", root, "--point", "Many/latest", "--item", "src")
+	if err != nil || !strings.Contains(out, "dir/\n") {
+		t.Fatalf("contents = %q, %v; want the folder listed with a trailing slash", out, err)
+	}
+
+	out, _, err = runRecover(t, "extract", "--path", root, "--point", "Many/latest", "--to", t.TempDir(), "--safe-names", "on")
+	if err != nil || !strings.Contains(out, "renamed (21)") || !strings.Contains(out, "and 1 more") ||
+		!strings.Contains(out, "not recreated (1)") || !strings.Contains(out, "abs-link") {
+		t.Fatalf("extract = %q, %v", out, err)
+	}
+
+	if runtime.GOOS != "windows" {
+		dest := t.TempDir()
+		out, _, err = runRecover(t, "extract", "--path", root, "--point", "Many/latest", "--to", dest, "--safe-names", "off")
+		if err != nil || strings.Contains(out, "renamed") {
+			t.Fatalf("--safe-names off = %q, %v; want no renames", out, err)
+		}
+		if _, err := os.Stat(filepath.Join(dest, "src", "dir", "f:a.txt")); err != nil {
+			t.Fatalf("original name not kept: %v", err)
+		}
 	}
 }
