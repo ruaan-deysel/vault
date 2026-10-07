@@ -347,4 +347,15 @@ describe('restore-point contents timeout (issue #449)', () => {
     expect(err.message).toBe('vault daemon request timed out')
     expect(err.status).toBe(504)
   })
+
+  it('exposes the status on 401 responses too', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"unauthorized"}', {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })))
+
+    const err = await api.getRestorePointContents(1, 2, 'appdata').catch(e => e)
+    expect(err.message).toBe('Not authorized — your session or API key may have expired.')
+    expect(err.status).toBe(401)
+  })
 })

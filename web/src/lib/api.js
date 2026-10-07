@@ -46,9 +46,11 @@ async function request(method, path, body = null, { timeoutMs = REQUEST_TIMEOUT_
   if (text) {
     try { data = JSON.parse(text) } catch { /* non-JSON body */ }
   }
-  if (res.status === 401) throw new Error('Not authorized — your session or API key may have expired.')
   if (!res.ok) {
-    const err = new Error((data && data.error) || `HTTP ${res.status}`)
+    const msg = res.status === 401
+      ? 'Not authorized — your session or API key may have expired.'
+      : (data && data.error) || `HTTP ${res.status}`
+    const err = new Error(msg)
     err.status = res.status
     throw err
   }
