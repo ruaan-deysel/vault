@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/ruaan-deysel/vault/internal/crypto"
 )
 
 // gzipMagic and zstdMagic are the leading bytes of each codec's container
@@ -42,6 +44,39 @@ func looksCompressed(head []byte) bool {
 // numbers, never by trusting the filename extension or the job's compression
 // setting. The corresponding extension is stripped from the returned name
 // only if a layer was actually peeled.
+// OpenStoredStream undoes the storage wrapping of one uploaded object: it
+// decrypts a ".age" object with passphrase and then strips transport
+// compression detected from the content, the same pipeline a classic restore
+// download uses. It returns the plain stream, a close func, and the object's
+// local name with the ".age"/".gz"/".zst" suffixes removed. A ".age" object
+// with an empty passphrase is an error rather than ciphertext passed through.
+func OpenStoredStream(r io.Reader, name, passphrase string) (io.Reader, func() error, string, error) {
+	src := r
+	closeDecrypt := func() error { return nil }
+	if base, ok := strings.CutSuffix(name, ".age"); ok {
+		if passphrase == "" {
+			return nil, nil, "", fmt.Errorf("%s is encrypted: a backup passphrase is required", name)
+		}
+		dec, err := crypto.DecryptReader(passphrase, r)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("decrypting %s: %w", name, err)
+		}
+		src, closeDecrypt, name = dec, dec.Close, base
+	}
+	plain, closeDecompress, local, err := decompressStoredReader(src, name, "")
+	if err != nil {
+		_ = closeDecrypt()
+		return nil, nil, "", err
+	}
+	return plain, func() error {
+		err := closeDecompress()
+		if cerr := closeDecrypt(); err == nil {
+			err = cerr
+		}
+		return err
+	}, local, nil
+}
+
 func decompressStoredReader(r io.Reader, fileName, compression string) (io.Reader, func() error, string, error) {
 	_ = compression // retained for API stability; detection is content-based.
 

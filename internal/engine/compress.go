@@ -171,6 +171,14 @@ var (
 // This makes the engine forward-compatible with archives produced by any of
 // the runner's old (engine=always gzip + runner transport-wrap) format
 // combinations: `.tar`, `.tar.gz`, and `.tar.zst` all decode correctly here.
+// DecompressingReader wraps r so a gzip- or zstd-compressed archive body
+// (data.tar.zst, volume_1.tar.gz, …) reads as the plain tar stream; plain
+// input passes through. Detection is content-based. The returned func
+// releases the decoder.
+func DecompressingReader(r io.Reader) (io.Reader, func() error, error) {
+	return detectingReader(r)
+}
+
 func detectingReader(r io.Reader) (io.Reader, func() error, error) {
 	br := bufio.NewReader(r)
 	head, err := br.Peek(4)
