@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -143,11 +144,12 @@ type Runner struct {
 	db        *db.DB
 	hub       *ws.Hub
 	serverKey []byte // AES-256 key for unsealing secrets.
-	// escrowed remembers, per dedup destination, a hash of the backup
-	// passphrase whose escrow has been confirmed, so the scrypt check runs
-	// once per passphrase rather than once per backed-up item (#451).
+	// escrowed remembers, per dedup destination, the backup passphrase whose
+	// escrow has been confirmed, so the scrypt check runs once per passphrase
+	// rather than once per backed-up item (#451). It is the passphrase
+	// resolvePassphrase already returns from memory; nothing new is exposed.
 	escrowMu        sync.Mutex
-	escrowed        map[int64][32]byte
+	escrowed        map[int64]string
 	snapshotManager *db.SnapshotManager
 	breaker         *Breaker
 	mu              sync.Mutex
@@ -2469,16 +2471,15 @@ func (r *Runner) rewrapDedupKey(dest db.StorageDestination, passphrase string) (
 // configured backup passphrase, so the passphrase alone can recover the
 // destination if vault.key is lost (issue #451). It runs on the backup path
 // only. The check costs one scrypt derivation, so a passphrase already
-// confirmed for a destination is remembered (as a hash, in memory) and not
+// confirmed for a destination is remembered (in memory) and not
 // checked again. Failures are logged and never fail the backup.
 func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination) {
 	pass := r.resolvePassphrase()
 	if pass == "" {
 		return
 	}
-	fp := sha256.Sum256([]byte(pass))
 	r.escrowMu.Lock()
-	confirmed := r.escrowed[dest.ID] == fp
+	confirmed := subtle.ConstantTimeCompare([]byte(r.escrowed[dest.ID]), []byte(pass)) == 1
 	r.escrowMu.Unlock()
 	if confirmed {
 		return
@@ -2493,9 +2494,9 @@ func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination)
 	}
 	r.escrowMu.Lock()
 	if r.escrowed == nil {
-		r.escrowed = map[int64][32]byte{}
+		r.escrowed = map[int64]string{}
 	}
-	r.escrowed[dest.ID] = fp
+	r.escrowed[dest.ID] = pass
 	r.escrowMu.Unlock()
 	if wrote {
 		log.Printf("runner: dedup: destination %q can now also be unlocked with the backup passphrase", dest.Name)
