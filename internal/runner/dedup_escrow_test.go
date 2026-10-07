@@ -344,7 +344,10 @@ func TestDedupKeyMismatchPaths(t *testing.T) {
 	}
 	_ = database.SetSetting("encryption_passphrase", "changed")
 	owner.ensureDedupEscrow(repo, dest)
-	if owner.escrowed[dest.ID] != "" {
+	owner.escrowMu.Lock()
+	cached := owner.escrowed[dest.ID]
+	owner.escrowMu.Unlock()
+	if cached != "" {
 		t.Fatal("a failed escrow write was cached as confirmed")
 	}
 
