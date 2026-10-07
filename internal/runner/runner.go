@@ -2966,7 +2966,17 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
-	r.ensureDedupEscrow(repo, dest)
+	if repo.UnlockedByPassphrase() {
+		// The backup can proceed — the master key is the same — but this
+		// server's vault.key does not match the destination, so say so
+		// rather than letting it run mis-keyed unnoticed. Nothing is
+		// re-sealed here: another server may still use the original key.
+		r.runLog(runID, runLogLevelWarn, fmt.Sprintf(
+			"Destination %q was opened with the backup passphrase because this server's vault.key does not match it. %s",
+			dest.Name, dedup.KeyMismatchHint), map[string]any{"destination": dest.Name})
+	} else {
+		r.ensureDedupEscrow(repo, dest)
+	}
 
 	// For differential/incremental backups, load the parent item's manifest
 	// so the handler can carry forward unchanged entries and keep the new

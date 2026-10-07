@@ -2,10 +2,12 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ruaan-deysel/vault/internal/crypto"
@@ -183,4 +185,50 @@ func namedDedupDest(t *testing.T, database *db.DB, name string) db.StorageDestin
 	}
 	dest, _ := database.GetStorageDestination(id)
 	return dest
+}
+
+// TestMiskeyedBackupWarns checks a backup on a server whose vault.key does
+// not match the destination still completes through the escrow, and says
+// clearly in the run log that the destination is mis-keyed.
+func TestMiskeyedBackupWarns(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	_ = database.SetSetting("encryption_passphrase", "pw")
+	dest, jobID := dedupBackup(t, runnerWithKey(database, testServerKey()), database, t.TempDir())
+	header, _ := os.ReadFile(filepath.Join(storageDirOf(t, dest), "_vault", "repo.json"))
+
+	other := runnerWithKey(database, otherServerKey())
+	other.RunJob(jobID)
+	runs, _ := database.GetJobRuns(jobID, 1)
+	if len(runs) == 0 || runs[0].Status != "completed" {
+		t.Fatalf("mis-keyed backup did not complete: %+v", runs)
+	}
+	entries, err := database.ListRunLogEntries(context.Background(), runs[0].ID, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warned := false
+	for _, e := range entries {
+		warned = warned || strings.Contains(e.Message, "does not match it")
+	}
+	if !warned {
+		t.Fatal("run log has no warning about the mismatched vault.key")
+	}
+	if after, _ := os.ReadFile(filepath.Join(storageDirOf(t, dest), "_vault", "repo.json")); !bytes.Equal(after, header) {
+		t.Fatal("a mis-keyed backup rewrote repo.json")
+	}
+}
+
+func storageDirOf(t *testing.T, dest db.StorageDestination) string {
+	t.Helper()
+	var cfg struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(dest.Config), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Path
 }

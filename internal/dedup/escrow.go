@@ -136,8 +136,16 @@ func OpenRepoWithPassphrase(d *db.DB, a storage.Adapter, storageID int64, passph
 	if err != nil {
 		return nil, err
 	}
-	return buildRepo(d, a, storageID, master, cfg.UUID), nil
+	r := buildRepo(d, a, storageID, master, cfg.UUID)
+	r.viaEscrow = true
+	return r, nil
 }
+
+// UnlockedByPassphrase reports whether the repository was opened through the
+// passphrase escrow, meaning the server key in use does not match it. The
+// data is fully usable, but the destination stays mis-keyed until the
+// original vault.key is restored or RewrapMaster runs.
+func (r *Repo) UnlockedByPassphrase() bool { return r.viaEscrow }
 
 // RewrapMaster re-seals the repository's master key with serverKey after
 // recovering it through the passphrase escrow — the step that makes a

@@ -53,6 +53,9 @@ func TestEscrowRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !opened.UnlockedByPassphrase() || r.UnlockedByPassphrase() {
+		t.Fatalf("UnlockedByPassphrase: escrow=%v, server key=%v", opened.UnlockedByPassphrase(), r.UnlockedByPassphrase())
+	}
 	if got, err := opened.Get(id); err != nil || string(got) != "hello" {
 		t.Fatalf("Get through escrow = %q, %v", got, err)
 	}

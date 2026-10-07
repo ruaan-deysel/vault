@@ -74,6 +74,9 @@ type Repo struct {
 	adapter   storage.Adapter
 	storageID int64
 	uuid      string // repository identity, binds the passphrase escrow
+	// viaEscrow is set when the master key came from the passphrase escrow
+	// because the server key did not match (OpenRepoWithPassphrase).
+	viaEscrow bool
 
 	master       []byte
 	chunkHashKey []byte
