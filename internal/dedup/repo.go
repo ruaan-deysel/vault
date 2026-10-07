@@ -322,8 +322,8 @@ func (r *Repo) Get(id ID) ([]byte, error) {
 }
 
 // ReadAndVerify reads a chunk back and proves it is still the chunk it
-// claims to be: Get's AEAD tag catches tampering and bit-rot at the crypto
-// layer, and recomputing the content ID catches an index entry that points at
+// claims to be: the AEAD tag Get checks catches tampering and bit-rot at the
+// crypto layer, and recomputing the content ID catches an index entry that points at
 // the wrong bytes. It returns the plaintext so callers can account for the
 // bytes read.
 //
