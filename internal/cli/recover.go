@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -52,6 +53,10 @@ var (
 			if !recoverVerbose {
 				log.SetOutput(io.Discard)
 			}
+			// Piping output into head or less must not kill a run before it
+			// removes its scratch files: a closed pipe then fails the write
+			// instead of ending the process.
+			signal.Ignore(syscall.SIGPIPE)
 		},
 		Short: "Read backups straight from storage and extract files (no Vault server needed)",
 		Long: `Recover files from Vault backups when the Vault server is not available.
@@ -325,7 +330,7 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errOut := cmd.ErrOrStderr()
 	rep, err := s.Extract(ctx, p, recovery.ExtractOptions{
