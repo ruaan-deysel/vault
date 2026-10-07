@@ -2478,19 +2478,25 @@ func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination)
 	}
 	fp := sha256.Sum256([]byte(pass))
 	r.escrowMu.Lock()
-	defer r.escrowMu.Unlock()
-	if r.escrowed[dest.ID] == fp {
+	confirmed := r.escrowed[dest.ID] == fp
+	r.escrowMu.Unlock()
+	if confirmed {
 		return
 	}
+	// The scrypt check runs without the lock so destinations do not wait on
+	// each other. Two items racing on one destination at most both write an
+	// escrow, and either one is valid.
 	wrote, err := repo.EnsurePassphraseEscrow(pass)
 	if err != nil {
 		log.Printf("runner: dedup: could not update the backup-passphrase escrow for destination %q: %v", dest.Name, err)
 		return
 	}
+	r.escrowMu.Lock()
 	if r.escrowed == nil {
 		r.escrowed = map[int64][32]byte{}
 	}
 	r.escrowed[dest.ID] = fp
+	r.escrowMu.Unlock()
 	if wrote {
 		log.Printf("runner: dedup: destination %q can now also be unlocked with the backup passphrase", dest.Name)
 	}
