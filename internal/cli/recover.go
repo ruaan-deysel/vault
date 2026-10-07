@@ -197,11 +197,21 @@ func recoverOptions() (recovery.Options, error) {
 		if err != nil {
 			return opts, fmt.Errorf("read --passphrase-file: %w", err)
 		}
-		opts.Passphrase = strings.TrimRight(string(body), "\r\n")
+		opts.Passphrase = trimLineEnding(string(body))
 	default:
 		opts.Passphrase = os.Getenv("VAULT_PASSPHRASE")
 	}
 	return opts, nil
+}
+
+// trimLineEnding removes the single line ending an editor or `echo` adds to
+// a passphrase file, keeping any other characters, so a passphrase that
+// itself ends in "\r" or "\n" survives.
+func trimLineEnding(s string) string {
+	if t, ok := strings.CutSuffix(s, "\n"); ok {
+		return strings.TrimSuffix(t, "\r")
+	}
+	return s
 }
 
 func openRecoverSession() (*recovery.Session, error) {
