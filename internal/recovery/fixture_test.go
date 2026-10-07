@@ -261,6 +261,29 @@ func TestRecoverRunnerBackups(t *testing.T) {
 		// every platform and not only in the Windows CI job.
 		t.Run(sc.Name+" with Windows-safe names", func(t *testing.T) { checkScenario(t, root, sc, true) })
 	}
+
+	// --raw on a chain keeps every step's archives, one folder per run.
+	t.Run("raw chain keeps every step", func(t *testing.T) {
+		s := openFixture(t, filepath.Join(root, "classic"))
+		p, err := s.FindPoint("Encrypted Chain/latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		chain, _ := s.chain(p)
+		rep, err := s.Extract(context.Background(), p, ExtractOptions{Dest: t.TempDir(), Raw: true})
+		if err != nil || rep.Failed() {
+			t.Fatalf("raw: %+v, %v", rep, err)
+		}
+		if len(chain) < 2 {
+			t.Fatalf("chain has %d steps, want a full plus an incremental", len(chain))
+		}
+		for _, step := range chain {
+			archive := filepath.Join(rep.Items[0].Dir, path.Base(step.StoragePath), "data.tar")
+			if _, err := os.Stat(archive); err != nil {
+				t.Errorf("raw chain: %s missing: %v", archive, err)
+			}
+		}
+	})
 }
 
 func openFixture(t *testing.T, storageDir string) *Session {

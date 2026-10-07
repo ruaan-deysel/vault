@@ -218,7 +218,14 @@ func (s *Session) extractItem(ctx context.Context, p Point, item Item, root stri
 			} else {
 				x.say("extracting %s (%s) to %s", item.Name, item.Type, root)
 			}
-			if err := s.extractClassicStep(x, step, item, trees, opts.Raw); err != nil {
+			// Raw archives keep their stored names, so each chain step gets
+			// its own folder; otherwise a later step's data.tar would replace
+			// the full backup's.
+			rawDir := ""
+			if opts.Raw && len(chain) > 1 {
+				rawDir = path.Base(step.StoragePath)
+			}
+			if err := s.extractClassicStep(x, step, item, trees, opts.Raw, rawDir); err != nil {
 				return err
 			}
 		}
@@ -456,7 +463,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 // extractClassicStep unpacks one restore point's stored files for an item.
 // Tree archives are streamed straight from storage into the item folder;
 // other files are copied as-is.
-func (s *Session) extractClassicStep(x *extractor, step Point, item Item, trees map[string]treeArchive, raw bool) error {
+func (s *Session) extractClassicStep(x *extractor, step Point, item Item, trees map[string]treeArchive, raw bool, rawDir string) error {
 	files, err := s.itemFiles(step, item.Name)
 	if err != nil {
 		return err
@@ -473,14 +480,14 @@ func (s *Session) extractClassicStep(x *extractor, step Point, item Item, trees 
 		if !raw && isSidecar(f.Path) {
 			continue
 		}
-		if err := s.extractStoredFile(x, f, sums[path.Base(f.Path)], trees, raw); err != nil {
+		if err := s.extractStoredFile(x, f, sums[path.Base(f.Path)], trees, rawDir); err != nil {
 			return fmt.Errorf("%s: %w", path.Base(f.Path), err)
 		}
 	}
 	return nil
 }
 
-func (s *Session) extractStoredFile(x *extractor, f storage.FileInfo, wantSum string, trees map[string]treeArchive, raw bool) error {
+func (s *Session) extractStoredFile(x *extractor, f storage.FileInfo, wantSum string, trees map[string]treeArchive, rawDir string) error {
 	rc, err := s.adapter.Read(f.Path)
 	if err != nil {
 		return err
@@ -500,7 +507,10 @@ func (s *Session) extractStoredFile(x *extractor, f storage.FileInfo, wantSum st
 		}
 	} else {
 		display := localName
-		if len(trees) > 0 {
+		switch {
+		case rawDir != "":
+			display = path.Join(rawDir, localName)
+		case len(trees) > 0:
 			display = path.Join(metadataDir, localName)
 		}
 		if x.wanted(display) {

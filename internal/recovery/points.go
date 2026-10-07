@@ -110,6 +110,10 @@ func pointFromManifest(m map[string]any) Point {
 		p.CreatedAt = t
 	} else if t, err := time.Parse("2006-01-02_150405", str(m["timestamp"])); err == nil {
 		p.CreatedAt = t
+	} else if t, ok := runFolderTime(p.StoragePath); ok {
+		// A locked (encrypted) manifest carries no readable dates; the run
+		// folder's name still does, so locked runs sort in time order too.
+		p.CreatedAt = t
 	}
 	if items, ok := m["items"].([]any); ok {
 		for _, raw := range items {
@@ -142,6 +146,19 @@ func pointFromManifest(m map[string]any) Point {
 	return p
 }
 
+// runFolderTime parses the time from a run folder name: "2006-01-02_150405",
+// or "<run id>_2006-01-02_150405" for backups made before issue #319.
+// The name is in server-local time, which is close enough for ordering.
+func runFolderTime(storagePath string) (time.Time, bool) {
+	const layout = "2006-01-02_150405"
+	base := path.Base(storagePath)
+	if len(base) < len(layout) {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(layout, base[len(base)-len(layout):], time.Local)
+	return t, err == nil
+}
+
 func str(v any) string {
 	s, _ := v.(string)
 	return s
@@ -168,24 +185,22 @@ func (s *Session) FindPoint(ref string) (Point, error) {
 	}
 	ref = strings.Trim(filepath.ToSlash(ref), "/")
 	if job, ok := strings.CutSuffix(ref, "/latest"); ok {
-		var latest, locked *Point
+		// Points are in time order, so the job's last entry is its newest
+		// run. When that one is locked, say so instead of quietly falling
+		// back to an older backup the user did not ask for.
+		var newest *Point
 		for i := range points {
-			if points[i].Job != job {
-				continue
-			}
-			if points[i].Locked {
-				locked = &points[i]
-			} else {
-				latest = &points[i]
+			if points[i].Job == job {
+				newest = &points[i]
 			}
 		}
 		switch {
-		case latest != nil:
-			return *latest, nil
-		case locked != nil:
-			return Point{}, locked.lockedError()
-		default:
+		case newest == nil:
 			return Point{}, fmt.Errorf("no backups for job %q (run `vault recover list` to see what is available)", job)
+		case newest.Locked:
+			return Point{}, newest.lockedError()
+		default:
+			return *newest, nil
 		}
 	}
 	for _, p := range points {

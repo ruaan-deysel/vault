@@ -105,8 +105,12 @@ rebuilt from their whole chain.
 
 On Windows, names Windows cannot store (for example "a:b", "CON", a
 trailing dot) and names that differ only by case are given safe names; every
-rename is printed and recorded in ` + recoverReportName + `. Symbolic links,
-device files and file ownership are not recreated.`,
+rename is printed and recorded in ` + recoverReportName + `.
+
+Relative symbolic links that stay inside the item are recreated on Linux and
+macOS; Windows skips all links. Absolute links, device files and file
+ownership are never recreated. With --raw, each step of an incremental or
+differential chain is copied into its own folder.`,
 		Args: cobra.NoArgs,
 		RunE: runRecoverExtract,
 		// Errors here are about backups or connection details, not flags;
@@ -128,15 +132,16 @@ func init() {
 	recoverListCmd.Flags().BoolVar(&recoverJSON, "json", false, "print JSON")
 
 	recoverContentsCmd.Flags().StringVar(&recoverPoint, "point", "", `backup to read, as printed by list ("<job>/<run>" or "<job>/latest")`)
-	recoverContentsCmd.Flags().StringSliceVar(&recoverItems, "item", nil, "item to list")
+	// StringArray, not StringSlice: item names and paths may contain commas.
+	recoverContentsCmd.Flags().StringArrayVar(&recoverItems, "item", nil, "item to list")
 	recoverContentsCmd.Flags().BoolVar(&recoverJSON, "json", false, "print JSON")
 	_ = recoverContentsCmd.MarkFlagRequired("point")
 	_ = recoverContentsCmd.MarkFlagRequired("item")
 
 	ef := recoverExtractCmd.Flags()
 	ef.StringVar(&recoverPoint, "point", "", `backup to extract from ("<job>/<run>" or "<job>/latest")`)
-	ef.StringSliceVar(&recoverItems, "item", nil, "item to extract (repeatable; default: every item)")
-	ef.StringSliceVar(&recoverIncludes, "include", nil, "only extract this path inside the item, as printed by contents (repeatable)")
+	ef.StringArrayVar(&recoverItems, "item", nil, "item to extract (repeatable; default: every item)")
+	ef.StringArrayVar(&recoverIncludes, "include", nil, "only extract this path inside the item, as printed by contents (repeatable)")
 	ef.StringVar(&recoverTo, "to", "", "local folder to extract into")
 	ef.BoolVar(&recoverRaw, "raw", false, "copy classic backup archives out as-is (decrypted) instead of unpacking them")
 	ef.BoolVar(&recoverOverwrite, "overwrite", false, "allow extracting into item folders that are not empty")
@@ -351,10 +356,14 @@ func runRecoverExtract(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	reportPath := filepath.Join(recoverTo, "vault-recover-report-"+time.Now().Format("20060102-150405")+".json")
-	if body, jerr := json.MarshalIndent(rep, "", "  "); jerr == nil {
-		if werr := os.WriteFile(reportPath, body, 0o600); werr == nil {
-			fmt.Fprintf(out, "Report: %s\n", reportPath)
-		}
+	body, err := json.MarshalIndent(rep, "", "  ")
+	if err == nil {
+		err = os.WriteFile(reportPath, body, 0o600)
+	}
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not write the report to %s: %v\n", reportPath, err)
+	} else {
+		fmt.Fprintf(out, "Report: %s\n", reportPath)
 	}
 	if rep.Failed() {
 		return errors.New("some items could not be recovered")
