@@ -22,6 +22,15 @@ import (
 // restore replays into the live server rather than extracting to a path; and
 // __dbdump_replay__ is a zero-value marker that would otherwise render as a
 // spurious "0 B" file (issue #333).
+// Exported names for the synthetic container keys that carry metadata, for
+// readers (such as `vault recover`) that surface that metadata rather than
+// skip it. Use these instead of re-declaring the literals.
+const (
+	ContainerInspectKey   = containerInspectKey
+	ContainerImageMetaKey = containerImageMetaKey
+	ContainerTemplateKey  = containerTemplateKey
+)
+
 func IsSyntheticContainerKey(key string) bool {
 	switch key {
 	case containerInspectKey, containerImageMetaKey, containerTemplateKey, ContainerDBDumpKey, ContainerDBReplayKey:

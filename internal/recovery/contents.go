@@ -128,10 +128,10 @@ func walkDedup(repo *dedup.Repo, itemType string, m dedup.Manifest, fn func(stri
 // containerMetadataNames maps a dedup container's synthetic metadata keys to
 // the file names they are recovered under, inside metadataDir.
 var containerMetadataNames = map[string]string{
-	"__inspect":               "inspect.json",
-	"__image_meta":            "image_meta.json",
-	"__template":              "template.xml",
-	engine.ContainerDBDumpKey: "database-dump",
+	engine.ContainerInspectKey:   "inspect.json",
+	engine.ContainerImageMetaKey: "image_meta.json",
+	engine.ContainerTemplateKey:  "template.xml",
+	engine.ContainerDBDumpKey:    "database-dump",
 }
 
 // treeArchive says where a classic archive's contents belong in the item.

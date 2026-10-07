@@ -226,9 +226,11 @@ Keep that file private — it contains your storage credentials.
 Stored checksums are verified while extracting. A summary is printed and a
 `vault-recover-report-<time>.json` file is written into the `--to` folder.
 
-**On Windows**, names Windows cannot store — `:` `?` `*` `"` `<` `>` `|`,
-a trailing dot or space, device names such as `CON` — become `_`, and names
-that differ only by case get a `(2)` suffix. Every rename is listed in the
+**On Windows**, names Windows cannot store are rewritten: each `:` `?` `*`
+`"` `<` `>` `|`, and a trailing dot or space, is replaced with `_`
+(`run:01.log` becomes `run_01.log`); a device name such as `CON` gets a
+leading `_` (`CON.txt` becomes `_CON.txt`); and names that differ only by
+case get a `(2)` suffix. Every rename is listed in the
 report. Symbolic links are not recreated on Windows. On Linux and macOS,
 relative links that stay inside the item are recreated. Absolute links,
 device files and file ownership are never recreated. `--safe-names on`

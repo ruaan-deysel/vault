@@ -438,6 +438,12 @@ func (s *Session) extractDedup(x *extractor, repo *dedup.Repo, id dedup.ID, item
 		if display == "" || !x.wanted(display) {
 			return nil
 		}
+		// Same rule as the classic path: one name that cannot be mapped
+		// (escaping, or not valid UTF-8) is reported, not fatal for the item.
+		if _, err := x.names.local(display); err != nil {
+			x.skip(display, err.Error())
+			return nil
+		}
 		if e.IsDir {
 			return x.mkdir(display, os.FileMode(e.Mode).Perm(), parseTime(e.ModTime))
 		}
@@ -620,6 +626,20 @@ func (x *extractor) symlink(display, linkname string) string {
 	}
 	if linkname == "" || path.IsAbs(linkname) || filepath.IsAbs(linkname) {
 		return "absolute links are not recreated"
+	}
+	// ".." is only allowed as a leading run ("../../x"). After a normal
+	// segment ("a/../.."), the lexical check below and the real resolution
+	// can disagree once "a" is itself a link extracted earlier.
+	seenName := false
+	for _, seg := range strings.Split(linkname, "/") {
+		switch {
+		case seg == "..":
+			if seenName {
+				return `".." after a folder name is not recreated`
+			}
+		case seg != "" && seg != ".":
+			seenName = true
+		}
 	}
 	// Where the link points, relative to the item root.
 	resolved := filepath.FromSlash(path.Join(path.Dir(display), linkname))

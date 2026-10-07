@@ -70,6 +70,10 @@ func NewSFTPAdapter(config SFTPConfig) (*SFTPAdapter, error) {
 	if config.BasePath == "" && config.Path != "" {
 		config.BasePath = config.Path
 	}
+	// The base is a server path: keep it '/'-separated so the containment
+	// check sends the server the same base JoinRemote joins under, even when
+	// Vault runs on Windows (a no-op elsewhere).
+	config.BasePath = filepath.ToSlash(config.BasePath)
 	a := &SFTPAdapter{config: config}
 	a.pool = newSFTPPool(sftpPoolSize, func() (sftpConn, error) {
 		return a.dialConnection()

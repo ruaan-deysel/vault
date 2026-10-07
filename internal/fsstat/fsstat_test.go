@@ -1,6 +1,9 @@
 package fsstat
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestStatReportsCapacityForTempDir checks the platform call returns a
 // non-empty, self-consistent capacity for a directory that always exists.
@@ -18,5 +21,17 @@ func TestStatReportsCapacityForTempDir(t *testing.T) {
 func TestStatMissingPathFails(t *testing.T) {
 	if _, err := Stat(t.TempDir() + "/does-not-exist"); err == nil {
 		t.Fatal("Stat on a missing path returned no error")
+	}
+}
+
+// TestStatAcceptsFilePath checks a path naming a file reports its
+// filesystem, as statfs does on Unix, on every platform.
+func TestStatAcceptsFilePath(t *testing.T) {
+	file := t.TempDir() + "/f.txt"
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := Stat(file); err != nil || u.Total == 0 {
+		t.Fatalf("Stat(file) = %+v, %v", u, err)
 	}
 }
