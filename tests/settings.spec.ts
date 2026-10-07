@@ -84,4 +84,22 @@ test.describe('Settings Configuration & Management', () => {
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toContain('diagnostics');
   });
+
+  test('downloads the server key for an off-server copy (#451)', async ({ page }) => {
+    await page.goto('/#/settings');
+    await page.getByRole('button', { name: 'Security', exact: true }).click();
+
+    await expect(page.getByRole('heading', { name: /Server key/ })).toBeVisible();
+    await expect(page.getByText(/Anyone with this file and access to your backup storage/)).toBeVisible();
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download vault.key' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('vault.key');
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const c of stream) chunks.push(c as Buffer);
+    expect(Buffer.concat(chunks).length).toBe(32);
+    await expect(page.getByText(/vault.key downloaded/)).toBeVisible();
+  });
 });
