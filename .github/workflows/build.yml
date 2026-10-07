@@ -178,9 +178,12 @@ jobs:
           name: recovery-fixture
 
       - name: Unpack recovery fixture
+        # GNU tar reads "D:\..." as a remote host:path, so give it the
+        # POSIX form of the runner's temp directory.
         run: |
-          mkdir -p "$RUNNER_TEMP/fixture"
-          tar -xf recovery-fixture.tar -C "$RUNNER_TEMP/fixture"
+          FIXTURE="$(cygpath -u "$RUNNER_TEMP")/fixture"
+          mkdir -p "$FIXTURE"
+          tar -xf recovery-fixture.tar -C "$FIXTURE"
 
       - name: Test portable packages and recover the fixture
         run: |
