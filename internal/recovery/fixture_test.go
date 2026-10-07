@@ -49,6 +49,10 @@ type scenario struct {
 	// Metadata lists engine files recovered beside the tree (under
 	// _vault-metadata) that must exist too.
 	Metadata []string `json:"metadata,omitempty"`
+	// RelLinks are relative symlinks inside the item (path -> target) that
+	// must be recreated where the OS allows; AbsLinks must always be skipped.
+	RelLinks map[string]string `json:"rel_links,omitempty"`
+	AbsLinks []string          `json:"abs_links,omitempty"`
 }
 
 type fixture struct {
@@ -166,7 +170,18 @@ func buildFixture(t *testing.T, root string) fixture {
 	delete(final, "dir/nested.txt")
 
 	steps := []func(string){
-		func(src string) { writeTree(t, src, first) },
+		func(src string) {
+			writeTree(t, src, first)
+			if runtime.GOOS != "windows" {
+				_ = os.MkdirAll(filepath.Join(src, "links"), 0o755)
+				if err := os.Symlink("../plain.txt", filepath.Join(src, "links", "rel")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("/etc/hosts", filepath.Join(src, "links", "abs")); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
 		func(src string) {
 			writeTree(t, src, map[string]string{"plain.txt": final["plain.txt"], "new.txt": final["new.txt"]})
 			// Make sure the incremental sees the change even on coarse mtimes.
@@ -191,7 +206,8 @@ func buildFixture(t *testing.T, root string) fixture {
 	return fixture{Scenarios: []scenario{
 		{Name: "classic encrypted incremental chain", Storage: "classic", Point: "Encrypted Chain/latest",
 			Item: "src", Want: final, Absent: []string{"dir/nested.txt"}, LinuxOnly: linuxOnly,
-			Metadata: []string{metadataDir + "/folder_meta.json"}},
+			Metadata: []string{metadataDir + "/folder_meta.json"},
+			RelLinks: map[string]string{"links/rel": "../plain.txt"}, AbsLinks: []string{"links/abs"}},
 		{Name: "dedup", Storage: "dedup", Point: "Dedup Folder/latest",
 			Item: "src", Want: final, Absent: []string{"dir/nested.txt"}, LinuxOnly: linuxOnly},
 	}}
@@ -318,6 +334,30 @@ func checkScenario(t *testing.T, root string, sc scenario, safeNames bool) {
 	for _, meta := range sc.Metadata {
 		if _, err := os.Stat(filepath.Join(ir.Dir, filepath.FromSlash(meta))); err != nil {
 			t.Errorf("metadata file %s was not recovered: %v", meta, err)
+		}
+	}
+	skipped := map[string]bool{}
+	for _, sk := range ir.Skipped {
+		skipped[sk.Path] = true
+	}
+	for link, target := range sc.RelLinks {
+		if runtime.GOOS == "windows" {
+			if !skipped[link] {
+				t.Errorf("%s: symlink should be reported as skipped on Windows", link)
+			}
+			continue
+		}
+		got, err := os.Readlink(filepath.Join(ir.Dir, filepath.FromSlash(applyRenames(link, ir.Renamed))))
+		if err != nil || got != target {
+			t.Errorf("%s: symlink = %q, %v; want -> %q", link, got, err, target)
+		}
+	}
+	for _, link := range sc.AbsLinks {
+		if !skipped[link] {
+			t.Errorf("%s: absolute symlink was not reported as skipped", link)
+		}
+		if _, err := os.Lstat(filepath.Join(ir.Dir, filepath.FromSlash(link))); err == nil {
+			t.Errorf("%s: absolute symlink was recreated", link)
 		}
 	}
 	if want := len(sc.Want) + len(sc.Metadata); ir.Files != want {

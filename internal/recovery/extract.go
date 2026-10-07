@@ -568,11 +568,49 @@ func (x *extractor) untar(r io.Reader, tree treeArchive) error {
 				x.fromTree[display] = true
 			}
 		case tar.TypeSymlink:
-			x.skip(display, "symbolic link to "+hdr.Linkname+" (not recreated)")
+			if reason := x.symlink(display, hdr.Linkname); reason != "" {
+				x.skip(display, "symbolic link to "+hdr.Linkname+": "+reason)
+			}
 		default:
 			x.skip(display, fmt.Sprintf("special file (tar type %q) not recreated", hdr.Typeflag))
 		}
 	}
+}
+
+// symlink recreates a relative symbolic link that stays inside the item
+// folder, returning why it did not when it cannot. Windows needs elevated
+// rights to create links, and an absolute or escaping link would point at the
+// recovering machine's own files, so those are reported instead.
+func (x *extractor) symlink(display, linkname string) string {
+	if runtime.GOOS == "windows" {
+		return "not recreated on Windows"
+	}
+	if linkname == "" || path.IsAbs(linkname) {
+		return "absolute links are not recreated"
+	}
+	resolved := path.Join(path.Dir(display), linkname)
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return "points outside the item, not recreated"
+	}
+	full, err := x.target(display)
+	if err != nil {
+		return err.Error()
+	}
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		return err.Error()
+	}
+	if info, err := os.Lstat(full); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return "a file already exists at this path"
+		}
+		if err := os.Remove(full); err != nil {
+			return err.Error()
+		}
+	}
+	if err := os.Symlink(filepath.FromSlash(linkname), full); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // copyHardlink recreates a hard link as an independent copy of the file it
