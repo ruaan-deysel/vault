@@ -140,9 +140,14 @@ type anomalyEnqueuer interface {
 
 // Runner executes backup and restore operations for jobs.
 type Runner struct {
-	db              *db.DB
-	hub             *ws.Hub
-	serverKey       []byte // AES-256 key for unsealing secrets.
+	db        *db.DB
+	hub       *ws.Hub
+	serverKey []byte // AES-256 key for unsealing secrets.
+	// escrowed remembers, per dedup destination, a hash of the backup
+	// passphrase whose escrow has been confirmed, so the scrypt check runs
+	// once per passphrase rather than once per backed-up item (#451).
+	escrowMu        sync.Mutex
+	escrowed        map[int64][32]byte
 	snapshotManager *db.SnapshotManager
 	breaker         *Breaker
 	mu              sync.Mutex
@@ -2344,9 +2349,148 @@ func newHandler(itemType string) (engine.Handler, error) {
 // Caller is responsible for storage.CloseAdapter(adapter) when done.
 func (r *Runner) openDedupRepo(adapter storage.Adapter, dest db.StorageDestination) (*dedup.Repo, error) {
 	if _, err := adapter.Stat("_vault/repo.json"); err == nil {
-		return dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+		return r.openExistingDedupRepo(adapter, dest)
 	}
 	return dedup.InitRepo(r.db, adapter, dest.ID, r.serverKey)
+}
+
+// OpenDedupRepoWithFallback opens an existing dedup repository with serverKey
+// and, when that key does not match, through the repository's passphrase
+// escrow with each non-empty passphrase in turn (issue #451). It never
+// writes: making the new key work permanently is RewrapDedupKeys' job. A
+// failure keeps dedup.ErrServerKeyMismatch in its chain, plus the escrow
+// error when a passphrase was tried.
+func OpenDedupRepoWithFallback(d *db.DB, adapter storage.Adapter, destID int64, serverKey []byte, passphrases ...string) (*dedup.Repo, error) {
+	repo, err := dedup.OpenRepo(d, adapter, destID, serverKey)
+	if err == nil || !errors.Is(err, dedup.ErrServerKeyMismatch) {
+		return repo, err
+	}
+	var lastErr error
+	seen := map[string]bool{}
+	for _, p := range passphrases {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		escrowed, perr := dedup.OpenRepoWithPassphrase(d, adapter, destID, p)
+		if perr == nil {
+			return escrowed, nil
+		}
+		lastErr = perr
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("%w; backup-passphrase escrow: %w", err, lastErr)
+	}
+	return nil, err
+}
+
+// openExistingDedupRepo is OpenDedupRepoWithFallback with this runner's
+// server key, trying the supplied passphrases and then the configured one.
+func (r *Runner) openExistingDedupRepo(adapter storage.Adapter, dest db.StorageDestination, passphrases ...string) (*dedup.Repo, error) {
+	return OpenDedupRepoWithFallback(r.db, adapter, dest.ID, r.serverKey, append(passphrases, r.resolvePassphrase())...)
+}
+
+// DedupKeyResult reports what RewrapDedupKeys did for one destination.
+type DedupKeyResult struct {
+	StorageID int64  `json:"storage_id"`
+	Name      string `json:"name"`
+	// Status is one of: "ok" (this server's key already opens it),
+	// "rewrapped" (unlocked with the backup passphrase and re-sealed with
+	// this server's key), "not_initialised" (no dedup backup yet),
+	// "locked_no_escrow", "locked_wrong_passphrase", or "error".
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// RewrapDedupKeys makes every dedup destination openable with this server's
+// vault.key after a recovery onto a server whose key differs (issue #451).
+// A destination the key already opens is left alone; otherwise its master
+// key is recovered through the passphrase escrow and re-sealed with this
+// server's key (dedup.RewrapMaster, which backs up repo.json first). This is
+// the only path that rewrites repo.json, and it runs only when the user asks
+// for a recovery with their backup passphrase.
+func (r *Runner) RewrapDedupKeys(passphrase string) ([]DedupKeyResult, error) {
+	dests, err := r.db.ListStorageDestinations()
+	if err != nil {
+		return nil, fmt.Errorf("list storage destinations: %w", err)
+	}
+	var results []DedupKeyResult
+	for _, dest := range dests {
+		if !dest.DedupEnabled {
+			continue
+		}
+		res := DedupKeyResult{StorageID: dest.ID, Name: dest.Name}
+		res.Status, err = r.rewrapDedupKey(dest, passphrase)
+		if err != nil {
+			res.Error = err.Error()
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+func (r *Runner) rewrapDedupKey(dest db.StorageDestination, passphrase string) (string, error) {
+	adapter, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		return "error", fmt.Errorf("connect: %w", err)
+	}
+	defer storage.CloseAdapter(adapter)
+	if _, err := adapter.Stat("_vault/repo.json"); err != nil {
+		if storage.IsNotExist(err) {
+			return "not_initialised", nil
+		}
+		return "error", err
+	}
+	_, err = dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	switch {
+	case err == nil:
+		return "ok", nil
+	case !errors.Is(err, dedup.ErrServerKeyMismatch):
+		return "error", err
+	}
+	err = dedup.RewrapMaster(adapter, r.serverKey, passphrase, time.Now())
+	switch {
+	case err == nil:
+		log.Printf("runner: dedup: destination %q re-sealed with this server's vault.key", dest.Name)
+		return "rewrapped", nil
+	case errors.Is(err, dedup.ErrNoPassphraseEscrow):
+		return "locked_no_escrow", errors.New(strings.TrimSuffix(dedup.KeyMismatchHint, "."))
+	case errors.Is(err, dedup.ErrPassphraseMismatch):
+		return "locked_wrong_passphrase", errors.New("the backup passphrase does not open this destination's escrow")
+	default:
+		return "error", err
+	}
+}
+
+// ensureDedupEscrow keeps a destination's passphrase escrow in step with the
+// configured backup passphrase, so the passphrase alone can recover the
+// destination if vault.key is lost (issue #451). It runs on the backup path
+// only. The check costs one scrypt derivation, so a passphrase already
+// confirmed for a destination is remembered (as a hash, in memory) and not
+// checked again. Failures are logged and never fail the backup.
+func (r *Runner) ensureDedupEscrow(repo *dedup.Repo, dest db.StorageDestination) {
+	pass := r.resolvePassphrase()
+	if pass == "" {
+		return
+	}
+	fp := sha256.Sum256([]byte(pass))
+	r.escrowMu.Lock()
+	defer r.escrowMu.Unlock()
+	if r.escrowed[dest.ID] == fp {
+		return
+	}
+	wrote, err := repo.EnsurePassphraseEscrow(pass)
+	if err != nil {
+		log.Printf("runner: dedup: could not update the backup-passphrase escrow for destination %q: %v", dest.Name, err)
+		return
+	}
+	if r.escrowed == nil {
+		r.escrowed = map[int64][32]byte{}
+	}
+	r.escrowed[dest.ID] = fp
+	if wrote {
+		log.Printf("runner: dedup: destination %q can now also be unlocked with the backup passphrase", dest.Name)
+	}
 }
 
 // GetDedupStats opens (read-only) the dedup repo at dest and returns a
@@ -2372,7 +2516,7 @@ func (r *Runner) GetDedupStats(dest db.StorageDestination) (dedup.Stats, error) 
 		// The handler adds the "enabled": true key.
 		return dedup.Stats{}, nil
 	}
-	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	repo, err := r.openExistingDedupRepo(adapter, dest)
 	if err != nil {
 		return dedup.Stats{}, fmt.Errorf("open dedup repo: %w", err)
 	}
@@ -2410,7 +2554,7 @@ func (r *Runner) OpenDedupManifests(dest db.StorageDestination) (func(dedup.ID) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("adapter: %w", err)
 	}
-	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	repo, err := r.openExistingDedupRepo(adapter, dest)
 	if err != nil {
 		storage.CloseAdapter(adapter)
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
@@ -2595,7 +2739,7 @@ func (r *Runner) RunDedupGC(dest db.StorageDestination, runID string) {
 	}
 	defer storage.CloseAdapter(adapter)
 
-	repo, err := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey)
+	repo, err := r.openExistingDedupRepo(adapter, dest)
 	if err != nil {
 		log.Printf("gc: open repo for %q: %v", dest.Name, err)
 		r.Broadcast(map[string]any{
@@ -2819,6 +2963,7 @@ func (r *Runner) backupItemChunked(ctx context.Context, runID int64, item engine
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dedup repo: %w", err)
 	}
+	r.ensureDedupEscrow(repo, dest)
 
 	// For differential/incremental backups, load the parent item's manifest
 	// so the handler can carry forward unchanged entries and keep the new
@@ -6101,6 +6246,22 @@ func (r *Runner) ScanStorageManifests(dest db.StorageDestination, passphrase ...
 // through its own read-only adapter. d and destID are only used to open the
 // dedup repository that decrypts dedup manifest envelopes.
 func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []byte, pass string) ([]map[string]any, error) {
+	// Every dedup manifest on a destination shares one repository; open it
+	// once. With a mismatched server key the escrow fallback costs a scrypt
+	// derivation, which must not be paid per manifest.
+	var (
+		dedupRepo *dedup.Repo
+		dedupErr  error
+		dedupDone bool
+	)
+	openDedup := func() (*dedup.Repo, error) {
+		if !dedupDone {
+			dedupRepo, dedupErr = OpenDedupRepoWithFallback(d, adapter, destID, serverKey, pass)
+			dedupDone = true
+		}
+		return dedupRepo, dedupErr
+	}
+
 	// List all entries under the storage root.
 	topEntries, err := adapter.List(".")
 	if err != nil {
@@ -6144,7 +6305,7 @@ func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []
 				switch env.Key {
 				case "dedup":
 					if _, statErr := adapter.Stat("_vault/repo.json"); statErr == nil {
-						repo, openErr := dedup.OpenRepo(d, adapter, destID, serverKey)
+						repo, openErr := openDedup()
 						if openErr == nil {
 							if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
 								if pt, decErr2 := repo.DecryptManifest(cipherBytes); decErr2 == nil {
@@ -6153,6 +6314,8 @@ func ScanManifests(adapter storage.Adapter, d *db.DB, destID int64, serverKey []
 									log.Printf("runner: scan: failed to decrypt dedup manifest %s: %v", manifestPath, decErr2)
 								}
 							}
+						} else if errors.Is(openErr, dedup.ErrServerKeyMismatch) {
+							log.Printf("runner: scan: cannot read dedup manifest %s: %s", manifestPath, dedup.KeyMismatchHint)
 						} else {
 							log.Printf("runner: scan: failed to open dedup repo for %s: %v", manifestPath, openErr)
 						}
@@ -6318,6 +6481,40 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 		pass = passphrase[0]
 	}
 
+	// One dedup repository serves every encrypted manifest in the import;
+	// open it once, so a key-mismatch escrow fallback (a scrypt derivation)
+	// is not repeated per backup.
+	var (
+		importRepo    *dedup.Repo
+		importRepoErr error
+		importOpened  bool
+		importAdapter storage.Adapter
+	)
+	defer func() {
+		if importAdapter != nil {
+			storage.CloseAdapter(importAdapter)
+		}
+	}()
+	openDedup := func() (*dedup.Repo, error) {
+		if importOpened {
+			return importRepo, importRepoErr
+		}
+		importOpened = true
+		dest, err := r.db.GetStorageDestination(storageDestID)
+		if err != nil {
+			importRepoErr = err
+			return nil, err
+		}
+		if importAdapter, importRepoErr = storage.NewAdapter(dest.Type, dest.Config); importRepoErr != nil {
+			return nil, importRepoErr
+		}
+		importRepo, importRepoErr = r.openExistingDedupRepo(importAdapter, dest, pass)
+		if errors.Is(importRepoErr, dedup.ErrServerKeyMismatch) {
+			log.Printf("runner: import: %s", dedup.KeyMismatchHint)
+		}
+		return importRepo, importRepoErr
+	}
+
 	imported := 0
 
 	for _, b := range backups {
@@ -6355,7 +6552,7 @@ func (r *Runner) ImportBackups(storageDestID int64, backups []map[string]any, pa
 				var plaintext []byte
 				switch env.Key {
 				case "dedup":
-					if repo, openErr := dedup.OpenRepo(r.db, adapter, dest.ID, r.serverKey); openErr == nil {
+					if repo, openErr := openDedup(); openErr == nil {
 						if cipherBytes, decErr := decodeManifestEnvelope(env); decErr == nil {
 							plaintext, _ = repo.DecryptManifest(cipherBytes)
 						}

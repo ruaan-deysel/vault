@@ -1,0 +1,186 @@
+package runner
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/ruaan-deysel/vault/internal/crypto"
+	"github.com/ruaan-deysel/vault/internal/db"
+	"github.com/ruaan-deysel/vault/internal/dedup"
+	"github.com/ruaan-deysel/vault/internal/storage"
+	"github.com/ruaan-deysel/vault/internal/ws"
+)
+
+func otherServerKey() []byte { return bytes.Repeat([]byte{0x42}, crypto.ServerKeySize) }
+
+// runnerWithKey builds a runner on database with the given server key.
+func runnerWithKey(database *db.DB, key []byte) *Runner {
+	hub := ws.NewHub()
+	go hub.Run()
+	return New(database, hub, key)
+}
+
+// dedupBackup creates a dedup folder job on storageDir and runs it once.
+func dedupBackup(t *testing.T, r *Runner, database *db.DB, storageDir string) (db.StorageDestination, int64) {
+	t.Helper()
+	dest := makeDedupDest(t, database, storageDir)
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := database.CreateJob(db.Job{Name: "escrow", StorageDestID: dest.ID, BackupTypeChain: "full", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := json.Marshal(map[string]string{"path": src})
+	if _, err := database.AddJobItem(db.JobItem{JobID: jobID, ItemType: "folder", ItemName: "src", Settings: string(settings)}); err != nil {
+		t.Fatal(err)
+	}
+	r.RunJob(jobID)
+	runs, _ := database.GetJobRuns(jobID, 1)
+	if len(runs) == 0 || runs[0].Status != "completed" {
+		t.Fatalf("backup did not complete: %+v", runs)
+	}
+	return dest, jobID
+}
+
+func adapterFor(t *testing.T, dest db.StorageDestination) storage.Adapter {
+	t.Helper()
+	a, err := storage.NewAdapter(dest.Type, dest.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// TestDedupBackupEscrowsUnderBackupPassphrase checks a backup with a
+// passphrase configured writes the escrow, follows a passphrase change, and
+// that a server with a different vault.key can then read the destination
+// through the escrow without modifying repo.json (issue #451).
+func TestDedupBackupEscrowsUnderBackupPassphrase(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	_ = database.SetSetting("encryption_passphrase", "first")
+	storageDir := t.TempDir()
+	r := runnerWithKey(database, testServerKey())
+	dest, jobID := dedupBackup(t, r, database, storageDir)
+
+	if _, err := os.Stat(filepath.Join(storageDir, "_vault", "master.escrow.age")); err != nil {
+		t.Fatalf("backup did not write the escrow: %v", err)
+	}
+	if _, err := dedup.OpenRepoWithPassphrase(database, adapterFor(t, dest), dest.ID, "first"); err != nil {
+		t.Fatalf("escrow does not open with the backup passphrase: %v", err)
+	}
+
+	// A passphrase change is picked up by the next backup.
+	_ = database.SetSetting("encryption_passphrase", "second")
+	r.RunJob(jobID)
+	if _, err := dedup.OpenRepoWithPassphrase(database, adapterFor(t, dest), dest.ID, "second"); err != nil {
+		t.Fatalf("escrow not updated after a passphrase change: %v", err)
+	}
+
+	// A different server can browse through the escrow, without writing.
+	header, _ := os.ReadFile(filepath.Join(storageDir, "_vault", "repo.json"))
+	other := runnerWithKey(database, otherServerKey())
+	get, closeFn, err := other.OpenDedupManifests(dest)
+	if err != nil {
+		t.Fatalf("other server could not open the destination: %v", err)
+	}
+	closeFn()
+	_ = get
+	if after, _ := os.ReadFile(filepath.Join(storageDir, "_vault", "repo.json")); !bytes.Equal(after, header) {
+		t.Fatal("reading through the escrow rewrote repo.json")
+	}
+
+	// With no passphrase to try, the mismatch is reported as such.
+	_ = database.SetSetting("encryption_passphrase", "")
+	if _, _, err := other.OpenDedupManifests(dest); !errors.Is(err, dedup.ErrServerKeyMismatch) {
+		t.Fatalf("no passphrase: %v, want ErrServerKeyMismatch", err)
+	}
+	if _, _, err := other.OpenDedupManifests(dest); err == nil {
+		t.Fatal("opened without any key or passphrase")
+	}
+}
+
+// TestRewrapDedupKeys covers every per-destination outcome of the recovery
+// step.
+func TestRewrapDedupKeys(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "vault.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	_ = database.SetSetting("encryption_passphrase", "pw")
+	r := runnerWithKey(database, testServerKey())
+	escrowed, _ := dedupBackup(t, r, database, t.TempDir())
+
+	// A destination initialised by a server that never had a passphrase.
+	bare := namedDedupDest(t, database, "bare")
+	if _, err := dedup.InitRepo(database, adapterFor(t, bare), bare.ID, testServerKey()); err != nil {
+		t.Fatal(err)
+	}
+	// A dedup destination with no backups yet.
+	namedDedupDest(t, database, "empty")
+
+	// The original server: everything already opens.
+	results, err := r.RewrapDedupKeys("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(results); got[escrowed.ID] != "ok" || got[bare.ID] != "ok" {
+		t.Fatalf("same key: %+v", results)
+	}
+
+	recovered := runnerWithKey(database, otherServerKey())
+	results, _ = recovered.RewrapDedupKeys("wrong")
+	if got := statuses(results); got[escrowed.ID] != "locked_wrong_passphrase" || got[bare.ID] != "locked_no_escrow" {
+		t.Fatalf("wrong passphrase: %+v", results)
+	}
+	results, _ = recovered.RewrapDedupKeys("pw")
+	got := statuses(results)
+	if got[escrowed.ID] != "rewrapped" || got[bare.ID] != "locked_no_escrow" {
+		t.Fatalf("recovery: %+v", results)
+	}
+	notInit := 0
+	for _, s := range got {
+		if s == "not_initialised" {
+			notInit++
+		}
+	}
+	if notInit != 1 {
+		t.Fatalf("expected one not_initialised destination: %+v", results)
+	}
+	// After the rewrap the new key opens it directly, with no passphrase.
+	if _, err := dedup.OpenRepo(database, adapterFor(t, escrowed), escrowed.ID, otherServerKey()); err != nil {
+		t.Fatalf("new key after rewrap: %v", err)
+	}
+	if results, _ = recovered.RewrapDedupKeys("pw"); statuses(results)[escrowed.ID] != "ok" {
+		t.Fatalf("second recovery: %+v", results)
+	}
+}
+
+func statuses(results []DedupKeyResult) map[int64]string {
+	out := map[int64]string{}
+	for _, r := range results {
+		out[r.StorageID] = r.Status
+	}
+	return out
+}
+
+func namedDedupDest(t *testing.T, database *db.DB, name string) db.StorageDestination {
+	t.Helper()
+	cfg, _ := json.Marshal(map[string]string{"path": t.TempDir()})
+	id, err := database.CreateStorageDestination(db.StorageDestination{Name: name, Type: "local", Config: string(cfg), DedupEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, _ := database.GetStorageDestination(id)
+	return dest
+}

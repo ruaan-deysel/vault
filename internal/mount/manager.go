@@ -418,6 +418,9 @@ func (m *Manager) MountRestorePointTo(ctx context.Context, jobID, rpID int64, ta
 
 	repo, err := dedup.OpenRepo(m.db, adapter, dest.ID, m.serverKey)
 	if err != nil {
+		if errors.Is(err, dedup.ErrServerKeyMismatch) {
+			return nil, fmt.Errorf("mount: open dedup repo: %s: %w", dedup.KeyMismatchHint, err)
+		}
 		return nil, fmt.Errorf("mount: open dedup repo: %w", err)
 	}
 
