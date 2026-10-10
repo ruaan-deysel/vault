@@ -434,4 +434,108 @@ describe('unified log store', () => {
     expect(calls).toBe(2)
     expect(store.loadingOlder).toBe(false)
   })
+
+  it('loadOlder expands terminal run logs with split budgeting and smooth latency', async () => {
+    const plain30 = Array.from({ length: 30 }, (_, i) => ({
+      id: 1000 - i,
+      level: 'info',
+      category: 'backup',
+      message: `msg ${1000 - i}`,
+      details: null,
+      created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + (1000 - i) * 1000).toISOString(),
+    }))
+
+    const older30 = [
+      {
+        id: 970,
+        level: 'info',
+        category: 'backup',
+        message: 'Backup completed: old-job',
+        details: JSON.stringify({ run_id: 88, run_log: true, job_id: 2, job_name: 'old-job' }),
+        created_at: '2026-08-21T14:58:00Z',
+      },
+      ...Array.from({ length: 29 }, (_, i) => ({
+        id: 969 - i,
+        level: 'info',
+        category: 'backup',
+        message: `msg ${969 - i}`,
+        details: null,
+        created_at: new Date(Date.UTC(2026, 7, 21, 14, 0, 0) + (969 - i) * 1000).toISOString(),
+      })),
+    ]
+
+    const runLogs88 = Array.from({ length: 200 }, (_, i) => ({
+      id: 88000 + i,
+      run_id: 88,
+      level: 'info',
+      message: `run 88 line ${i}`,
+      data: '',
+      ts: new Date(Date.UTC(2026, 7, 21, 14, 50, 0) + i * 500).toISOString(),
+    }))
+
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return plain30.slice(0, limit)
+      return older30.slice(0, limit)
+    })
+    api.getRunLogs.mockImplementation(async (runId) => {
+      if (Number(runId) === 88) return { entries: runLogs88 }
+      return { entries: [] }
+    })
+
+    await store.load()
+    expect(store.hasMore).toBe(true)
+
+    // Call loadOlder with smooth: true
+    const outcome = await store.loadOlder({ smooth: true })
+    expect(outcome).toBe('advanced')
+    expect(store.hasMore).toBe(true)
+
+    // Next loadOlder drains pending run-log lines
+    const drainOutcome = await store.loadOlder()
+    expect(drainOutcome).toBe('advanced')
+  })
+
+  it('loadOlder surfaces error when not silent', async () => {
+    const plain30 = Array.from({ length: 30 }, (_, i) => ({
+      id: 1000 - i,
+      level: 'info',
+      category: 'backup',
+      message: `msg ${1000 - i}`,
+      details: null,
+      created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + (1000 - i) * 1000).toISOString(),
+    }))
+
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return plain30.slice(0, limit)
+      throw new Error('fetch older failed')
+    })
+
+    await store.load()
+    const outcome = await store.loadOlder({ silent: false })
+    expect(outcome).toBe('no-progress')
+    expect(store.error).toBe('fetch older failed')
+  })
+
+  it('setSearchFilter pins full history when search completes all older pages', async () => {
+    const plain30 = Array.from({ length: 30 }, (_, i) => ({
+      id: 1000 - i,
+      level: 'info',
+      category: 'backup',
+      message: `msg ${1000 - i}`,
+      details: null,
+      created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + (1000 - i) * 1000).toISOString(),
+    }))
+
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return plain30.slice(0, limit)
+      return []
+    })
+
+    await store.load()
+    expect(store.hasMore).toBe(true)
+
+    store.setSearchFilter('needle')
+    await vi.waitFor(() => expect(store.searching).toBe(false))
+    expect(store.hasMore).toBe(false)
+  })
 })
