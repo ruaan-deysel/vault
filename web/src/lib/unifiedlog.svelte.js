@@ -41,6 +41,8 @@ export function createUnifiedLogStore() {
   let _hasMore = $state(false)
   let _loadingOlder = $state(false)
   let _olderPromise = null
+  let _olderCtx = -1
+  let _olderSilent = true
   let _oldestActivityId = $state(null) // cursor for "load older"
   let _category = $state('')
   let _levelFilter = $state('')
@@ -56,6 +58,7 @@ export function createUnifiedLogStore() {
   let _contextSeq = 0  // bumped on every fresh load/reset: aborts an in-flight loadAll (#328)
   let _pendingRunLogs = [] // leftover run-log lines from a split terminal expansion (#328 r4 #5)
   let _fullHistoryLoaded = false // the buffer is (or is intended to become) the whole history (#328)
+  let _disposed = false
 
   function reset() {
     _entries = []
@@ -65,6 +68,8 @@ export function createUnifiedLogStore() {
     _hasMore = false
     _loadingOlder = false
     _olderPromise = null
+    _olderCtx = -1
+    _olderSilent = true
     _oldestActivityId = null
     _expanded = {}
     _seen = {}
@@ -75,18 +80,24 @@ export function createUnifiedLogStore() {
   }
 
   function dispose() {
+    _disposed = true
     _contextSeq++
     _loadSeq++
+    _loading = false
     _loadingOlder = false
     _olderPromise = null
+    _olderCtx = -1
+    _olderSilent = true
   }
 
   // Category is applied server-side via load(); the job and level filters are
   // client-side and independent — switching category must NOT clear them, so
   // filters compose (#328 round 2).
   async function setCategory(v) {
+    if (_disposed) return
     _category = v
     await load()
+    if (_disposed) return
     // If the active job filter no longer appears in the (category-filtered)
     // buffer, fall back to All so the Job dropdown doesn't render blank when
     // the category has no entries for that job (#328 r3 #1). (Level and
@@ -101,6 +112,7 @@ export function createUnifiedLogStore() {
   function setLevelFilter(v) { _levelFilter = v }
   function setJobFilter(v) { _jobFilter = v }
   function setSearchFilter(v) {
+    if (_disposed) return
     _search = v
     if (!v) {
       _searching = false
@@ -117,14 +129,16 @@ export function createUnifiedLogStore() {
     ;(async () => {
       try {
         if (!_hasMore && _pruned) {
+          if (_disposed) return
           // The cursor is exhausted but the buffer was truncated (the scroll
           // window dropped its oldest entries): a search over this window
           // would miss the dropped older logs. Reload from the newest page
           // so the search covers the whole history (#328).
           await load()
         }
+        if (_disposed) return
         const ctx = _contextSeq
-        while (_search && _hasMore && ctx === _contextSeq) {
+        while (!_disposed && _search && _hasMore && ctx === _contextSeq) {
           // Big pages + silent: a full-history search must not make ~333
           // round-trips of BATCH_SIZE, and a transient error mid-search must
           // not surface as the console-wide error box (the scroll path
@@ -138,7 +152,7 @@ export function createUnifiedLogStore() {
         // while _hasMore stays false, so the "— End of logs —" marker would
         // display over a truncated buffer and lie about the end (#328).
         // (Guard on _search: a query cleared mid-loop aborts the load.)
-        if (_search && ctx === _contextSeq && !_hasMore) _fullHistoryLoaded = true
+        if (!_disposed && _search && ctx === _contextSeq && !_hasMore) _fullHistoryLoaded = true
       } finally {
         _searching = false
       }
@@ -211,6 +225,7 @@ export function createUnifiedLogStore() {
   // load() — full reset: fetch the newest page and REPLACE the buffer.
   // Used on mount, category switch, and purge.
   async function load() {
+    if (_disposed) return
     return _loadNewest(true)
   }
 
@@ -219,6 +234,7 @@ export function createUnifiedLogStore() {
   // cursor-keyed lazy-load (the "older" side is loadOlder, keyed on
   // _oldestActivityId). Used by the poll timer and scroll-to-bottom refresh.
   async function loadNewer() {
+    if (_disposed) return
     return _loadNewest(false)
   }
 
@@ -227,6 +243,7 @@ export function createUnifiedLogStore() {
   // batch is MERGED into the loaded scrollback so poll cycles don't discard
   // "Load older" history.
   async function _loadNewest(fresh) {
+    if (_disposed) return
     const seq = ++_loadSeq
     _loading = true
     _error = ''
@@ -256,6 +273,8 @@ export function createUnifiedLogStore() {
         _contextSeq++
         _loadingOlder = false
         _olderPromise = null
+        _olderCtx = -1
+        _olderSilent = true
 
         // Expand terminal entries in parallel, then merge. Only the fresh
         // path fetches: the merge path must NOT refetch every terminal on
@@ -412,15 +431,22 @@ export function createUnifiedLogStore() {
     }
   }
 
+  // When an older-page fetch is already in flight in the current context, concurrent
+  // callers join the shared promise. If any joined caller is non-silent (e.g. user
+  // scrolling), any network failure is surfaced to _error.
   async function loadOlder({ smooth = false, limit = BATCH_SIZE, silent = false } = {}) {
-    if (_loadingOlder && _olderPromise) return _olderPromise
+    if (_disposed) return 'no-progress'
+    if (!silent) _olderSilent = false
+    if (_loadingOlder && _olderPromise && _olderCtx === _contextSeq) return _olderPromise
     if (!_hasMore && _pendingRunLogs.length === 0) return 'no-progress'
     _loadingOlder = true
+    _olderSilent = silent
     const ctx = _contextSeq
     const promise = (async () => {
       const startedAt = Date.now()
       let loaded = false
       try {
+        if (_disposed) return 'no-progress'
         // Drain leftover run-log lines from a previously split terminal
         // expansion first, so a long run's log is inserted across bounded
         // steps instead of one unbounded dump (#328 r4 #5). A drain step
@@ -437,7 +463,7 @@ export function createUnifiedLogStore() {
         if (!_hasMore || !_oldestActivityId) return 'no-progress'
         const prevOldestId = _oldestActivityId
         const older = (await api.getActivity(limit, _category, prevOldestId)) || []
-        if (ctx !== _contextSeq) return 'superseded'
+        if (_disposed || ctx !== _contextSeq) return 'superseded'
 
         if (older.length === 0) {
           _hasMore = false
@@ -455,7 +481,7 @@ export function createUnifiedLogStore() {
           return d?.run_log === true && !_expanded[e.id]
         })
         const runLogs = await fetchRunLogsForBatch(terminal)
-        if (ctx !== _contextSeq) return 'superseded'
+        if (_disposed || ctx !== _contextSeq) return 'superseded'
 
         loaded = true
 
@@ -505,28 +531,31 @@ export function createUnifiedLogStore() {
         _entries = prune(dedupeSummaries(combined).sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
         return 'advanced'
       } catch (e) {
-        if (ctx !== _contextSeq) return 'superseded'
+        if (_disposed || ctx !== _contextSeq) return 'superseded'
         // Background full-history loads (loadAll) must not surface a transient
         // fetch error as the console-wide error box — they just stop and leave
         // the scroll path (which reports errors) to retry (#328).
-        if (!silent) _error = e.message || 'Failed to load older logs'
+        if (!_olderSilent) _error = e.message || 'Failed to load older logs'
         return 'no-progress'
       } finally {
         // Artificial minimum latency (see MIN_LOAD_OLDER_MS). Only hold the
         // floor when a batch actually loaded — an empty page means the user is
         // already at the oldest log, and lingering would show the spinner with
         // nothing to show (#328 r3 #4).
-        if (smooth && loaded && ctx === _contextSeq) {
+        if (smooth && loaded && !_disposed && ctx === _contextSeq) {
           const remaining = MIN_LOAD_OLDER_MS - (Date.now() - startedAt)
           if (remaining > 0) await sleep(remaining)
         }
-        if (ctx === _contextSeq) {
+        if (!_disposed && ctx === _contextSeq) {
           _loadingOlder = false
           _olderPromise = null
+          _olderCtx = -1
+          _olderSilent = true
         }
       }
     })()
     _olderPromise = promise
+    _olderCtx = ctx
     return promise
   }
 
@@ -538,11 +567,12 @@ export function createUnifiedLogStore() {
   // Big pages (FULL_LOAD_LIMIT) keep the round-trip count low. Stale loops
   // abort via _contextSeq (fresh load / category switch / reset).
   async function loadAll() {
+    if (_disposed) return
     if (_fullHistoryLoaded && !_hasMore) return // already complete
     _fullHistoryLoaded = true
     const ctx = _contextSeq
     try {
-      while (ctx === _contextSeq && _hasMore && !_error) {
+      while (!_disposed && ctx === _contextSeq && _hasMore && !_error) {
         const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
         if (outcome === 'no-progress') break
         if (outcome === 'superseded' && ctx !== _contextSeq) break
@@ -551,7 +581,7 @@ export function createUnifiedLogStore() {
       // If the loop was aborted by a context change, the fresh load already
       // reset _fullHistoryLoaded; leave it otherwise so the pinned buffer
       // keeps the marker honest.
-      if (ctx === _contextSeq) _fullHistoryLoaded = !_hasMore ? true : _fullHistoryLoaded
+      if (!_disposed && ctx === _contextSeq) _fullHistoryLoaded = !_hasMore ? true : _fullHistoryLoaded
     }
   }
 

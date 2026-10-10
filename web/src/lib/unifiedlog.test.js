@@ -538,4 +538,66 @@ describe('unified log store', () => {
     await vi.waitFor(() => expect(store.searching).toBe(false))
     expect(store.hasMore).toBe(false)
   })
+
+  it('dispose prevents post-dispose calls and clears loading states', async () => {
+    let resolveActivity
+    api.getActivity.mockImplementation(() => new Promise((resolve) => {
+      resolveActivity = resolve
+    }))
+
+    const pendingLoad = store.load()
+    expect(store.loading).toBe(true)
+
+    store.dispose()
+    expect(store.loading).toBe(false)
+    expect(store.loadingOlder).toBe(false)
+
+    // Late resolve should not mutate store or resurrect loading state
+    resolveActivity([])
+    await pendingLoad
+    expect(store.loading).toBe(false)
+    expect(store.entries).toEqual([])
+
+    // Subsequent calls are no-ops
+    api.getActivity.mockClear()
+    expect(await store.loadOlder()).toBe('no-progress')
+    await store.loadAll()
+    await store.setCategory('backup')
+    store.setSearchFilter('test')
+    expect(api.getActivity).not.toHaveBeenCalled()
+  })
+
+  it('surfaces error when non-silent caller joins in-flight silent loadOlder', async () => {
+    const plain30 = Array.from({ length: 30 }, (_, i) => ({
+      id: 1000 - i,
+      level: 'info',
+      category: 'backup',
+      message: `msg ${1000 - i}`,
+      details: null,
+      created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + (1000 - i) * 1000).toISOString(),
+    }))
+
+    let rejectOlder
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return plain30.slice(0, limit)
+      return new Promise((_, reject) => {
+        rejectOlder = reject
+      })
+    })
+
+    await store.load()
+    expect(store.hasMore).toBe(true)
+
+    // First caller: silent background load
+    const silentPromise = store.loadOlder({ silent: true })
+    // Second caller: user scrolling (non-silent) joins the in-flight load
+    const userPromise = store.loadOlder({ silent: false })
+
+    rejectOlder(new Error('network error'))
+    const [res1, res2] = await Promise.all([silentPromise, userPromise])
+
+    expect(res1).toBe('no-progress')
+    expect(res2).toBe('no-progress')
+    expect(store.error).toBe('network error')
+  })
 })
