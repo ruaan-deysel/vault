@@ -40,6 +40,7 @@ export function createUnifiedLogStore() {
   let _error = $state('')
   let _hasMore = $state(false)
   let _loadingOlder = $state(false)
+  let _olderPromise = null
   let _oldestActivityId = $state(null) // cursor for "load older"
   let _category = $state('')
   let _levelFilter = $state('')
@@ -63,6 +64,7 @@ export function createUnifiedLogStore() {
     _error = ''
     _hasMore = false
     _loadingOlder = false
+    _olderPromise = null
     _oldestActivityId = null
     _expanded = {}
     _seen = {}
@@ -70,6 +72,13 @@ export function createUnifiedLogStore() {
     _pruned = false
     _fullHistoryLoaded = false
     _contextSeq++
+  }
+
+  function dispose() {
+    _contextSeq++
+    _loadSeq++
+    _loadingOlder = false
+    _olderPromise = null
   }
 
   // Category is applied server-side via load(); the job and level filters are
@@ -114,19 +123,22 @@ export function createUnifiedLogStore() {
           // so the search covers the whole history (#328).
           await load()
         }
-        while (_search && _hasMore) {
+        const ctx = _contextSeq
+        while (_search && _hasMore && ctx === _contextSeq) {
           // Big pages + silent: a full-history search must not make ~333
           // round-trips of BATCH_SIZE, and a transient error mid-search must
           // not surface as the console-wide error box (the scroll path
           // reports errors; the background search just retries) (#328).
-          await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
+          const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
+          if (outcome === 'no-progress') break
+          if (outcome === 'superseded' && ctx !== _contextSeq) break
         }
         // The loop ended because _hasMore is false: the buffer now IS the
         // whole history. Pin it — pruning would drop the oldest entries
         // while _hasMore stays false, so the "— End of logs —" marker would
         // display over a truncated buffer and lie about the end (#328).
         // (Guard on _search: a query cleared mid-loop aborts the load.)
-        if (_search) _fullHistoryLoaded = true
+        if (_search && ctx === _contextSeq && !_hasMore) _fullHistoryLoaded = true
       } finally {
         _searching = false
       }
@@ -242,6 +254,8 @@ export function createUnifiedLogStore() {
         _pruned = false
         _fullHistoryLoaded = false
         _contextSeq++
+        _loadingOlder = false
+        _olderPromise = null
 
         // Expand terminal entries in parallel, then merge. Only the fresh
         // path fetches: the merge path must NOT refetch every terminal on
@@ -399,96 +413,121 @@ export function createUnifiedLogStore() {
   }
 
   async function loadOlder({ smooth = false, limit = BATCH_SIZE, silent = false } = {}) {
-    if (_loadingOlder) return
-    if (!_hasMore && _pendingRunLogs.length === 0) return
+    if (_loadingOlder && _olderPromise) return _olderPromise
+    if (!_hasMore && _pendingRunLogs.length === 0) return 'no-progress'
     _loadingOlder = true
-    const startedAt = Date.now()
-    let loaded = false
-    try {
-      // Drain leftover run-log lines from a previously split terminal
-      // expansion first, so a long run's log is inserted across bounded
-      // steps instead of one unbounded dump (#328 r4 #5). A drain step
-      // inserts at most OLDER_BATCH_BUDGET lines and then returns; the
-      // activity fetch resumes on a later step once pending is empty.
-      if (_pendingRunLogs.length > 0) {
-        const take = _pendingRunLogs.slice(0, OLDER_BATCH_BUDGET)
-        _pendingRunLogs = _pendingRunLogs.slice(OLDER_BATCH_BUDGET)
-        _entries = prune(dedupeSummaries([..._entries, ...take]).sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
-        loaded = true
-        return
-      }
-
-      if (!_hasMore || !_oldestActivityId) return
-      const older = (await api.getActivity(limit, _category, _oldestActivityId)) || []
-      if (older.length === 0) { _hasMore = false; return }
-      loaded = true
-
-      const terminal = older.filter(e => {
-        const d = tryParse(e.details)
-        return d?.run_log === true && !_expanded[e.id]
-      })
-      const runLogs = await fetchRunLogsForBatch(terminal)
-
-      const perEntry = older.map(ae => buildUnified([ae], runLogs))
-      // The step budget bounds RUN-LOG lines only; plain activity rows
-      // always materialize (same rationale as the fresh path).
-      const { fullCount, split } = planBatch(
-        perEntry.map(list => list.filter(e => e.type === 'runlog').length),
-        OLDER_BATCH_BUDGET,
-      )
-
-      // Consume fullCount entries in full, plus `split` lines of the next
-      // terminal entry (whose expansion exceeded the remaining budget).
-      let newUnified = perEntry.slice(0, fullCount).flat()
-      let consumed = fullCount
-      if (split > 0) {
-        const splitEntry = perEntry[fullCount]
-        newUnified = [...newUnified, ...splitEntry.slice(0, split)]
-        // Same as the fresh path: never defer a run's terminal summary.
-        const middle = splitEntry.slice(split, -1)
-        const tail = splitEntry.slice(-1)
-        if (tail.length > 0) newUnified = [...newUnified, ...tail]
-        if (middle.length > 0) {
-          _pendingRunLogs = [..._pendingRunLogs, ...middle]
+    const ctx = _contextSeq
+    const promise = (async () => {
+      const startedAt = Date.now()
+      let loaded = false
+      try {
+        // Drain leftover run-log lines from a previously split terminal
+        // expansion first, so a long run's log is inserted across bounded
+        // steps instead of one unbounded dump (#328 r4 #5). A drain step
+        // inserts at most OLDER_BATCH_BUDGET lines and then returns; the
+        // activity fetch resumes on a later step once pending is empty.
+        if (_pendingRunLogs.length > 0) {
+          const take = _pendingRunLogs.slice(0, OLDER_BATCH_BUDGET)
+          _pendingRunLogs = _pendingRunLogs.slice(OLDER_BATCH_BUDGET)
+          _entries = prune(dedupeSummaries([..._entries, ...take]).sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
+          loaded = true
+          return 'advanced'
         }
-        consumed++
-      }
-      for (let i = consumed; i < perEntry.length; i++) {
-        const rows = perEntry[i].filter(e => e.type !== 'runlog')
-        if (rows.length > 0) newUnified = [...newUnified, ...rows]
-        const rl = perEntry[i].filter(e => e.type === 'runlog')
-        if (rl.length > 0) _pendingRunLogs = [..._pendingRunLogs, ...rl]
-      }
 
-      // Every terminal entry in this batch is accounted for: its run log is
-      // captured either in the buffer or in _pendingRunLogs, so a later
-      // fetch must not re-expand it.
-      for (const ae of older) {
-        const d = tryParse(ae.details)
-        if (d?.run_log === true) _expanded[ae.id] = true
-      }
+        if (!_hasMore || !_oldestActivityId) return 'no-progress'
+        const prevOldestId = _oldestActivityId
+        const older = (await api.getActivity(limit, _category, prevOldestId)) || []
+        if (ctx !== _contextSeq) return 'superseded'
 
-      _oldestActivityId = older.length > 0 ? older[older.length - 1].id : null
-      _hasMore = (older.length === limit) || (_pendingRunLogs.length > 0)
+        if (older.length === 0) {
+          _hasMore = false
+          return 'no-progress'
+        }
 
-      const combined = [..._entries, ...newUnified]
-      _entries = prune(dedupeSummaries(combined).sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
-    } catch (e) {
-      // Background full-history loads (loadAll) must not surface a transient
-      // fetch error as the console-wide error box — they just stop and leave
-      // the scroll path (which reports errors) to retry (#328).
-      if (!silent) _error = e.message || 'Failed to load older logs'
-    } finally {
-      // Artificial minimum latency (see MIN_LOAD_OLDER_MS). Only hold the
-      // floor when a batch actually loaded — an empty page means the user is
-      // already at the oldest log, and lingering would show the spinner with
-      // nothing to show (#328 r3 #4).
-      if (smooth && loaded) {
-        const remaining = MIN_LOAD_OLDER_MS - (Date.now() - startedAt)
-        if (remaining > 0) await sleep(remaining)
+        const newOldestId = older[older.length - 1].id
+        if (!(newOldestId < prevOldestId)) {
+          _hasMore = false
+          return 'no-progress'
+        }
+
+        const terminal = older.filter(e => {
+          const d = tryParse(e.details)
+          return d?.run_log === true && !_expanded[e.id]
+        })
+        const runLogs = await fetchRunLogsForBatch(terminal)
+        if (ctx !== _contextSeq) return 'superseded'
+
+        loaded = true
+
+        const perEntry = older.map(ae => buildUnified([ae], runLogs))
+        // The step budget bounds RUN-LOG lines only; plain activity rows
+        // always materialize (same rationale as the fresh path).
+        const { fullCount, split } = planBatch(
+          perEntry.map(list => list.filter(e => e.type === 'runlog').length),
+          OLDER_BATCH_BUDGET,
+        )
+
+        // Consume fullCount entries in full, plus `split` lines of the next
+        // terminal entry (whose expansion exceeded the remaining budget).
+        let newUnified = perEntry.slice(0, fullCount).flat()
+        let consumed = fullCount
+        if (split > 0) {
+          const splitEntry = perEntry[fullCount]
+          newUnified = [...newUnified, ...splitEntry.slice(0, split)]
+          // Same as the fresh path: never defer a run's terminal summary.
+          const middle = splitEntry.slice(split, -1)
+          const tail = splitEntry.slice(-1)
+          if (tail.length > 0) newUnified = [...newUnified, ...tail]
+          if (middle.length > 0) {
+            _pendingRunLogs = [..._pendingRunLogs, ...middle]
+          }
+          consumed++
+        }
+        for (let i = consumed; i < perEntry.length; i++) {
+          const rows = perEntry[i].filter(e => e.type !== 'runlog')
+          if (rows.length > 0) newUnified = [...newUnified, ...rows]
+          const rl = perEntry[i].filter(e => e.type === 'runlog')
+          if (rl.length > 0) _pendingRunLogs = [..._pendingRunLogs, ...rl]
+        }
+
+        // Every terminal entry in this batch is accounted for: its run log is
+        // captured either in the buffer or in _pendingRunLogs, so a later
+        // fetch must not re-expand it.
+        for (const ae of older) {
+          const d = tryParse(ae.details)
+          if (d?.run_log === true) _expanded[ae.id] = true
+        }
+
+        _oldestActivityId = newOldestId
+        _hasMore = (older.length === limit) || (_pendingRunLogs.length > 0)
+
+        const combined = [..._entries, ...newUnified]
+        _entries = prune(dedupeSummaries(combined).sort((a, b) => tsMs(a.ts) - tsMs(b.ts)))
+        return 'advanced'
+      } catch (e) {
+        if (ctx !== _contextSeq) return 'superseded'
+        // Background full-history loads (loadAll) must not surface a transient
+        // fetch error as the console-wide error box — they just stop and leave
+        // the scroll path (which reports errors) to retry (#328).
+        if (!silent) _error = e.message || 'Failed to load older logs'
+        return 'no-progress'
+      } finally {
+        // Artificial minimum latency (see MIN_LOAD_OLDER_MS). Only hold the
+        // floor when a batch actually loaded — an empty page means the user is
+        // already at the oldest log, and lingering would show the spinner with
+        // nothing to show (#328 r3 #4).
+        if (smooth && loaded && ctx === _contextSeq) {
+          const remaining = MIN_LOAD_OLDER_MS - (Date.now() - startedAt)
+          if (remaining > 0) await sleep(remaining)
+        }
+        if (ctx === _contextSeq) {
+          _loadingOlder = false
+          _olderPromise = null
+        }
       }
-      _loadingOlder = false
-    }
+    })()
+    _olderPromise = promise
+    return promise
   }
 
   // loadAll() — background full-history load: keep pulling older pages until
@@ -504,7 +543,9 @@ export function createUnifiedLogStore() {
     const ctx = _contextSeq
     try {
       while (ctx === _contextSeq && _hasMore && !_error) {
-        await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
+        const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
+        if (outcome === 'no-progress') break
+        if (outcome === 'superseded' && ctx !== _contextSeq) break
       }
     } finally {
       // If the loop was aborted by a context change, the fresh load already
@@ -716,5 +757,6 @@ export function createUnifiedLogStore() {
     get search() { return _search },
     get searching() { return _searching },
     reset, load, loadNewer, loadOlder, loadAll, setCategory, setLevelFilter, setJobFilter, setSearchFilter, setupWs,
+    dispose,
   }
 }
