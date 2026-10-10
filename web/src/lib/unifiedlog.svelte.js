@@ -28,6 +28,7 @@ const OLDER_BATCH_BUDGET = 150 // max unified entries added per loadOlder step
 const MAX_ENTRIES = 50000
 const WS_DEDUP_CAP = 200    // seen-IDs cap for WS dedup
 const MIN_LOAD_OLDER_MS = 700 // floor for user-initiated loadOlder so the spinner reads as real work (#328 round 2)
+const SEARCH_RETRY_DELAY_MS = 250 // delay multiplier when retrying transient errors during background search
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -137,6 +138,7 @@ export function createUnifiedLogStore() {
           await load()
         }
         if (_disposed) return
+        let failures = 0
         const ctx = _contextSeq
         while (!_disposed && _search && _hasMore && ctx === _contextSeq) {
           // Big pages + silent: a full-history search must not make ~333
@@ -144,6 +146,12 @@ export function createUnifiedLogStore() {
           // not surface as the console-wide error box (the scroll path
           // reports errors; the background search just retries) (#328).
           const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
+          if (outcome === 'failed') {
+            if (++failures > 3) break
+            await sleep(SEARCH_RETRY_DELAY_MS * failures)
+            continue
+          }
+          failures = 0
           if (outcome === 'no-progress') break
           if (outcome === 'superseded' && ctx !== _contextSeq) break
         }
@@ -538,7 +546,7 @@ export function createUnifiedLogStore() {
         // fetch error as the console-wide error box — they just stop and leave
         // the scroll path (which reports errors) to retry (#328).
         if (!_olderSilent) _error = e.message || 'Failed to load older logs'
-        return 'no-progress'
+        return 'failed'
       } finally {
         // Artificial minimum latency (see MIN_LOAD_OLDER_MS). Only hold the
         // floor when a batch actually loaded — an empty page means the user is
@@ -576,7 +584,7 @@ export function createUnifiedLogStore() {
     try {
       while (!_disposed && ctx === _contextSeq && _hasMore && !_error) {
         const outcome = await loadOlder({ limit: FULL_LOAD_LIMIT, silent: true })
-        if (outcome === 'no-progress') break
+        if (outcome === 'no-progress' || outcome === 'failed') break
         if (outcome === 'superseded' && ctx !== _contextSeq) break
       }
     } finally {

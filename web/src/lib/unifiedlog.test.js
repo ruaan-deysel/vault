@@ -512,7 +512,7 @@ describe('unified log store', () => {
 
     await store.load()
     const outcome = await store.loadOlder({ silent: false })
-    expect(outcome).toBe('no-progress')
+    expect(outcome).toBe('failed')
     expect(store.error).toBe('fetch older failed')
   })
 
@@ -596,8 +596,35 @@ describe('unified log store', () => {
     rejectOlder(new Error('network error'))
     const [res1, res2] = await Promise.all([silentPromise, userPromise])
 
-    expect(res1).toBe('no-progress')
-    expect(res2).toBe('no-progress')
+    expect(res1).toBe('failed')
+    expect(res2).toBe('failed')
     expect(store.error).toBe('network error')
+  })
+
+  it('setSearchFilter retries transient failures during older loads before stopping', async () => {
+    const plain30 = Array.from({ length: 30 }, (_, i) => ({
+      id: 1000 - i,
+      level: 'info',
+      category: 'backup',
+      message: `msg ${1000 - i}`,
+      details: null,
+      created_at: new Date(Date.UTC(2026, 7, 21, 15, 0, 0) + (1000 - i) * 1000).toISOString(),
+    }))
+
+    let attempts = 0
+    api.getActivity.mockImplementation(async (limit = 30, _category = '', beforeId = 0) => {
+      if (!beforeId) return plain30.slice(0, limit)
+      attempts++
+      if (attempts === 1) throw new Error('transient error')
+      return []
+    })
+
+    await store.load()
+    expect(store.hasMore).toBe(true)
+
+    store.setSearchFilter('needle')
+    await vi.waitFor(() => expect(store.searching).toBe(false), { timeout: 3000 })
+    expect(attempts).toBe(2)
+    expect(store.hasMore).toBe(false)
   })
 })
