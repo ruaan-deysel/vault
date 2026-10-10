@@ -436,8 +436,10 @@ export function createUnifiedLogStore() {
   // scrolling), any network failure is surfaced to _error.
   async function loadOlder({ smooth = false, limit = BATCH_SIZE, silent = false } = {}) {
     if (_disposed) return 'no-progress'
-    if (!silent) _olderSilent = false
-    if (_loadingOlder && _olderPromise && _olderCtx === _contextSeq) return _olderPromise
+    if (_loadingOlder && _olderPromise && _olderCtx === _contextSeq) {
+      if (!silent) _olderSilent = false
+      return _olderPromise
+    }
     if (!_hasMore && _pendingRunLogs.length === 0) return 'no-progress'
     _loadingOlder = true
     _olderSilent = silent
